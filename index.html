@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#dcefdf">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="GID">
+  <link rel="icon" type="image/png" href="img/icon-64.png">
+  <link rel="apple-touch-icon" href="img/apple-touch-icon.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <script>
+    // Apply the last theme and language at once, before the page draws
+    (function () { try { var v = JSON.parse(localStorage.getItem("gid-ui") || "{}"); var dark = v.theme === "dark" || ((!v.theme || v.theme === "system") && window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches);
+      document.documentElement.dataset.theme = dark ? "dark" : "light"; document.documentElement.lang = v.lang === "km" ? "km" : "en"; window.I18N = { lang: v.lang === "km" ? "km" : "en" }; } catch (e) { window.I18N = { lang: "en" }; } })();
+  </script>
+  <title>GID Management System · Demo</title>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app"><div class="setup card"><p>Loading…</p></div></div>
+  <script src="config.js"></script>
+  <script src="data.js"></script>
+  <script src="i18n-km.js"></script>
+  <script src="i18n.js"></script>
+  <script src="map.js"></script>
+  <script>
+    // ---- Passkey screen (DEMO) ----
+    // Only a fingerprint (SHA-256) of the passkey is stored here, never the passkey itself.
+    // To change the passkey, put the new fingerprint in PASS_HASH (see SETUP.md, "Change the passkey").
+    var PASS_HASH = "718084f8bbdaf9f9059effd6f1adb66dd8f6021238c4777793a5424833900b9b";
+    var PASS_KEY = "gid-pass";
+    function sha256hex(str) {
+      if (window.crypto && crypto.subtle && window.isSecureContext) {
+        return crypto.subtle.digest("SHA-256", new TextEncoder().encode(str)).then(function (b) { return Array.from(new Uint8Array(b)).map(function (x) { return x.toString(16).padStart(2, "0"); }).join(""); });
+      }
+      // Fallback for pages not served over https
+      var K = [], H = [], i, j, n = 2, c = 0;
+      function frac(x) { return ((x - Math.floor(x)) * 4294967296) | 0; }
+      while (c < 64) { for (j = 2; j * j <= n; j++) if (n % j === 0) break; if (j * j > n) { if (c < 8) H[c] = frac(Math.pow(n, 1 / 2)); K[c++] = frac(Math.pow(n, 1 / 3)); } n++; }
+      var bytes = Array.from(new TextEncoder().encode(str)), l = bytes.length * 8; bytes.push(128);
+      while (bytes.length % 64 !== 56) bytes.push(0);
+      for (i = 7; i >= 0; i--) bytes.push(i > 3 ? 0 : (l >>> (i * 8)) & 255);
+      var r = function (v, k) { return (v >>> k) | (v << (32 - k)); };
+      for (i = 0; i < bytes.length; i += 64) {
+        var w = [], a = H.slice();
+        for (j = 0; j < 64; j++) {
+          if (j < 16) w[j] = (bytes[i + j * 4] << 24) | (bytes[i + j * 4 + 1] << 16) | (bytes[i + j * 4 + 2] << 8) | bytes[i + j * 4 + 3];
+          else w[j] = (w[j - 16] + (r(w[j - 15], 7) ^ r(w[j - 15], 18) ^ (w[j - 15] >>> 3)) + w[j - 7] + (r(w[j - 2], 17) ^ r(w[j - 2], 19) ^ (w[j - 2] >>> 10))) | 0;
+          var t1 = (a[7] + (r(a[4], 6) ^ r(a[4], 11) ^ r(a[4], 25)) + ((a[4] & a[5]) ^ (~a[4] & a[6])) + K[j] + w[j]) | 0;
+          var t2 = ((r(a[0], 2) ^ r(a[0], 13) ^ r(a[0], 22)) + ((a[0] & a[1]) ^ (a[0] & a[2]) ^ (a[1] & a[2]))) | 0;
+          a = [(t1 + t2) | 0, a[0], a[1], a[2], (a[3] + t1) | 0, a[4], a[5], a[6]];
+        }
+        for (j = 0; j < 8; j++) H[j] = (H[j] + a[j]) | 0;
+      }
+      return Promise.resolve(H.map(function (x) { return (x >>> 0).toString(16).padStart(8, "0"); }).join(""));
+    }
+    function savedPass() { try { return localStorage.getItem(PASS_KEY) || sessionStorage.getItem(PASS_KEY); } catch (e) { return null; } }
+    var openGate; window.GID_GATE = new Promise(function (res) { openGate = res; });
+    window.GID_LOCK = function () { try { localStorage.removeItem(PASS_KEY); sessionStorage.removeItem(PASS_KEY); } catch (e) { /* ignore */ } location.reload(); };
+
+    // Load the Supabase library only when config.js has a Supabase address; otherwise run the browser demo.
+    function bootApp() {
+      var c = window.GID_CONFIG || {};
+      function startApp() { var s = document.createElement("script"); s.src = "app.js"; document.body.appendChild(s); }
+      if (c.SUPABASE_URL && c.SUPABASE_ANON_KEY) {
+        var s = document.createElement("script");
+        s.src = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2";
+        s.onload = startApp; s.onerror = startApp;
+        document.head.appendChild(s);
+      } else { startApp(); }
+    }
+
+    function showGate() {
+      var app = document.getElementById("app");
+      app.innerHTML = '<main class="gate"><form class="gate-card" id="gate" autocomplete="off">' +
+        '<img class="gate-logo" src="img/logo-square.png" alt="Green In Design · Interior &amp; Exterior">' +
+        '<h1>Management System</h1><p class="gate-sub">Demo for the GID team. Enter the passkey to continue.</p>' +
+        '<label class="gate-field"><span>Passkey</span><span class="gate-in"><input id="pk" type="password" autocomplete="current-password" required aria-describedby="pkerr">' +
+        '<button type="button" class="gate-eye" id="eye" aria-label="Show passkey">Show</button></span></label>' +
+        '<label class="chk gate-chk"><input type="checkbox" id="rem" checked> Remember this device</label>' +
+        '<p class="gate-err" id="pkerr" role="alert"></p>' +
+        '<button class="btn primary gate-go" type="submit">Unlock</button>' +
+        '<p class="gate-note">Demo with sample data only. Ask the system admin for the passkey.</p></form></main>';
+      var f = document.getElementById("gate"), pk = document.getElementById("pk"), err = document.getElementById("pkerr"), fails = 0, waitUntil = 0;
+      pk.focus();
+      document.getElementById("eye").onclick = function () { var show = pk.type === "password"; pk.type = show ? "text" : "password"; this.textContent = show ? "Hide" : "Show"; this.setAttribute("aria-label", show ? "Hide passkey" : "Show passkey"); };
+      f.onsubmit = function (e) {
+        e.preventDefault();
+        if (Date.now() < waitUntil) { err.textContent = "Too many tries. Wait " + Math.ceil((waitUntil - Date.now()) / 1000) + " seconds."; return; }
+        sha256hex(pk.value).then(function (h) {
+          if (h === PASS_HASH) {
+            try { (document.getElementById("rem").checked ? localStorage : sessionStorage).setItem(PASS_KEY, h); } catch (x) { /* ignore */ }
+            app.innerHTML = '<div class="setup card"><p>Loading…</p></div>'; openGate();
+          } else {
+            fails++; pk.value = ""; pk.focus(); f.classList.remove("shake"); void f.offsetWidth; f.classList.add("shake");
+            if (fails >= 5) { waitUntil = Date.now() + 30000; fails = 0; err.textContent = "Wrong passkey 5 times. Wait 30 seconds and try again."; }
+            else err.textContent = "Wrong passkey. Check capital letters and try again.";
+          }
+        });
+      };
+    }
+    // Start loading the app straight away, even while the passkey screen is showing
+    if (savedPass() === PASS_HASH) openGate(); else showGate();
+    bootApp();
+  </script>
+</body>
+</html>
