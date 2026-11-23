@@ -9,7 +9,8 @@
     staff: { name: "text", title: "text", groups: "text", tags: "text", phone: "text", email: "text", telegram_chat_id: "text",
       short_name: "text", telegram_user: "text", start_date: "date", desk: "text", photo: "text", left_on: "date" },
     projects: { code: "text", name: "text", client: "text", location: "text", pm_id: "text", status: "text",
-      start_date: "date", end_date: "date", contract_value: "numeric", budget: "numeric", progress: "numeric", lat: "numeric", lng: "numeric", scopes: "jsonb" },
+      start_date: "date", end_date: "date", contract_value: "numeric", budget: "numeric", progress: "numeric", lat: "numeric", lng: "numeric", scopes: "jsonb",
+      handover_date: "date", dlp_months: "int" },
     project_members: { project_id: "text", staff_id: "text", role: "text" },
     tasks: { project_id: "text", title: "text", assignee_id: "text", due_date: "date", status: "text", priority: "text", created_by: "text" },
     daily_reports: { project_id: "text", report_date: "date", author_id: "text", weather: "text", manpower: "int",
@@ -50,6 +51,20 @@
       plot_size: "text", floors: "text", floor_height: "text", floor_area: "text", risks: "text", opportunities: "text", photos: "jsonb", captions: "jsonb",
       decision: "text", est_value: "numeric", proposed_team: "text", actions: "jsonb", quote_due: "date", quote_value: "numeric", lost_reason: "text",
       project_id: "text", author_id: "text", approved_by: "text", approved_at: "timestamptz" },
+    // Variation orders: changes to the contract. Raised → QS price → PM check → MD approves the price → sent to client → client approves → added to an IPC claim
+    variations: { vo_no: "text", project_id: "text", title: "text", reason: "text", asked_by: "text", asked_date: "date", time_days: "int", lines: "jsonb", markup_pct: "numeric",
+      amount: "numeric", status: "text", evidence: "jsonb", client_evidence: "jsonb", client_ref: "text", claim_id: "text", raised_by: "text", history: "jsonb" },
+    // Subcontractors, their contracts per project (retention is optional) and their payment certificates (QS → PM → Finance)
+    subcontractors: { name: "text", trade: "text", contact: "text", phone: "text", telegram: "text", patent: "boolean", vat: "boolean", insurance_until: "date", status: "text", notes: "text" },
+    sub_contracts: { sub_id: "text", project_id: "text", scope: "text", contract_value: "numeric", retention_pct: "numeric", start_date: "date", end_date: "date", status: "text",
+      ratings: "jsonb", retention_released: "boolean" },
+    sub_payments: { contract_id: "text", pc_no: "text", period_to: "date", claimed: "numeric", certified: "numeric", retention_amt: "numeric", status: "text", note: "text",
+      evidence: "jsonb", history: "jsonb", paid_at: "timestamptz" },
+    // Testing & commissioning sheets, handover pack and warranties
+    tests: { test_no: "text", project_id: "text", system: "text", test_type: "text", location: "text", instrument: "text", instrument_sn: "text", calib_until: "date", limit_value: "numeric",
+      rows: "jsonb", result: "text", tested_by: "text", witness: "text", test_date: "date", photos: "jsonb", defect_ids: "jsonb", note: "text" },
+    handover_items: { project_id: "text", category: "text", title: "text", status: "text", due_date: "date", evidence: "jsonb", note: "text", updated_by: "text" },
+    warranties: { project_id: "text", item: "text", supplier: "text", start_date: "date", end_date: "date", evidence: "jsonb", note: "text" },
     notifications: { to_id: "text", actor_id: "text", title: "text", body: "text", tbl: "text", record_id: "text", read: "boolean", at: "timestamptz" }
   };
 
@@ -71,6 +86,9 @@
     finance:     { EXEC: "approve", PM: "none", SITE: "none", DESIGN: "none", ENG: "none", QS: "view", FIN: "admin", ADMIN: "admin" },
     qaqc:        { EXEC: "view", PM: "approve", SITE: "edit", DESIGN: "view", ENG: "admin", QS: "view", FIN: "none", ADMIN: "none" },
     safety:      { EXEC: "view", PM: "approve", SITE: "edit", DESIGN: "none", ENG: "view", QS: "none", FIN: "none", ADMIN: "view" },
+    vo:          { EXEC: "approve", PM: "approve", SITE: "edit", DESIGN: "view", ENG: "view", QS: "approve", FIN: "view", ADMIN: "none" },
+    subs:        { EXEC: "approve", PM: "approve", SITE: "view", DESIGN: "none", ENG: "none", QS: "approve", FIN: "approve", ADMIN: "view" },
+    handover:    { EXEC: "approve", PM: "approve", SITE: "edit", DESIGN: "edit", ENG: "edit", QS: "view", FIN: "none", ADMIN: "view" },
     svr:         { EXEC: "approve", PM: "approve", SITE: "edit", DESIGN: "edit", ENG: "edit", QS: "edit", FIN: "none", ADMIN: "view" },
     dashboard:   { EXEC: "admin", PM: "view", SITE: "none", DESIGN: "none", ENG: "none", QS: "admin", FIN: "view", ADMIN: "view" },
     stock:       { EXEC: "view", PM: "approve", SITE: "edit", DESIGN: "none", ENG: "view", QS: "view", FIN: "view", ADMIN: "admin" }
@@ -397,6 +415,8 @@
         evidence: EV("Downlight flickering ATM lobby", 0), close_evidence: [] },
       { id: "f4", project_id: "p2", location: "Floor 4 riser", description: "Tray cover not fixed", discipline: "Electrical", priority: "Medium", assigned_to: "s14", due_date: ahead(4), status: "Closed", photo: "", raised_by: "s32",
         evidence: EV("Tray cover missing", 3), correction: "Covers fixed with all screws.", close_evidence: EV("Tray covers fixed", 2), fixed_by: "s14", fixed_at: ts(3), closed_by: "s32", closed_at: ts(2), verify_note: "Checked on site, OK." }
+      ,{ id: "f5", project_id: "p1", location: "Level 3 · L3-C05 Sockets", description: "Test failed TC-101-002: insulation resistance L3-C05 (0.4 MΩ)", discipline: "Electrical", priority: "High", assigned_to: "s12", due_date: ahead(2), status: "Open", photo: "", raised_by: "s12",
+        evidence: [], close_evidence: [] }
     ];
 
     const safety = [
@@ -444,12 +464,80 @@
         lost_reason: "Client chose a cheaper local builder.", author_id: "s05", actions: [] }
     ];
 
+    const HH = (d, by, a, n) => ({ at: ts(d), by, action: a, note: n || "" });
+    const variations = [
+      { id: "vo1", vo_no: "VO-101-001", project_id: "p1", title: "Move pantry sink to east wall", reason: "Client changed the pantry layout at the site meeting.", asked_by: "Client (site meeting)", asked_date: ago(40), time_days: 2,
+        lines: [{ item: "Relocate sink, new water and drain lines", qty: 1, unit: "lot", rate: 2600 }, { item: "Wall tiling repair", qty: 8, unit: "m2", rate: 62 }], markup_pct: 5, amount: 3251, status: "In claim", claim_id: "ipc2",
+        evidence: [], client_evidence: [], client_ref: "Signed VO 15 Oct", raised_by: "s12", history: [HH(40, "s12", "Raised"), HH(38, "s33", "Priced"), HH(37, "s03", "PM checked"), HH(36, "s01", "MD approved price"), HH(35, "s03", "Sent to client"), HH(30, "s03", "Client approved"), HH(10, "s32", "Added to claim", "IPC 2")] },
+      { id: "vo2", vo_no: "VO-101-002", project_id: "p1", title: "Extra 24 data points, level 3", reason: "Client added 8 desks on level 3 after the layout was approved.", asked_by: "Client email", asked_date: ago(5), time_days: 3,
+        lines: [{ item: "Cat6 data point complete", qty: 24, unit: "no", rate: 185 }, { item: "Cable tray extension 150 mm", qty: 36, unit: "m", rate: 28 }, { item: "Patch panel 24 port + labelling", qty: 1, unit: "set", rate: 420 }], markup_pct: 5,
+        amount: 6203, status: "Sent to client", evidence: [{ type: "image", name: "layout.jpg", url: photo("Marked-up layout L3", 2) }], client_evidence: [], raised_by: "s12",
+        history: [HH(5, "s12", "Raised"), HH(4, "s33", "Priced"), HH(3, "s03", "PM checked"), HH(2, "s01", "MD approved price"), HH(1, "s03", "Sent to client")] },
+      { id: "vo3", vo_no: "VO-101-003", project_id: "p1", title: "Upgrade lobby downlights to dimmable", reason: "Architect instruction AI-07.", asked_by: "Architect", asked_date: ago(12), time_days: 0,
+        lines: [{ item: "Dimmable LED downlight 12 W", qty: 40, unit: "no", rate: 165 }, { item: "Dimmer module", qty: 4, unit: "no", rate: 380 }], markup_pct: 5, amount: 8526, status: "Client approved", evidence: [], client_evidence: [],
+        client_ref: "Client signed 18 Nov", raised_by: "s03", history: [HH(12, "s03", "Raised"), HH(11, "s33", "Priced"), HH(11, "s03", "PM checked"), HH(10, "s01", "MD approved price"), HH(9, "s03", "Sent to client"), HH(4, "s03", "Client approved")] },
+      { id: "vo4", vo_no: "VO-101-004", project_id: "p1", title: "Fire-rated door to server room", reason: "Fire consultant comment on drawing A-210.", asked_by: "Fire consultant", asked_date: ago(1), time_days: 0, lines: [], markup_pct: 5, amount: 0,
+        status: "Raised", evidence: [], client_evidence: [], raised_by: "s12", history: [HH(1, "s12", "Raised")] },
+      { id: "vo5", vo_no: "VO-103-001", project_id: "p3", title: "Extra power for ATM machines", reason: "Bank added 2 ATMs.", asked_by: "Client", asked_date: ago(6), time_days: 1,
+        lines: [{ item: "Dedicated 20 A circuit with UPS socket", qty: 2, unit: "no", rate: 640 }], markup_pct: 5, amount: 1344, status: "Priced", evidence: [], client_evidence: [], raised_by: "s16", history: [HH(6, "s16", "Raised"), HH(5, "s31", "Priced")] }
+    ];
+    const subcontractors = [
+      { id: "sc1", name: "Angkor MEP Works", trade: "Electrical", contact: "Mr. Sok Rith", phone: "012 300 111", telegram: "@angkormep", patent: true, vat: true, insurance_until: ahead(220), status: "Active", notes: "" },
+      { id: "sc2", name: "Mekong Ceiling Co.", trade: "Ceiling & partition", contact: "Ms. Dany", phone: "017 220 330", telegram: "", patent: true, vat: false, insurance_until: ahead(13), status: "Active", notes: "" },
+      { id: "sc3", name: "Cool Air Engineering", trade: "HVAC / MVAC", contact: "Mr. Vanna", phone: "011 888 120", telegram: "@coolair", patent: true, vat: true, insurance_until: ahead(300), status: "Active", notes: "" },
+      { id: "sc4", name: "Phnom Penh Plumbing", trade: "Plumbing", contact: "Mr. Dara", phone: "016 777 909", telegram: "", patent: true, vat: true, insurance_until: ahead(90), status: "Active", notes: "Slow on defects" },
+      { id: "sc5", name: "Bright Paint Team", trade: "Painting", contact: "Mr. Thy", phone: "015 404 202", telegram: "", patent: false, vat: false, insurance_until: null, status: "Active", notes: "Small team, no retention" }
+    ];
+    const RT = (d, by, q, t, s, n) => ({ at: ts(d), by, quality: q, time: t, safety: s, note: n || "" });
+    const sub_contracts = [
+      { id: "sk1", sub_id: "sc1", project_id: "p1", scope: "Electrical installation L1-L3", contract_value: 86000, retention_pct: 5, start_date: ago(110), end_date: ahead(80), status: "Active", ratings: [RT(30, "s03", 4, 4, 5, "Good cable work")], retention_released: false },
+      { id: "sk2", sub_id: "sc2", project_id: "p1", scope: "Ceiling and partitions", contract_value: 41500, retention_pct: 5, start_date: ago(60), end_date: ahead(50), status: "Active", ratings: [RT(20, "s03", 3, 3, 4, "Late on L2")], retention_released: false },
+      { id: "sk3", sub_id: "sc1", project_id: "p3", scope: "Electrical and ELV", contract_value: 62000, retention_pct: 5, start_date: ago(90), end_date: ahead(20), status: "Active", ratings: [RT(15, "s05", 5, 4, 5)], retention_released: false },
+      { id: "sk4", sub_id: "sc3", project_id: "p2", scope: "VRF and ventilation", contract_value: 126000, retention_pct: 10, start_date: ago(70), end_date: ahead(140), status: "Active", ratings: [RT(10, "s04", 5, 5, 5)], retention_released: false },
+      { id: "sk5", sub_id: "sc4", project_id: "p3", scope: "Plumbing and sanitary", contract_value: 52000, retention_pct: 5, start_date: ago(95), end_date: ahead(15), status: "Active", ratings: [RT(12, "s05", 2, 2, 4, "Two pipe leaks")], retention_released: false },
+      { id: "sk6", sub_id: "sc5", project_id: "p3", scope: "Painting banking hall", contract_value: 9800, retention_pct: 0, start_date: ago(20), end_date: ahead(10), status: "Active", ratings: [], retention_released: false }
+    ];
+    const SP2 = (d, by, a, n) => ({ at: ts(d), by, action: a, note: n || "" });
+    const sub_payments = [
+      { id: "pc1", contract_id: "sk1", pc_no: "PC-01", period_to: ago(70), claimed: 22000, certified: 21000, retention_amt: 1050, status: "Paid", note: "", evidence: [], history: [SP2(72, "s33", "Created"), SP2(71, "s33", "QS checked"), SP2(70, "s03", "PM approved"), SP2(66, "s36", "Paid")], paid_at: ts(66) },
+      { id: "pc2", contract_id: "sk1", pc_no: "PC-02", period_to: ago(40), claimed: 24000, certified: 22300, retention_amt: 1115, status: "Paid", note: "", evidence: [], history: [SP2(41, "s33", "Created"), SP2(40, "s33", "QS checked"), SP2(39, "s03", "PM approved"), SP2(35, "s36", "Paid")], paid_at: ts(35) },
+      { id: "pc3", contract_id: "sk1", pc_no: "PC-03", period_to: ago(3), claimed: 9800, certified: 9200, retention_amt: 460, status: "QS checked", note: "Less 600 for unfinished DB labels", evidence: [], history: [SP2(4, "s33", "Created"), SP2(3, "s33", "QS checked")] },
+      { id: "pc4", contract_id: "sk2", pc_no: "PC-01", period_to: ago(10), claimed: 16600, certified: 0, retention_amt: 0, status: "Claimed", note: "", evidence: [], history: [SP2(9, "s12", "Created")] },
+      { id: "pc5", contract_id: "sk4", pc_no: "PC-01", period_to: ago(20), claimed: 28000, certified: 27720, retention_amt: 2772, status: "PM approved", note: "", evidence: [], history: [SP2(21, "s31", "Created"), SP2(20, "s31", "QS checked"), SP2(18, "s04", "PM approved")] },
+      { id: "pc6", contract_id: "sk6", pc_no: "PC-01", period_to: ago(2), claimed: 4900, certified: 4900, retention_amt: 0, status: "PM approved", note: "No retention for this team", evidence: [], history: [SP2(3, "s31", "Created"), SP2(3, "s31", "QS checked"), SP2(2, "s05", "PM approved")] }
+    ];
+    const IR = (c, a, b, d) => ({ id: c, v1: a, v2: b, v3: d });
+    const tests = [
+      { id: "t1", test_no: "TC-101-001", project_id: "p1", system: "Electrical", test_type: "IR", location: "DB-L2", instrument: "Fluke 1507", instrument_sn: "44812", calib_until: ahead(120), limit_value: 1,
+        rows: [IR("L2-C01 Lighting", 200, 200, 180), IR("L2-C02 Lighting", 200, 150, 160), IR("L2-C03 Sockets", 200, 120, 140), IR("L2-C04 Sockets", 180, 200, 150)], result: "Pass", tested_by: "s12", witness: "Client engineer Mr. Heng", test_date: ago(6),
+        photos: [photo("IR meter reading DB-L2", 2)], defect_ids: [], note: "" },
+      { id: "t2", test_no: "TC-101-002", project_id: "p1", system: "Electrical", test_type: "IR", location: "DB-L3", instrument: "Fluke 1507", instrument_sn: "44812", calib_until: ahead(120), limit_value: 1,
+        rows: [IR("L3-C01 Lighting", 200, 200, 180), IR("L3-C05 Sockets", 0.6, 0.4, 95), IR("L3-C06 Sockets", 200, 120, 140)], result: "Fail", tested_by: "s12", witness: "", test_date: ago(2), photos: [photo("IR meter L3-C05", 1)], defect_ids: ["f5"], note: "C05 damaged cable in ceiling" },
+      { id: "t3", test_no: "TC-103-001", project_id: "p3", system: "Plumbing", test_type: "PT", location: "Riser water supply", instrument: "Pressure gauge 0-25 bar", instrument_sn: "PG-08", calib_until: ahead(40), limit_value: 0.2,
+        rows: [{ id: "Riser L1-L2", v1: 10, v2: 10, v3: 9.95, v4: 120 }, { id: "Toilet branch L1", v1: 10, v2: 10, v3: 10, v4: 120 }], result: "Pass", tested_by: "s16", witness: "", test_date: ago(9), photos: [], defect_ids: [], note: "" },
+      { id: "t4", test_no: "TC-103-002", project_id: "p3", system: "ELV", test_type: "CCTV", location: "Banking hall and ATM lobby", instrument: "", instrument_sn: "", calib_until: null, limit_value: null,
+        rows: [{ id: "CAM-01 Entrance", v1: "Yes", v2: "Yes", v3: "Yes" }, { id: "CAM-02 ATM lobby", v1: "Yes", v2: "Yes", v3: "Yes" }, { id: "CAM-03 Teller line", v1: "Yes", v2: "", v3: "" }], result: "Open", tested_by: "s17", witness: "", test_date: ago(0), photos: [], defect_ids: [], note: "" }
+    ];
+    const handover_items = [
+      { id: "h1", project_id: "p3", category: "As-built drawings", title: "Electrical as-built set (12 sheets)", status: "Received", due_date: ahead(10), evidence: [], note: "", updated_by: "s30" },
+      { id: "h2", project_id: "p3", category: "As-built drawings", title: "Plumbing as-built set (6 sheets)", status: "Pending", due_date: ahead(10), evidence: [], note: "", updated_by: "" },
+      { id: "h3", project_id: "p3", category: "O&M manuals", title: "CCTV and access control O&M manual", status: "Pending", due_date: ahead(14), evidence: [], note: "", updated_by: "" },
+      { id: "h4", project_id: "p3", category: "Keys & access cards", title: "Keys for DB rooms and riser doors (14 keys)", status: "Handed over", due_date: ahead(14), evidence: [], note: "Signed by bank facility", updated_by: "s05" },
+      { id: "h5", project_id: "p3", category: "Training", title: "Client training: CCTV NVR and access system", status: "Pending", due_date: ahead(15), evidence: [], note: "", updated_by: "" }
+    ];
+    const warranties = [
+      { id: "w1", project_id: "p3", item: "Split AC units (6 nos)", supplier: "Cool Air Engineering", start_date: ahead(15), end_date: ahead(15 + 730), evidence: [], note: "2 years parts and labour" },
+      { id: "w2", project_id: "p3", item: "CCTV NVR and 18 cameras", supplier: "Angkor MEP Works", start_date: ahead(15), end_date: ahead(15 + 365), evidence: [], note: "" },
+      { id: "w3", project_id: "p1", item: "Old lobby lighting (existing)", supplier: "Previous contractor", start_date: ago(700), end_date: ahead(30), evidence: [], note: "Ask client before touching" },
+      { id: "w4", project_id: "p5", item: "Access door controllers", supplier: "Angkor MEP Works", start_date: ago(300), end_date: ahead(12), evidence: [], note: "" }
+    ];
+
     const audit_log = [
       { id: "a1", at: ts(4), actor_id: "s33", action: "Permission change", tbl: "staff", record_id: "s32", summary: "Added QA/QC tag to Roeurn Rada" }
     ];
 
     const all = { staff, projects, project_members, tasks, daily_reports, requests, suppliers, purchase_orders, documents,
-      cost_lines, claims, invoices, inspections, defects, safety, site_visits, audit_log, stores, stock_items, stock_moves, monthly_costs, app_settings: [], notifications: [] };
+      cost_lines, claims, invoices, inspections, defects, safety, site_visits, variations, subcontractors, sub_contracts, sub_payments, tests, handover_items, warranties, audit_log, stores, stock_items, stock_moves, monthly_costs, app_settings: [], notifications: [] };
     // A few starting notifications so the bell is not empty in the demo
     let nn = 0;
     const N = (to_id, actor_id, hrs, title, body, tbl, record_id, read) => all.notifications.push({ id: "n" + (++nn), to_id, actor_id, title, body, tbl, record_id, read: !!read, at: new Date(Date.now() - hrs * 3600000).toISOString() });

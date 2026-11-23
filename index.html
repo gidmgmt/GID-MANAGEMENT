@@ -91,6 +91,7 @@
         '<p class="gate-note">Demo with sample data only. Ask the system admin for the passkey.</p></form></main>';
       var f = document.getElementById("gate"), pk = document.getElementById("pk"), err = document.getElementById("pkerr"), fails = 0, waitUntil = 0;
       pk.focus();
+      try { var kicked = sessionStorage.getItem("gid-kicked"); if (kicked) { err.textContent = kicked; err.classList.add("info"); sessionStorage.removeItem("gid-kicked"); } } catch (x) { /* ignore */ }
       document.getElementById("eye").onclick = function () { var show = pk.type === "password"; pk.type = show ? "text" : "password"; this.textContent = show ? "Hide" : "Show"; this.setAttribute("aria-label", show ? "Hide passkey" : "Show passkey"); };
       f.onsubmit = function (e) {
         e.preventDefault();

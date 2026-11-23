@@ -80,7 +80,7 @@ Every notification in the bell is also sent to the person's Telegram, with an **
 
 **B. Put the token into Supabase**
 1. Make sure you ran the new `schema.sql` (Step 2).
-2. Open `supabase/telegram-setup.sql` in Notepad. Replace only the token (the bot username and the demo link https://gid-management.netlify.app are already filled in).
+2. Open `supabase/telegram-setup.sql` in Notepad. Replace only the token (the bot username and the demo link https://gidmgmt.github.io/GID-MANAGEMENT/ are already filled in).
 3. Paste it into **SQL Editor → New query** and click **Run**. The last line should show `"ready": true`.
    (The token is kept if you run `schema.sql` again later.)
 
@@ -163,3 +163,24 @@ Paste `supabase/update-v15.sql` into Supabase → SQL Editor and press Run (staf
 
 Paste `supabase/update-v16.sql` into Supabase → SQL Editor and press Run. It adds the Site Visit Reports table and keeps all data.
 Until it is run, the Site visits page opens empty and new site visits cannot be saved; everything else works.
+
+## Updating an existing database (version 17)
+
+Paste `supabase/update-v17.sql` into Supabase → SQL Editor and press Run. It adds the tables for Variations, Subcontractors (contracts and payment claims), Tests, Handover items and Warranties, plus two project columns (handover date and defect liability months). All existing data is kept.
+The GID database (`bsqbdfpgsrsostronjyv`) already has this update. Until it is run on another database, those three pages open empty; everything else works.
+
+What is new in version 17:
+- Menu in groups (My work, Projects, Money & materials, Company).
+- Each project opens as its own page with tabs: Overview, Daily reports, Drawings, Requests, QA/QC, Safety, Variations, Subcontractors, Cost, Handover, Team. People only see the tabs their role allows.
+- Variations: Raised → QS prices → PM checks → MD approves the price → sent to client → client signed copy → added to an IPC claim.
+- Subcontractors: list with insurance and rating, contracts (retention 0%, 5% or 10%), payment claims QS → PM → Finance invoice → paid, retention release.
+- Handover: test sheets (insulation, earth, RCD, pressure, CCTV, data); a failed line raises a defect automatically. Handover checklist and warranties with end-date alerts.
+- Site reports work without internet: they are saved on the phone and sent when the connection comes back.
+
+## Updating an existing database (version 18)
+
+Paste `supabase/update-v18.sql` into Supabase → SQL Editor and press Run. It adds the `device_sessions` table and the `device_beat` function. All data is kept.
+The GID database already has this update.
+
+What is new in version 18: Settings → Devices shows every phone or computer that unlocked the app, who is using it, when it was last active and whether it is online now. The System Admin (and backup admin) can sign one device, or all other devices, out; that device locks within a minute and asks for the passkey again. The MD can see the list but not sign devices out. The lock button in the menu now also marks the device as signed out.
+Note: this is a demo control. Until real logins are added, it signs the app out on that device but does not stop a technical person from reading the database with the public key.

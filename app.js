@@ -83,10 +83,13 @@
       const res = await Promise.all(names.map((t) => this.client.from(t).select("*").limit(5000)));
       res.forEach(({ data, error }, i) => {
         // a table added in a newer version (for example site_visits) may not exist yet: start it empty instead of stopping the app
-        if (error && names[i] === "site_visits") { console.warn("site_visits table missing: run supabase/update-v16.sql"); db[names[i]] = []; this.missing = (this.missing || []).concat(names[i]); return; }
+        if (error && ["site_visits", "variations", "subcontractors", "sub_contracts", "sub_payments", "tests", "handover_items", "warranties"].includes(names[i])) { console.warn(names[i] + " table missing: run the newest supabase/update SQL"); db[names[i]] = []; this.missing = (this.missing || []).concat(names[i]); return; }
         if (error) throw new Error("Could not read table '" + names[i] + "': " + error.message + ". Did you run schema.sql in Supabase?");
         db[names[i]] = data || [];
       });
+      // reports saved on this phone without internet stay visible until they are sent
+      outbox().forEach((it) => { if (db[it.t] && !db[it.t].some((x) => x.id === it.row.id)) db[it.t].push(Object.assign({}, it.row, { photos: it.photos, _pending: true, created_at: it.at })); });
+      setTimeout(() => flushOutbox(true), 2000);
     },
     clean(t, row) { const out = { id: row.id, created_at: row.created_at }; for (const c of Object.keys(TABLES[t])) if (c in row) out[c] = row[c] === "" && TABLES[t][c] !== "text" ? null : row[c]; return out; },
     async insert(t, row) {
@@ -334,6 +337,48 @@
     return Store.client.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
   }
   async function storeFiles(list, prefix) { const out = []; for (let i = 0; i < (list || []).length; i++) out.push(await storeFile(list[i], prefix + "-" + (i + 1) + ".jpg")); return out; }
+  // ---------- OUTBOX: site reports made with no internet ----------
+  // The report (with its photos) is kept on the phone and sent by itself when the signal comes back.
+  // The time and GPS place are those of the moment the report was made, so it is not counted late because it uploaded late.
+  const OUTBOX_KEY = "gid-outbox";
+  const outbox = () => { try { return JSON.parse(localStorage.getItem(OUTBOX_KEY) || "[]"); } catch (e) { return []; } };
+  const setOutbox = (l) => { try { localStorage.setItem(OUTBOX_KEY, JSON.stringify(l)); return true; } catch (e) { toast("The phone's storage is full. Free some space, then try again.", true); return false; } };
+  const isNetErr = (e) => !navigator.onLine || /failed to fetch|networkerror|load failed|network request failed|fetch failed|timeout/i.test(String((e && e.message) || e));
+  const offlineNow = () => Store.mode === "supabase" && !navigator.onLine;
+  function queueOffline(t, row, photos, summary) {
+    const id = row.id || uid(), item = { qid: uid(), t, row: Object.assign({}, row, { id }), photos: photos || [], summary, at: nowIso(), by: state.user };
+    const l = outbox(); l.push(item); if (!setOutbox(l)) throw new Error("Could not save on this phone.");
+    // show it in the app straight away, marked as waiting
+    (db[t] = db[t] || []).push(Object.assign({}, item.row, { photos: item.photos, _pending: true, created_at: item.at }));
+    return db[t][db[t].length - 1];
+  }
+  let flushing = false;
+  async function flushOutbox(quiet) {
+    if (flushing || Store.mode !== "supabase" || !navigator.onLine) return 0;
+    const l = outbox(); if (!l.length) return 0;
+    flushing = true; let sent = 0;
+    try {
+      for (const it of l.slice()) {
+        try {
+          const photos = await storeFiles(it.photos, it.t === "daily_reports" ? "site" : "file");
+          const row = Object.assign({}, it.row, { photos }); delete row._pending;
+          const local = (db[it.t] || []).findIndex((x) => x.id === row.id); if (local >= 0) db[it.t].splice(local, 1);
+          await save(it.t, row, it.summary);
+          setOutbox(outbox().filter((x) => x.qid !== it.qid)); sent++;
+        } catch (e) { if (isNetErr(e)) break; console.warn("outbox item failed", e); }
+      }
+    } finally { flushing = false; }
+    if (sent) { render(); if (!quiet) toast(sent === 1 ? "1 saved report was sent." : sent + " saved reports were sent."); }
+    return sent;
+  }
+  window.addEventListener("online", () => setTimeout(() => flushOutbox(), 1500));
+  setInterval(() => { if (outbox().length) flushOutbox(true); }, 60000);
+  function outboxBar() {
+    const l = outbox(); if (!l.length) return "";
+    return `<div class="queue" role="status"><span class="sigdot"></span><span><b>${l.length} waiting to send</b><small>${esc(l.map((x) => x.label || x.summary).slice(0, 2).join(" · "))}${navigator.onLine ? " · sending…" : " · no internet"}</small></span>${navigator.onLine ? `<button class="btn small" data-act="${act(() => flushOutbox())}">Send now</button>` : ""}</div>`;
+  }
+  window.addEventListener("offline", () => { if (typeof render === "function") render(); });
+
   function readPdf(file) {
     const max = (Store.mode === "supabase" ? 20 : 1.5) * 1024 * 1024;
     if (file.type && file.type !== "application/pdf") return Promise.reject(new Error("Please choose a PDF file."));
@@ -518,9 +563,9 @@
   // Every save is logged. The people concerned by it get one notification per action (several saves from one tap are merged).
   const NOTE_MODULE = { requests: "requests", purchase_orders: "procurement", suppliers: "procurement", stock_moves: "stock", stock_items: "stock", stores: "stock", daily_reports: "daily",
     documents: "docs", tasks: "projects", projects: "projects", project_members: "projects", claims: "cost", cost_lines: "cost", monthly_costs: "cost", invoices: "finance",
-    defects: "qaqc", inspections: "qaqc", safety: "safety", site_visits: "svr", staff: "people", app_settings: "admin" };
+    defects: "qaqc", inspections: "qaqc", safety: "safety", site_visits: "svr", variations: "vo", subcontractors: "subs", sub_contracts: "subs", sub_payments: "subs", tests: "handover", handover_items: "handover", warranties: "handover", staff: "people", app_settings: "admin" };
   const NOTE_ICON = { requests: "requests", purchase_orders: "procurement", suppliers: "procurement", stock_moves: "stock", stock_items: "stock", stores: "stock", daily_reports: "daily", documents: "docs",
-    tasks: "projects", projects: "projects", project_members: "people", claims: "cost", cost_lines: "cost", monthly_costs: "cost", invoices: "finance", defects: "qaqc", inspections: "qaqc", safety: "safety", site_visits: "svr", staff: "people", app_settings: "admin" };
+    tasks: "projects", projects: "projects", project_members: "people", claims: "cost", cost_lines: "cost", monthly_costs: "cost", invoices: "finance", defects: "qaqc", inspections: "qaqc", safety: "safety", site_visits: "svr", variations: "vo", subcontractors: "subs", sub_contracts: "subs", sub_payments: "subs", tests: "handover", handover_items: "handover", warranties: "handover", staff: "people", app_settings: "admin" };
   const PREF_LABEL = { mine: "Only things for me", projects: "Everything on my projects", all: "Everything in the company" };
   function notifyPref(u) {
     const s = (db.app_settings || []).find((x) => x.key === "notify:" + u.id);
@@ -563,6 +608,10 @@
       case "projects": return [r.pm_id].concat(grp("PM"), ids("MD"));
       case "cost_lines": case "monthly_costs": return [pm(pid)].concat(grp("QS"));
       case "staff": return [r.id].concat(ids("MD"), ids("SYSADMIN"));
+      case "variations": { const st = r.status; return [r.raised_by, pm(pid)].concat(st === "Raised" ? grp("QS") : [], st === "PM checked" ? ids("MD") : [], VO_OK.includes(st) ? grp("QS").concat(ids("MD")) : []); }
+      case "sub_payments": { const k = byId("sub_contracts", r.contract_id) || {}; return [pm(k.project_id)].concat(r.status === "Claimed" ? grp("QS") : [], r.status === "PM approved" ? grp("FIN") : [], ids("MD").filter(() => r.status === "PM approved")); }
+      case "tests": return [r.tested_by, pm(pid)].concat(r.result === "Fail" ? ids("MD") : []);
+      case "warranties": case "handover_items": return [pm(pid)];
       case "site_visits": return ids("MD").concat(inGroup("PM").map((s) => s.id), split(r.visited_by), (r.actions || []).map((a) => a.who), [r.author_id]);
       case "app_settings": return ids("MD").concat(ids("SYSADMIN"), ids("BACKUPADMIN"));
       default: return [];
@@ -666,7 +715,8 @@
   function openRecord(tbl, id) {
     const r = byId(tbl, id);
     const map = { requests: openRequest, purchase_orders: openPO, daily_reports: openDaily, documents: openDoc, tasks: openTask, claims: openClaim, invoices: openInvoice, defects: openDefect, safety: openSafety,
-      inspections: openInspection, projects: openProject, staff: openPerson, stock_items: openItem, site_visits: openSvr };
+      inspections: openInspection, projects: openProject, staff: openPerson, stock_items: openItem, site_visits: openSvr,
+      variations: openVO, subcontractors: openSub, sub_payments: openPayment, tests: openTest, sub_contracts: (k) => openSub(byId("subcontractors", k.sub_id)) };
     if (tbl === "welcome") { const st = byId("staff", id); if (st) return openPerson(st); }
     if (tbl === "stock_moves" && r) return openItem(byId("stock_items", r.item_id));
     if (tbl === "project_members" && r) return openProject(byId("projects", r.project_id));
@@ -974,10 +1024,15 @@
 
   // ================= screens =================
   const SCREENS = {};
+  // Menu in groups. Each person sees only the items (and groups) their role allows.
   const NAV = [
-    ["dashboard", "Dashboard", "dashboard"], ["home", "My work", null], ["requests", "Requests", "requests"], ["projects", "Projects", "projects"],
-    ["daily", "Daily report", "daily"], ["svr", "Site visits", "svr"], ["docs", "Documents", "docs"], ["cost", "Cost & Claims", "cost"], ["procurement", "Procurement", "procurement"],
-    ["stock", "Stock", "stock"], ["finance", "Finance", "finance"], ["qaqc", "QA/QC", "qaqc"], ["safety", "Safety", "safety"], ["people", "People", "people"], ["admin", "Settings", "admin"]
+    ["dashboard", "Dashboard", "dashboard", ""],
+    ["home", "My work", null, "My work"], ["requests", "Requests", "requests", "My work"], ["daily", "Daily report", "daily", "My work"],
+    ["projects", "Projects", "projects", "Projects"], ["svr", "Site visits", "svr", "Projects"], ["docs", "Documents", "docs", "Projects"], ["qaqc", "QA/QC", "qaqc", "Projects"], ["safety", "Safety", "safety", "Projects"],
+    ["vo", "Variations", "vo", "Projects"], ["handover", "Handover", "handover", "Projects"],
+    ["cost", "Cost & Claims", "cost", "Money & materials"], ["subs", "Subcontractors", "subs", "Money & materials"], ["procurement", "Procurement", "procurement", "Money & materials"],
+    ["stock", "Stock", "stock", "Money & materials"], ["finance", "Finance", "finance", "Money & materials"],
+    ["people", "People", "people", "Company"], ["admin", "Settings", "admin", "Company"]
   ];
   const navVisible = (u, mod) => mod === null || (mod === "admin" ? isAdminPage(u) : mod === "svr" ? svrAccess(u) : can(u, mod, "view") || level(u, mod) === "own");
 
@@ -996,6 +1051,12 @@
     db.claims.filter((c) => claimActionsFor(u, c).length).forEach((c) => todo.push({ kind: "IPC claim", text: `${projLabel(c.project_id)} IPC ${c.ipc_no}`, sub: c.status + " · " + money(c.claimed), go: () => openClaim(c) }));
     if (can(u, "finance", "admin")) db.invoices.filter((i) => i.status === "Unpaid" && i.direction === "Payable").forEach((i) => todo.push({ kind: "Pay", text: `${i.inv_no} ${i.party}`, sub: money(i.amount) + " · due " + fmtDate(i.due_date), go: () => openInvoice(i) }));
     db.tasks.filter((t) => t.assignee_id === u.id && t.status !== "Done").forEach((t) => todo.push({ kind: "Task", text: t.title, sub: projLabel(t.project_id) + " · due " + fmtDate(t.due_date), go: () => openTask(t) }));
+    // variations, subcontractor payments, warranties and insurance waiting for this person
+    const mineP = (pid) => hasTag(u, "MD") || isQS(u) || isSysAdmin(u) || can(u, "finance", "admin") || (byId("projects", pid) || {}).pm_id === u.id;
+    db.variations.filter((v) => inScope(u, v.project_id) && (mineP(v.project_id) || v.raised_by === u.id) && !["In claim", "Client rejected", "Cancelled"].includes(v.status)).forEach((v) => { const a = voActions(u, v).filter((x) => !["Cancelled", "Raised"].includes(x[1]) || x[0] === "Price it"); if (a.length) todo.push({ kind: "Variation", text: v.vo_no + " " + v.title, sub: v.status + (v.amount ? " · " + money(v.amount) : "") + " · next: " + a[a.length - 1][0], go: () => openVO(v) }); });
+    db.sub_payments.filter((x) => x.status !== "Paid").forEach((x) => { const k = byId("sub_contracts", x.contract_id); if (!k || !inScope(u, k.project_id) || !mineP(k.project_id)) return; const a = payActions(u, x, k); if (a.length) todo.push({ kind: "Sub payment", text: ((byId("subcontractors", k.sub_id) || {}).name || "") + " " + x.pc_no, sub: projLabel(k.project_id) + " · " + money(x.status === "Claimed" ? x.claimed : x.certified - x.retention_amt) + " · " + a[a.length - 1][0], go: () => openPayment(x) }); });
+    if (canManageProject(u) || hasTag(u, "MD")) db.warranties.filter((w) => inScope(u, w.project_id) && wDays(w) >= 0 && wDays(w) <= 60 && (hasTag(u, "MD") || isPMof(u, w.project_id))).forEach((w) => todo.push({ kind: "Warranty", text: w.item + " ends in " + wDays(w) + " days", sub: projLabel(w.project_id) + " · " + (w.supplier || ""), go: () => warrantyForm(u, w.project_id, w) }));
+    if (can(u, "subs", "approve") && (hasTag(u, "MD") || hasTag(u, "PROC") || isQS(u))) db.subcontractors.filter((sc) => sc.status === "Active" && insDays(sc) != null && insDays(sc) <= 30).forEach((sc) => todo.push({ kind: "Insurance", text: sc.name + (insDays(sc) < 0 ? " insurance expired" : " insurance ends in " + insDays(sc) + " days"), sub: sc.trade, go: () => openSub(sc) }));
     if (svrAccess(u)) db.site_visits.filter((v) => ["Lead", "Quoted"].includes(v.status)).forEach((v) => (v.actions || []).filter((a) => a.who === u.id && !a.done).forEach((a) => todo.push({ kind: "Site visit", text: a.action, sub: v.svr_no + " · " + v.client + (a.by ? " · by " + fmtDate(a.by) : ""), go: () => openSvr(v) })));
     db.defects.filter((f) => f.assigned_to === u.id && f.status === "Open").forEach((f) => todo.push({ kind: "Defect", text: f.description, sub: projLabel(f.project_id) + " · " + f.location, go: () => openDefect(f) }));
 
@@ -1295,7 +1356,9 @@
     openModal("Progress · " + p.code, body(), wire);
   }
 
-  function openProject(p) {
+  // Opening a project goes to its own page with tabs
+  function openProject(p) { if (p) go("projects/" + encodeURIComponent(p.id)); }
+  function openProjectModal(p) {
     const u = me();
     const canEdit = canManageProject(u);
     const acts = (canUpdateProgress(u, p) ? btn("Update progress", () => updateProgress(p), canEdit ? "" : "primary") : "")
@@ -1395,6 +1458,7 @@
   }
 
   SCREENS.projects = (u) => {
+    if (state.pid) { const pp = byId("projects", state.pid); if (pp && inScope(u, pp.id)) return projectPage(u, pp); }
     const T = tabs("projects", [["projects", "Projects"], ["tasks", "Tasks"]]);
     if (T.cur === "projects") {
       const rows = myProjects(u).filter((p) => matchSearch(p, ["code", "name", "client"]));
@@ -1497,7 +1561,8 @@
         <div class="field"><span>Photos ${s === "Morning" ? "(optional)" : "*"}</span><input type="file" accept="image/*" multiple id="sd-ph">
           <div class="capgrid">${f.photos.map((p, i) => `<div class="cap"><span class="ph"><img src="${p}" alt="Photo ${i + 1}"><button type="button" class="rm" data-prm="${i}" aria-label="Remove photo">×</button></span><input data-cap="${i}" placeholder="Caption for photo ${i + 1}" value="${esc(f.captions[i] || "")}"></div>`).join("")}</div>
           <small>Add as many photos as you need, then write a short caption under each one. Captions go into the PDF report.</small></div>
-        <div class="form-actions"><button type="button" class="btn" data-act="${act(modalBack)}">Cancel</button><button type="button" class="btn primary" id="sd-go">Send ${s.toLowerCase()} report</button></div>`;
+        ${offlineNow() ? '<div class="offline"><span class="sigdot"></span><span><b>No internet on site</b>You can still fill in and save this report. It will send by itself when the signal comes back. The time and place are recorded now.</span></div>' : ""}
+        <div class="form-actions"><button type="button" class="btn" data-act="${act(modalBack)}">Cancel</button><button type="button" class="btn" id="sd-copy">Copy last report</button><button type="button" class="btn primary" id="sd-go">${offlineNow() ? "Save · send when online" : "Send " + s.toLowerCase() + " report"}</button></div>`;
     };
     const paint = () => {
       const m = $("#modal .modal-body"); m.innerHTML = body();
@@ -1511,6 +1576,14 @@
       m.querySelectorAll("[data-cap]").forEach((el) => el.addEventListener("input", () => { f.captions[el.dataset.cap] = el.value; }));
       m.querySelectorAll("[data-prm]").forEach((b) => b.onclick = () => { const i = Number(b.dataset.prm); f.photos.splice(i, 1); f.captions.splice(i, 1); f.times.splice(i, 1); paint(); });
       $("#sd-ph", m).onchange = async (e) => { for (const file of e.target.files) { try { f.photos.push(await compressImage(file)); f.captions.push(""); f.times.push(nowHM()); } catch (x) { toast("Could not read a photo", true); } } paint(); };
+      $("#sd-copy", m).onclick = () => {
+        const last = db.daily_reports.filter((d) => d.kind !== "Design" && d.author_id === u.id && d.project_id === f.project_id).sort((a, b) => String(b.submitted_at || b.report_date).localeCompare(String(a.submitted_at || a.report_date)));
+        const same = last.find((d) => (d.session || "End of day") === f.session) || last[0];
+        if (!same) { toast("No earlier report on this project to copy.", true); return; }
+        f.weather = same.weather || f.weather; f.trades = (same.trades || []).map((t) => ({ trade: t.trade, workers: String(t.workers) })); if (!f.trades.length) f.trades = [{ trade: "", workers: "" }];
+        f.manpower = same.manpower != null ? String(same.manpower) : ""; f.plan = same.plan || ""; f.safety_note = same.safety_note || ""; f.work_done = f.session === "Morning" ? "" : (same.work_done || "");
+        paint(); toast("Copied from " + fmtDate(same.report_date) + ". Check and change what is different today.");
+      };
       $("#sd-go", m).onclick = async (e) => {
         const s = sess(), trades = f.trades.filter((t) => t.trade && Number(t.workers) > 0).map((t) => ({ trade: t.trade, workers: Number(t.workers) }));
         const workers = f.manpower !== "" ? Number(f.manpower) : sum(trades, (t) => t.workers);
@@ -1527,8 +1600,21 @@
           if (lc.loc_status === "Away from site" || lc.loc_status === "No location") need(String(f.loc_note || "").trim(), "Give the reason why the report is not sent from site.");
           e.target.disabled = true; e.target.textContent = "Sending…";
           const sentAt = nowIso(), li = lateInfo(sentAt, s);
-          const photos = await storeFiles(f.photos, "site");
-          const rec = await save("daily_reports", { kind: "Site", session: s, project_id: f.project_id, report_date: f.report_date, author_id: u.id, weather: f.weather, manpower: workers, trades,
+          const caps = f.photos.map((_, i) => (f.captions[i] || "").trim() || (f.times[i] ? "Photo taken " + f.times[i] : ""));
+          const base = { kind: "Site", session: s, project_id: f.project_id, report_date: f.report_date, author_id: u.id, weather: f.weather, manpower: workers, trades,
+            work_done: f.work_done.trim(), issues: s === "End of day" ? f.issues.trim() : "", plan: f.plan.trim(), safety_note: f.safety_note.trim(), ot_start: s === "Overtime" ? f.ot_start : "", ot_end: s === "Overtime" ? f.ot_end : "",
+            captions: caps, photo: "", entries: [], status: "Submitted", reviewed_by: "", submitted_at: sentAt,
+            lat: pos && !pos.error ? pos.lat : null, lng: pos && !pos.error ? pos.lng : null, loc_acc: pos && !pos.error ? pos.acc : null, distance_m: lc.distance_m, loc_status: lc.loc_status,
+            loc_note: lc.loc_status === "On site" ? "" : String(f.loc_note || "").trim(), late: li.late, late_minutes: li.late_minutes };
+          const summ = projLabel(f.project_id) + " " + s.toLowerCase() + " report " + f.report_date + (li.late ? " · LATE, sent " + timeOf(sentAt) : "") + (lc.loc_status === "Away from site" ? " · away from site " + fmtDist(lc.distance_m) : "");
+          const goOffline = () => { const r = queueOffline("daily_reports", base, f.photos.slice(), summ); const ob = outbox(); ob[ob.length - 1].label = s + " report " + projLabel(f.project_id); setOutbox(ob);
+            try { localStorage.removeItem("gid-draft-" + u.id); } catch (x) { /* ignore */ }
+            render(); closeAllModals(); toast("No internet. The report is saved on this phone and will send by itself.", false); };
+          if (offlineNow()) { goOffline(); return; }
+          let photos;
+          try { photos = await storeFiles(f.photos, "site"); } catch (netE) { if (isNetErr(netE)) { goOffline(); return; } throw netE; }
+          let rec;
+          try { rec = await save("daily_reports", { kind: "Site", session: s, project_id: f.project_id, report_date: f.report_date, author_id: u.id, weather: f.weather, manpower: workers, trades,
             work_done: f.work_done.trim(), issues: s === "End of day" ? f.issues.trim() : "", plan: f.plan.trim(), safety_note: f.safety_note.trim(), ot_start: s === "Overtime" ? f.ot_start : "", ot_end: s === "Overtime" ? f.ot_end : "",
             photos, captions: f.photos.map((_, i) => (f.captions[i] || "").trim() || (f.times[i] ? "Photo taken " + f.times[i] : "")), photo: "", entries: [], status: "Submitted", reviewed_by: "", submitted_at: sentAt,
             lat: pos && !pos.error ? pos.lat : null, lng: pos && !pos.error ? pos.lng : null, loc_acc: pos && !pos.error ? pos.acc : null, distance_m: lc.distance_m, loc_status: lc.loc_status,
@@ -1536,6 +1622,8 @@
             // With the shared database the server sets the send time and the late flag, so a wrong phone clock cannot change them
             late: Store.mode === "supabase" ? null : li.late, late_minutes: Store.mode === "supabase" ? -1 : li.late_minutes },
             (r) => projLabel(f.project_id) + " " + s.toLowerCase() + " report " + r.report_date + (r.late ? " · LATE, sent " + timeOf(r.submitted_at) : "") + (lc.loc_status === "Away from site" ? " · away from site " + fmtDist(lc.distance_m) : lc.loc_status === "No location" ? " · no location" : ""));
+          } catch (netE) { if (isNetErr(netE)) { goOffline(); return; } throw netE; }
+          try { localStorage.removeItem("gid-draft-" + u.id); } catch (x) { /* ignore */ }
           render(); dropModal(); // the sent form is finished: Report sent takes its place
           openModal("Report sent", `<div class="sent"><div class="tick">✓</div><p><b>${esc(projLabel(rec.project_id))} · ${esc(s)} report</b><br>${photos.length} photo${photos.length === 1 ? "" : "s"} · sent ${esc(timeOf(rec.submitted_at || sentAt))}</p>
             <p class="quick" style="justify-content:center">${locChip(rec)}${lateChip(rec)}</p>${rec.late ? `<p class="muted small">Morning reports are due before ${LATE_AT}. Your PM and the MD have been told.</p>` : ""}
@@ -1644,9 +1732,9 @@
         ${toolbar(u, { project: false, buttons: btns })}
         ${table([{ label: "Date", get: (d) => fmtDate(d.report_date) }, { label: "Designer", get: (d) => `<b>${esc(staffName(d.author_id))}</b>` },
           { label: "Hours", get: (d) => esc(sum(d.entries || [], (x) => x.hours)) }, { label: "Worked on", get: (d) => esc((d.entries || []).map((x) => x.label.split(" ").slice(0, 4).join(" ")).join(" · ").slice(0, 90)) },
-          { label: "Status", get: (d) => badge(d.status) + (reportPhotos(d).length ? " 📷" : "") }], rows, openDaily)}`;
+          { label: "Status", get: (d) => (d._pending ? '<span class="chip w">Waiting to send</span>' : badge(d.status)) + (reportPhotos(d).length ? " 📷" : "") }], rows, openDaily)}`;
     }
-    const exp = siteExpected(u);
+    const exp = siteExpected(u).filter((x) => !state.project || x.m.project_id === state.project);
     const rows = db.daily_reports.filter((d) => d.kind !== "Design" && inScope(u, d.project_id)).filter(byProjectFilter).filter((d) => matchSearch(d, ["work_done", "issues"]))
       .sort((a, b) => String(b.report_date).localeCompare(String(a.report_date)) || String(b.submitted_at || "").localeCompare(String(a.submitted_at || "")));
     return `<h1>Daily Reports</h1><p class="muted">Site engineers report up to three times a day per project: Morning, End of day (5 PM) and Overtime. Each report can be downloaded as a PDF photo report in English or Khmer.</p>${T.html}
@@ -1657,7 +1745,7 @@
         { label: "Workers", get: (d) => esc(d.manpower) }, { label: "Work done", get: (d) => esc(String((d.session === "Morning" ? d.plan : d.work_done) || "").replace(/\n/g, " · ").slice(0, 80)) },
         { label: "Photos", get: (d) => { const ph = reportPhotos(d); return ph.length ? `<span class="thumbs">${ph.slice(0, 3).map((p) => `<img src="${esc(p)}" alt="" loading="lazy">`).join("")}${ph.length > 3 ? `<b>+${ph.length - 3}</b>` : ""}</span>` : ""; } },
         { label: "Location", get: (d) => locChip(d) || '<span class="muted small">not recorded</span>' },
-        { label: "Status", get: (d) => badge(d.status) + (d.issues ? ' <span class="late">issue</span>' : "") }], rows, openDaily)}`;
+        { label: "Status", get: (d) => (d._pending ? '<span class="chip w">Waiting to send</span>' : badge(d.status)) + (d.issues ? ' <span class="late">issue</span>' : "") + (reportPhotos(d).length ? " 📷" : "") }], rows, openDaily)}`;
   };
 
   // ---------- DOCUMENT CONTROL ----------
@@ -1745,7 +1833,8 @@
       await patch("claims", c.id, p, projLabel(c.project_id) + " IPC " + c.ipc_no + ": " + next);
     };
     const fields = next === "Invoiced" ? [{ name: "certified", label: "Amount certified by client (USD)", type: "number", value: c.claimed, required: true }, { name: "note", label: "Comment", type: "textarea" }] : [{ name: "note", label: "Comment", type: "textarea" }];
-    detail(projLabel(c.project_id) + " · IPC " + c.ipc_no, [["Period", esc(c.period)], ["Claimed", money(c.claimed)], ["Certified", c.certified ? money(c.certified) : ""], ["Status", badge(c.status)]],
+    const vos = db.variations.filter((v) => v.claim_id === c.id);
+    detail(projLabel(c.project_id) + " · IPC " + c.ipc_no, [["Period", esc(c.period)], ["Claimed", money(c.claimed)], vos.length ? ["Variations included", vos.map((v) => `<a href="#" data-act="${act(() => openVO(v))}">${esc(v.vo_no)}</a> ${money(v.amount)}`).join(" · ") + " = <b>" + money(sum(vos, (v) => v.amount)) + "</b>"] : null, ["Certified", c.certified ? money(c.certified) : ""], ["Status", badge(c.status)]],
       next ? btn(next === "Invoiced" ? "Raise invoice" : "Mark " + next, () => confirmAction(next + " · IPC " + c.ipc_no, fields, run), "primary") : "",
       `<h4>Route</h4><ol class="steps">${CLAIM_FLOW.map((s, i) => `<li class="${i <= CLAIM_FLOW.indexOf(c.status) ? "done" : ""}"><b>${esc(s)}</b></li>`).join("")}</ol>${historyHtml(c.history)}`);
   }
@@ -1835,10 +1924,11 @@
     const u = me();
     const canPay = i.status === "Unpaid" && can(u, "finance", "admin");
     detail(i.inv_no + " · " + i.party, [["Type", esc(i.direction)], ["Project", esc(projLabel(i.project_id))], ["Amount", money(i.amount)], ["Due", fmtDate(i.due_date)],
-      ["Status", badge(i.status)], ["Paid on", i.paid_at ? fmtDate(i.paid_at) : ""], ["Source", esc(i.source_type === "po" ? (byId("purchase_orders", i.source_id) || {}).po_no : i.source_type === "claim" ? "IPC claim" : i.source_type)]],
+      ["Status", badge(i.status)], ["Paid on", i.paid_at ? fmtDate(i.paid_at) : ""], ["Source", esc(i.source_type === "po" ? (byId("purchase_orders", i.source_id) || {}).po_no : i.source_type === "claim" ? "IPC claim" : i.source_type === "sub_payment" ? "Subcontractor payment " + ((byId("sub_payments", i.source_id) || {}).pc_no || "") : i.source_type === "retention" ? "Retention release" : i.source_type)]],
       canPay ? btn(i.direction === "Payable" ? "Mark paid" : "Mark received", async () => {
         await patch("invoices", i.id, { status: "Paid", paid_at: nowIso() }, i.inv_no + (i.direction === "Payable" ? " paid" : " received"));
         if (i.source_type === "po") await patch("purchase_orders", i.source_id, { status: "Paid" }, "PO paid");
+        if (i.source_type === "sub_payment") { const x = byId("sub_payments", i.source_id); if (x && x.status !== "Paid") await patch("sub_payments", x.id, { status: "Paid", paid_at: nowIso(), history: (x.history || []).concat([{ at: nowIso(), by: u.id, action: "Paid", note: i.inv_no }]) }, x.pc_no + " paid"); }
         if (i.source_type === "claim") { const c = byId("claims", i.source_id); if (c) await patch("claims", c.id, { status: "Paid", history: (c.history || []).concat([{ at: nowIso(), by: u.id, action: "Paid", note: "Client payment received" }]) }, "IPC paid"); }
         closeModal(); render(); toast("Saved");
       }, "primary") : "");
@@ -2404,6 +2494,497 @@
       footLeft: L.generated + " " + esc(pdfGenerated()), pageLabel: L.page });
   }
 
+  // ================= SHARED for the new modules =================
+  const stars = (n) => { n = Math.round(Number(n) || 0); return `<span class="stars" aria-label="${n} of 5">${"★".repeat(n)}<s>${"★".repeat(5 - n)}</s></span>`; };
+  const chip = (t, k) => `<span class="chip ${k || "n"}">${esc(t)}</span>`;
+  const kpis5 = (list) => `<div class="kp">${list.filter(Boolean).map(([l, v, s, cls]) => `<div><small>${esc(l)}</small><b class="${cls || ""}">${v}</b>${s ? `<small>${s}</small>` : ""}</div>`).join("")}</div>`;
+  const stepper = (flow, cur, done) => `<div class="step">${flow.map(([k, l, who], i) => { const ci = flow.findIndex((f) => f[0] === cur); const st = done || i < ci ? "ok" : i === ci ? "cur" : ""; return `<div class="${st}" data-n="${i + 1}">${esc(l)}<br><small>${esc(who)}</small></div>`; }).join("")}</div>`;
+  const histList = (h) => (h || []).length ? `<ul class="hist">${h.slice().reverse().map((x) => `<li><small>${esc(fmtDate(x.at))} ${esc(timeOf(x.at))} · ${esc(staffName(x.by))}</small><br><b>${esc(x.action)}</b>${x.note ? " · " + esc(x.note) : ""}</li>`).join("")}</ul>` : "";
+  function nextCode(list, field, prefix, pad) { const n = Math.max(0, ...list.map((x) => { const m = String(x[field] || "").match(/(\d+)$/); return String(x[field] || "").startsWith(prefix) && m ? Number(m[1]) : 0; })); return prefix + String(n + 1).padStart(pad || 3, "0"); }
+  const projShort = (p) => p ? String(p.code || "").replace(/^[A-Z]+-/, "") : "";
+  const sfCss = () => { if (!document.getElementById("sf-css")) { const st = document.createElement("style"); st.id = "sf-css"; st.textContent = SF_CSS; document.head.appendChild(st); } };
+
+  // ================= VARIATION ORDERS =================
+  // Raised (site/PM) → priced by QS → checked by PM → MD approves the price → sent to the client → client approves (signed copy) → added to an IPC claim
+  const VO_FLOW = [["Raised", "Raised", "Site / PM"], ["Priced", "Priced", "QS"], ["PM checked", "Checked", "PM"], ["MD approved", "Price approved", "MD"], ["Sent to client", "Sent to client", "PM"], ["Client approved", "Client approved", "signed copy"], ["In claim", "In claim", "next IPC"]];
+  const VO_OK = ["Client approved", "In claim"];
+  const voSum = (lines, markup) => Math.round((lines || []).reduce((a, l) => a + (Number(l.qty) || 0) * (Number(l.rate) || 0), 0) * (1 + (Number(markup) || 0) / 100));
+  const voApproved = (pid) => sum(db.variations.filter((v) => v.project_id === pid && VO_OK.includes(v.status)), (v) => v.amount);
+  const revisedContract = (p) => Number(p.contract_value || 0) + voApproved(p.id);
+  const isQS = (u) => groupsOf(u).includes("QS");
+  function voActions(u, v) {
+    const pm = isPMof(u, v.project_id) || hasTag(u, "MD"), out = [];
+    const step = (label, to, cls, fields, extra) => out.push([label, to, cls, fields, extra]);
+    if (["Raised", "Priced"].includes(v.status) && (isQS(u) || isSysAdmin(u))) step(v.status === "Raised" ? "Price it" : "Change price", "price", v.status === "Raised" ? "primary" : "");
+    if (v.status === "Priced" && pm) { step("Back to QS", "Raised", "", [{ name: "note", label: "What to change", type: "textarea", required: true }]); step("PM checked", "PM checked", "primary"); }
+    if (v.status === "PM checked" && hasTag(u, "MD")) { step("Back to QS", "Raised", "", [{ name: "note", label: "What to change", type: "textarea", required: true }]); step("Approve price", "MD approved", "primary"); }
+    if (v.status === "MD approved" && (pm || isQS(u))) step("Sent to client", "Sent to client", "primary", [{ name: "client_ref", label: "How it was sent", value: "Email to client", required: true }]);
+    if (v.status === "Sent to client" && (pm || isQS(u))) {
+      step("Client rejected", "Client rejected", "danger", [{ name: "note", label: "Why did the client reject it?", type: "textarea", required: true }]);
+      step("Client approved", "Client approved", "primary", [{ name: "client_evidence", label: "Client signed copy", type: "evidence", required: true, requiredMsg: "Attach the signed VO, the client's email or a photo of the signature.", help: "Required. Signed VO, client email (PDF) or a photo." }, { name: "note", label: "Note" }]);
+    }
+    if (v.status === "Client approved" && (isQS(u) || pm)) step("Add to claim", "claim", "primary");
+    if (["Raised", "Priced", "PM checked"].includes(v.status) && (v.raised_by === u.id || pm)) step("Cancel VO", "Cancelled", "danger", [{ name: "note", label: "Why?", type: "textarea", required: true }]);
+    return out;
+  }
+  async function voMove(v, to, x) {
+    const u = me(), hist = (v.history || []).concat([{ at: nowIso(), by: u.id, action: to === "Raised" ? "Back to QS" : to === "MD approved" ? "MD approved price" : to, note: (x && (x.note || x.client_ref)) || "" }]);
+    const p = { status: to, history: hist };
+    if (x && x.client_ref) p.client_ref = x.client_ref;
+    if (x && x.client_evidence) p.client_evidence = await storeEvidence(x.client_evidence, "vo-client");
+    await patch("variations", v.id, p, v.vo_no + " " + v.title + ": " + to);
+  }
+  function newVO(u, pid) {
+    formModal("New variation", [
+      { name: "project_id", label: "Project", type: "select", options: projectOptions(u), required: true, value: pid || state.project },
+      { name: "title", label: "What is the change?", required: true, help: "Example: Extra 24 data points, level 3" },
+      { name: "reason", label: "Why (who asked, what changed)", type: "textarea", required: true },
+      { name: "asked_by", label: "Asked by", type: "select", options: ["Client", "Client (site meeting)", "Client email", "Architect", "Consultant", "Site condition", "GID (our proposal)"] },
+      { name: "asked_date", label: "Date asked", type: "date", value: today() },
+      { name: "evidence", label: "Photos or files (optional)", type: "evidence", help: "Client email, marked-up drawing or site photos" }
+    ], async (x) => {
+      const p = byId("projects", x.project_id);
+      x.evidence = await storeEvidence(x.evidence || [], "vo");
+      await save("variations", Object.assign(x, { vo_no: nextCode(db.variations, "vo_no", "VO-" + projShort(p) + "-"), status: "Raised", lines: [], markup_pct: 5, amount: 0, time_days: 0, client_evidence: [], raised_by: u.id,
+        history: [{ at: nowIso(), by: u.id, action: "Raised", note: "" }] }), (r) => r.vo_no + " raised: " + r.title);
+    }, "Raise variation");
+  }
+  function priceVO(v) {
+    let lines = (v.lines || []).map((l) => Object.assign({}, l)); if (!lines.length) lines = [{ item: "", qty: 1, unit: "lot", rate: 0 }];
+    const rowsHtml = () => lines.map((l, i) => `<div class="voline" data-i="${i}"><input class="l-item" placeholder="Item" value="${esc(l.item)}"><input class="l-qty num" type="number" step="any" inputmode="decimal" value="${esc(l.qty)}" aria-label="Quantity" placeholder="Qty"><input class="l-unit" value="${esc(l.unit)}" aria-label="Unit" placeholder="Unit"><input class="l-rate num" type="number" step="any" inputmode="decimal" value="${esc(l.rate)}" aria-label="Rate USD" placeholder="Rate $"><b class="l-amt"></b><button type="button" class="rm" data-rm="${i}" aria-label="Remove line">×</button></div>`).join("");
+    openModal("Price · " + v.vo_no, `<form id="voform"><p class="muted small">${esc(v.title)}</p><div class="voline head"><span>Item</span><span>Qty</span><span>Unit</span><span>Rate $</span><span>Amount</span><span></span></div><div id="vo-lines">${rowsHtml()}</div>
+      <button type="button" class="btn small" id="vo-add">+ Add line</button>
+      <div class="grid3f" style="margin-top:12px"><label class="field"><span>Overhead & profit %</span><input id="vo-mk" type="number" step="any" value="${esc(v.markup_pct == null ? 5 : v.markup_pct)}"></label><label class="field"><span>Extra time (days)</span><input id="vo-days" type="number" value="${esc(v.time_days || 0)}"></label><div class="field"><span>Total variation</span><b id="vo-total" class="vo-total"></b></div></div>
+      <div class="form-actions"><button type="button" class="btn" data-act="${act(modalBack)}">Cancel</button><button type="submit" class="btn primary">Save price</button></div></form>`, (m) => {
+      const f = m.querySelector("#voform");
+      const read = () => f.querySelectorAll(".voline[data-i]").forEach((r) => { const l = lines[r.dataset.i]; l.item = r.querySelector(".l-item").value; l.qty = Number(r.querySelector(".l-qty").value) || 0; l.unit = r.querySelector(".l-unit").value; l.rate = Number(r.querySelector(".l-rate").value) || 0; r.querySelector(".l-amt").textContent = money(l.qty * l.rate); });
+      const calc = () => { read(); f.querySelector("#vo-total").textContent = money(voSum(lines, f.querySelector("#vo-mk").value)); };
+      const paint = () => { f.querySelector("#vo-lines").innerHTML = rowsHtml(); f.querySelectorAll("[data-rm]").forEach((b) => b.onclick = () => { read(); lines.splice(Number(b.dataset.rm), 1); if (!lines.length) lines.push({ item: "", qty: 1, unit: "lot", rate: 0 }); paint(); }); calc(); translateNow(f); };
+      f.addEventListener("input", calc); f.querySelector("#vo-add").onclick = () => { read(); lines.push({ item: "", qty: 1, unit: "no", rate: 0 }); paint(); }; paint();
+      f.addEventListener("submit", async (e) => {
+        e.preventDefault(); read(); const ls = lines.filter((l) => l.item.trim());
+        if (!ls.length) { toast("Add at least one priced line.", true); return; }
+        const mk = Number(f.querySelector("#vo-mk").value) || 0, amount = voSum(ls, mk);
+        try { await patch("variations", v.id, { lines: ls, markup_pct: mk, time_days: Number(f.querySelector("#vo-days").value) || 0, amount, status: "Priced", history: (v.history || []).concat([{ at: nowIso(), by: me().id, action: "Priced", note: money(amount) }]) }, v.vo_no + " priced: " + money(amount));
+          closeModal(); render(); toast(v.vo_no + " priced: " + money(amount)); } catch (err) { toast(err.message, true); }
+      });
+    });
+  }
+  function voToClaim(v) {
+    const open = db.claims.filter((c) => c.project_id === v.project_id && c.status !== "Paid").sort((a, b) => b.ipc_no - a.ipc_no);
+    if (!open.length) { toast("There is no open IPC claim for this project. Ask the QS to create the next IPC first.", true); return; }
+    formModal("Add to claim · " + v.vo_no, [{ name: "claim_id", label: "IPC claim", type: "select", options: open.map((c) => [c.id, "IPC " + c.ipc_no + " · " + c.period + " · " + c.status]), required: true }], async (x) => {
+      const c = byId("claims", x.claim_id);
+      await patch("variations", v.id, { status: "In claim", claim_id: c.id, history: (v.history || []).concat([{ at: nowIso(), by: me().id, action: "Added to claim", note: "IPC " + c.ipc_no }]) }, v.vo_no + " added to IPC " + c.ipc_no);
+    }, "Add to claim");
+  }
+  function openVO(v) {
+    const u = me(), acts = voActions(u, v).map(([label, to, cls, fields]) => btn(label, () => to === "price" ? priceVO(v) : to === "claim" ? voToClaim(v) : fields ? formModal(label + " · " + v.vo_no, fields, (x) => voMove(v, to, x), label) : voMove(v, to).then(() => { closeModal(); render(); toast(v.vo_no + ": " + to); }), cls));
+    acts.push(btn("PDF English", () => voPdf(v, "en")) + btn("PDF ខ្មែរ", () => voPdf(v, "km")));
+    const p = byId("projects", v.project_id) || {}, c = v.claim_id ? byId("claims", v.claim_id) : null;
+    const lines = (v.lines || []).length ? `<table class="boq"><thead><tr><th>Item</th><th class="r">Qty</th><th>Unit</th><th class="r">Rate</th><th class="r">Amount</th></tr></thead><tbody>${v.lines.map((l) => `<tr><td>${esc(l.item)}</td><td class="r">${esc(l.qty)}</td><td>${esc(l.unit)}</td><td class="r">${money(l.rate)}</td><td class="r">${money(l.qty * l.rate)}</td></tr>`).join("")}
+      <tr><td colspan="4">Overhead & profit ${esc(v.markup_pct)}%</td><td class="r">${money(v.amount - sum(v.lines, (l) => l.qty * l.rate))}</td></tr></tbody><tfoot><tr><td colspan="4">Total variation</td><td class="r">${money(v.amount)}</td></tr></tfoot></table>` : '<p class="muted small">Not priced yet. The QS prices it line by line.</p>';
+    detail(v.vo_no + " · " + v.title, [["Status", badge(v.status) + (c ? " · IPC " + esc(c.ipc_no) : "")], ["Project", esc(p.code + " " + p.name)], ["Reason", esc(v.reason)], ["Asked by", esc(v.asked_by) + (v.asked_date ? " · " + fmtDate(v.asked_date) : "")],
+      ["Time effect", (v.time_days > 0 ? "+" : "") + esc(v.time_days || 0) + " days"], ["Raised by", esc(staffName(v.raised_by))], v.client_ref ? ["Client", esc(v.client_ref)] : null], acts.join(""),
+      `${["Client rejected", "Cancelled"].includes(v.status) ? "" : stepper(VO_FLOW, v.status)}<h4>Price</h4>${lines}${(v.evidence || []).length ? `<h4>Evidence</h4>${evidenceHtml(v.evidence)}` : ""}${(v.client_evidence || []).length ? `<h4>Client approval</h4>${evidenceHtml(v.client_evidence)}` : ""}<h4>History</h4>${histList(v.history)}`);
+    const md = $("#modal .modal"); if (md) md.classList.add("wide");
+  }
+  function voTable(rows) {
+    return table([{ label: "No.", get: (v) => `<small>${esc(v.vo_no)}</small>` }, { label: "Variation", get: (v) => `<b>${esc(v.title)}</b><br><small>${esc(projLabel(v.project_id))}</small>` }, { label: "Asked by", get: (v) => esc(v.asked_by) },
+      { label: "Value", get: (v) => v.amount ? "+" + money(v.amount) : '<span class="muted">pricing…</span>' }, { label: "Days", get: (v) => v.time_days ? "+" + esc(v.time_days) : "—" }, { label: "Status", get: (v) => badge(v.status) },
+      { label: "In claim", get: (v) => v.claim_id ? "IPC " + esc((byId("claims", v.claim_id) || {}).ipc_no || "") : "—" }], rows, openVO);
+  }
+  function voKpis(rows, p) {
+    return kpis5([["Approved variations", "+" + money(sum(rows.filter((v) => VO_OK.includes(v.status)), (v) => v.amount)), rows.filter((v) => VO_OK.includes(v.status)).length + " VOs", "g"],
+      ["Waiting for client", money(sum(rows.filter((v) => v.status === "Sent to client"), (v) => v.amount)), rows.filter((v) => v.status === "Sent to client").length + " VOs", "o"],
+      ["Being priced / checked", String(rows.filter((v) => ["Raised", "Priced", "PM checked", "MD approved"].includes(v.status)).length)],
+      ["Rejected", String(rows.filter((v) => v.status === "Client rejected").length)],
+      p ? ["Revised contract", money(revisedContract(p)), "was " + money(p.contract_value)] : ["Projects with variations", String(new Set(rows.map((v) => v.project_id)).size)]]);
+  }
+  SCREENS.vo = (u) => {
+    const rows = db.variations.filter((v) => inScope(u, v.project_id)).filter(byProjectFilter).filter((v) => matchSearch(v, ["vo_no", "title", "reason"])).sort((a, b) => String(b.vo_no).localeCompare(String(a.vo_no)));
+    const p = state.project ? byId("projects", state.project) : null;
+    return `<h1>Variations</h1><p class="muted">Changes to the contract. The QS prices it, the PM checks, the MD approves the price, then it goes to the client. Approved variations go into the next IPC claim.</p>
+      ${voKpis(rows, p)}${toolbar(u, { buttons: can(u, "vo", "edit") ? btn("New variation", () => newVO(u), "primary") : "" })}${voTable(rows)}`;
+  };
+  const VOT = {
+    en: { title: "Variation Order", form: "Form GID-VO-01", details: "Details", project: "Project", client: "Client", asked: "Asked by", reason: "Reason for the change", time: "Time effect", days: "days", price: "Price",
+      item: "Item", qty: "Qty", unit: "Unit", rate: "Rate (USD)", amt: "Amount (USD)", oh: "Overhead & profit", total: "Total variation", contract: "Contract value", prev: "Approved variations before this one", revised: "Revised contract value with this VO",
+      sign: "Approvals", qs: "Priced by (QS)", pm: "Checked by (PM)", md: "Price approved by (MD)", cl: "Approved by the client", sig: "Signature / date", page: (a, b) => "Page " + a + " of " + b, gen: "GID Management System · generated", photos: "Evidence", cont: "continued" },
+    km: { title: "លិខិតកែប្រែការងារ (VO)", form: "ទម្រង់ GID-VO-01", details: "ព័ត៌មានលម្អិត", project: "គម្រោង", client: "ម្ចាស់គម្រោង", asked: "ស្នើដោយ", reason: "មូលហេតុនៃការកែប្រែ", time: "ផលប៉ះពាល់ពេលវេលា", days: "ថ្ងៃ", price: "តម្លៃ",
+      item: "មុខការងារ", qty: "បរិមាណ", unit: "ឯកតា", rate: "តម្លៃឯកតា (ដុល្លារ)", amt: "ទឹកប្រាក់ (ដុល្លារ)", oh: "ចំណាយទូទៅ និងប្រាក់ចំណេញ", total: "តម្លៃកែប្រែសរុប", contract: "តម្លៃកិច្ចសន្យា", prev: "ការកែប្រែដែលបានអនុម័តមុននេះ", revised: "តម្លៃកិច្ចសន្យាថ្មី រួមទាំង VO នេះ",
+      sign: "ការអនុម័ត", qs: "គណនាតម្លៃដោយ (QS)", pm: "ពិនិត្យដោយ (PM)", md: "អនុម័តតម្លៃដោយ (នាយក)", cl: "អនុម័តដោយម្ចាស់គម្រោង", sig: "ហត្ថលេខា / កាលបរិច្ឆេទ", page: (a, b) => "ទំព័រ " + a + "/" + b, gen: "បង្កើតដោយប្រព័ន្ធគ្រប់គ្រង GID ·", photos: "ភស្តុតាង", cont: "បន្ត" }
+  };
+  async function voPdf(v, lang) {
+    const L = VOT[lang], p = byId("projects", v.project_id) || {}, by = (a) => ((v.history || []).filter((h) => h.action === a).slice(-1)[0] || {});
+    const prev = sum(db.variations.filter((x) => x.project_id === v.project_id && VO_OK.includes(x.status) && x.id !== v.id), (x) => x.amount);
+    const sg = (lab, h) => `<div><small>${lab}</small><b>${esc(h.by ? staffName(h.by) : "")}</b><em>${h.at ? esc(fmtDate(h.at)) : L.sig}</em></div>`;
+    const blocks = [
+      `<h2><i>1</i>${L.details}</h2><table class="sf-t"><tr><th>${L.project}</th><td>${esc(p.code)} ${esc(p.name)}</td><th>${L.client}</th><td>${esc(p.client || "")}</td></tr><tr><th>${L.asked}</th><td>${esc(v.asked_by || "")} · ${esc(rDate(v.asked_date, lang))}</td><th>${L.time}</th><td>${esc((v.time_days > 0 ? "+" : "") + (v.time_days || 0))} ${L.days}</td></tr></table>`,
+      `<h2><i>2</i>${L.reason}</h2><div class="sf-box">${esc(v.reason || "")}</div>`,
+      `<h2><i>3</i>${L.price}</h2><table class="sf-t"><tr><th style="width:auto">${L.item}</th><th>${L.qty}</th><th>${L.unit}</th><th>${L.rate}</th><th>${L.amt}</th></tr>${(v.lines || []).map((l) => `<tr><td>${esc(l.item)}</td><td>${esc(l.qty)}</td><td>${esc(l.unit)}</td><td>${money(l.rate)}</td><td>${money(l.qty * l.rate)}</td></tr>`).join("")}
+        <tr><td colspan="4">${L.oh} ${esc(v.markup_pct || 0)}%</td><td>${money(v.amount - sum(v.lines || [], (l) => l.qty * l.rate))}</td></tr><tr><td colspan="4"><b>${L.total}</b></td><td><b>${money(v.amount)}</b></td></tr></table>
+        <table class="sf-t" style="margin-top:6px"><tr><th>${L.contract}</th><td>${money(p.contract_value)}</td></tr><tr><th>${L.prev}</th><td>${money(prev)}</td></tr><tr><th>${L.revised}</th><td><b>${money(Number(p.contract_value || 0) + prev + Number(v.amount || 0))}</b></td></tr></table>`,
+      `<h2><i>4</i>${L.sign}</h2><div class="sf-sign">${sg(L.qs, by("Priced"))}${sg(L.pm, by("PM checked"))}${sg(L.md, by("MD approved price"))}${sg(L.cl, by("Client approved"))}</div>`];
+    sfCss();
+    await makePdf({ lang, no: v.vo_no, fileName: v.vo_no + "-" + (lang === "km" ? "KH" : "EN") + ".pdf",
+      head: `<div class="rp-top">${pdfLogo()}<div class="rp-title"><h1 class="sf-h1">${L.title}</h1><small>${esc(v.vo_no)} · ${L.form}</small><span class="rp-sess">${esc(v.status)}</span></div></div>`,
+      mini: (t) => `<div class="rp-mini"><span><b>${t}</b> · ${esc(p.code)} · ${esc(v.vo_no)}</span><span>${L.form}</span></div>`, contTitle: L.title + " (" + L.cont + ")", photoTitle: L.photos, blocks,
+      photos: (v.evidence || []).concat(v.client_evidence || []).filter((x) => x.type !== "pdf").map((x) => ({ src: x.url, cap: x.name })), footLeft: L.gen + " " + esc(pdfGenerated()), pageLabel: L.page });
+  }
+
+  // ================= SUBCONTRACTORS =================
+  // Each subcontractor can have contracts on several projects. Retention is optional (0% = none).
+  // Payment certificate: claimed → QS checks (certified) → PM approves → Finance pays (the bill appears in Finance)
+  const PC_FLOW = [["Claimed", "Claimed", "site / QS"], ["QS checked", "QS checked", "QS"], ["PM approved", "PM approved", "PM"], ["Paid", "Paid", "Finance"]];
+  const contractsOf = (sid) => db.sub_contracts.filter((k) => k.sub_id === sid);
+  const paysOf = (kid) => db.sub_payments.filter((x) => x.contract_id === kid);
+  const kCertified = (k) => sum(paysOf(k.id).filter((x) => x.status !== "Claimed"), (x) => x.certified);
+  const kPaid = (k) => sum(paysOf(k.id).filter((x) => x.status === "Paid"), (x) => x.certified - x.retention_amt);
+  const kRetention = (k) => k.retention_released ? 0 : sum(paysOf(k.id).filter((x) => ["PM approved", "Paid"].includes(x.status)), (x) => x.retention_amt);
+  const subRating = (sid) => { const r = contractsOf(sid).flatMap((k) => k.ratings || []); return r.length ? sum(r, (x) => (x.quality + x.time + x.safety) / 3) / r.length : 0; };
+  const insDays = (s) => s.insurance_until ? Math.floor(daysUntil(s.insurance_until)) : null;
+  function subStatusChip(s) {
+    const d = insDays(s);
+    if (s.status !== "Active") return chip(s.status, "n");
+    if (d != null && d < 0) return chip("Insurance expired", "r");
+    if (d != null && d <= 30) return chip("Insurance ends " + fmtDate(s.insurance_until), "w");
+    return chip("Active", "g");
+  }
+  function subForm(s) {
+    s = s || {};
+    formModal(s.id ? "Edit · " + s.name : "Add subcontractor", [
+      { name: "name", label: "Company name", required: true, value: s.name || "" }, { name: "trade", label: "Trade", required: true, value: s.trade || "", help: "Example: Electrical, Plumbing, Ceiling" },
+      { name: "contact", label: "Contact person", value: s.contact || "" }, { name: "phone", label: "Phone", required: true, value: s.phone || "" }, { name: "telegram", label: "Telegram", value: s.telegram || "" },
+      { name: "patent", label: "Patent (business licence)", type: "select", options: [["yes", "Yes"], ["no", "No"]], value: s.patent ? "yes" : "no" }, { name: "vat", label: "VAT registered", type: "select", options: [["yes", "Yes"], ["no", "No"]], value: s.vat ? "yes" : "no" },
+      { name: "insurance_until", label: "Insurance valid until", type: "date", value: s.insurance_until || "" }, { name: "status", label: "Status", type: "select", options: ["Active", "On hold", "Blacklisted"], value: s.status || "Active" },
+      { name: "notes", label: "Notes", type: "textarea", value: s.notes || "" }
+    ], async (x) => {
+      x.patent = x.patent === "yes"; x.vat = x.vat === "yes"; x.insurance_until = x.insurance_until || null;
+      if (s.id) await patch("subcontractors", s.id, x, "Subcontractor updated: " + x.name); else await save("subcontractors", x, "New subcontractor: " + x.name);
+    }, s.id ? "Save" : "Add subcontractor");
+  }
+  function contractForm(s, k) {
+    const u = me(); k = k || {};
+    formModal(k.id ? "Edit contract" : "New contract · " + s.name, [
+      { name: "project_id", label: "Project", type: "select", options: projectOptions(u), required: true, value: k.project_id || state.project },
+      { name: "scope", label: "Scope of work", required: true, value: k.scope || "" }, { name: "contract_value", label: "Contract value (USD)", type: "number", required: true, value: k.contract_value || "" },
+      { name: "retention_pct", label: "Retention", type: "select", options: [["0", "No retention"], ["5", "5%"], ["10", "10%"]], value: String(k.retention_pct == null ? 5 : k.retention_pct), help: "Not every subcontractor has retention. Choose No retention for small teams." },
+      { name: "start_date", label: "Start", type: "date", value: k.start_date || today() }, { name: "end_date", label: "Finish", type: "date", value: k.end_date || "" }
+    ], async (x) => {
+      x.contract_value = Number(x.contract_value) || 0; x.retention_pct = Number(x.retention_pct) || 0; x.end_date = x.end_date || null;
+      if (k.id) await patch("sub_contracts", k.id, x, s.name + " contract updated");
+      else await save("sub_contracts", Object.assign(x, { sub_id: s.id, status: "Active", ratings: [], retention_released: false }), s.name + " contract on " + projLabel(x.project_id) + ": " + money(x.contract_value));
+    }, k.id ? "Save" : "Add contract");
+  }
+  function newPayment(k) {
+    const s = byId("subcontractors", k.sub_id) || {};
+    formModal("Payment claim · " + s.name, [
+      { name: "period_to", label: "Work done up to", type: "date", value: today(), required: true }, { name: "claimed", label: "Amount claimed by the subcontractor (USD)", type: "number", required: true },
+      { name: "evidence", label: "Their claim / measurement (optional)", type: "evidence" }, { name: "note", label: "Note", type: "textarea" }
+    ], async (x) => {
+      const ev = await storeEvidence(x.evidence || [], "sub-claim");
+      await save("sub_payments", { contract_id: k.id, pc_no: nextCode(paysOf(k.id), "pc_no", "PC-", 2), period_to: x.period_to, claimed: Number(x.claimed) || 0, certified: 0, retention_amt: 0, status: "Claimed", note: x.note || "", evidence: ev,
+        history: [{ at: nowIso(), by: me().id, action: "Claimed", note: money(x.claimed) }] }, s.name + " payment claim " + money(x.claimed) + " · " + projLabel(k.project_id));
+    }, "Save claim");
+  }
+  function payActions(u, x, k) {
+    const pm = isPMof(u, k.project_id) || hasTag(u, "MD"), out = [];
+    if (x.status === "Claimed" && (isQS(u) || isSysAdmin(u))) out.push(["QS check", "QS checked", "primary", [{ name: "certified", label: "Amount certified (USD)", type: "number", value: x.claimed, required: true, help: k.retention_pct ? "Retention " + k.retention_pct + "% is kept from this amount." : "No retention on this contract." }, { name: "note", label: "Note", type: "textarea" }]]);
+    if (x.status === "QS checked" && pm) { out.push(["Back to QS", "Claimed", "", [{ name: "note", label: "What to check again", type: "textarea", required: true }]]); out.push(["PM approve", "PM approved", "primary", null]); }
+    if (x.status === "PM approved" && can(u, "finance", "admin")) out.push(["Mark paid", "Paid", "primary", null]);
+    return out;
+  }
+  async function payMove(x, k, to, v) {
+    const u = me(), s = byId("subcontractors", k.sub_id) || {}, p = { status: to, history: (x.history || []).concat([{ at: nowIso(), by: u.id, action: to, note: (v && v.note) || "" }]) };
+    if (to === "QS checked") { p.certified = Number(v.certified) || 0; p.retention_amt = Math.round(p.certified * (Number(k.retention_pct) || 0)) / 100; if (v.note) p.note = v.note; }
+    if (to === "PM approved") {
+      const net = Number(x.certified) - Number(x.retention_amt);
+      await save("invoices", { inv_no: nextNo("invoices", "inv_no", "AP-"), direction: "Payable", project_id: k.project_id, party: s.name, source_type: "sub_payment", source_id: x.id, amount: net,
+        due_date: new Date(Date.now() + 14 * 86400000).toLocaleDateString("en-CA"), status: "Unpaid", paid_at: null }, "Subcontractor bill " + s.name + " " + x.pc_no + ": " + money(net));
+    }
+    if (to === "Paid") { p.paid_at = nowIso(); const inv = db.invoices.find((i) => i.source_type === "sub_payment" && i.source_id === x.id && i.status === "Unpaid"); if (inv) await patch("invoices", inv.id, { status: "Paid", paid_at: nowIso() }, inv.inv_no + " paid"); }
+    await patch("sub_payments", x.id, p, s.name + " " + x.pc_no + ": " + to);
+  }
+  function openPayment(x) {
+    const u = me(), k = byId("sub_contracts", x.contract_id) || {}, s = byId("subcontractors", k.sub_id) || {};
+    const acts = payActions(u, x, k).map(([label, to, cls, fields]) => btn(label, () => fields ? formModal(label + " · " + x.pc_no, fields, (v) => payMove(x, k, to, v), label) : payMove(x, k, to).then(() => { closeModal(); render(); toast(x.pc_no + ": " + to); }), cls)).join("");
+    detail(s.name + " · " + x.pc_no, [["Project", esc(projLabel(k.project_id))], ["Scope", esc(k.scope)], ["Work done up to", fmtDate(x.period_to)], ["Claimed", money(x.claimed)],
+      ["Certified by QS", x.status === "Claimed" ? "—" : money(x.certified)], ["Retention kept", k.retention_pct ? money(x.retention_amt) + " (" + esc(k.retention_pct) + "%)" : "No retention"], ["To pay", x.status === "Claimed" ? "—" : "<b>" + money(x.certified - x.retention_amt) + "</b>"],
+      ["Status", badge(x.status)], x.note ? ["Note", esc(x.note)] : null], acts, `${stepper(PC_FLOW, x.status, x.status === "Paid")}${(x.evidence || []).length ? `<h4>Claim documents</h4>${evidenceHtml(x.evidence)}` : ""}<h4>History</h4>${histList(x.history)}`);
+  }
+  function rateContract(k) {
+    const s = byId("subcontractors", k.sub_id) || {}, o = [["5", "5 · Excellent"], ["4", "4 · Good"], ["3", "3 · OK"], ["2", "2 · Poor"], ["1", "1 · Very poor"]];
+    formModal("Rate · " + s.name, [{ name: "quality", label: "Quality of work", type: "select", options: o, value: "4" }, { name: "time", label: "On time", type: "select", options: o, value: "4" }, { name: "safety", label: "Safety", type: "select", options: o, value: "4" }, { name: "note", label: "Comment", type: "textarea" }],
+      async (x) => { await patch("sub_contracts", k.id, { ratings: (k.ratings || []).concat([{ at: nowIso(), by: me().id, quality: Number(x.quality), time: Number(x.time), safety: Number(x.safety), note: x.note || "" }]) }, s.name + " rated on " + projLabel(k.project_id)); }, "Save rating");
+  }
+  async function releaseRetention(k) {
+    const s = byId("subcontractors", k.sub_id) || {}, amt = kRetention(k);
+    if (!amt) { toast("No retention held on this contract.", true); return; }
+    await save("invoices", { inv_no: nextNo("invoices", "inv_no", "AP-"), direction: "Payable", project_id: k.project_id, party: s.name, source_type: "retention", source_id: k.id, amount: amt, due_date: new Date(Date.now() + 14 * 86400000).toLocaleDateString("en-CA"), status: "Unpaid", paid_at: null }, "Retention release " + s.name + ": " + money(amt));
+    await patch("sub_contracts", k.id, { retention_released: true }, s.name + " retention released: " + money(amt)); closeModal(); render(); toast("Retention " + money(amt) + " sent to Finance to pay");
+  }
+  function openSub(s) {
+    const u = me(), mgr = can(u, "subs", "approve"), ks = contractsOf(s.id), r = subRating(s.id);
+    const kt = ks.length ? `<table class="boq"><thead><tr><th>Project</th><th>Scope</th><th class="r">Contract</th><th class="r">Retention</th><th class="r">Certified</th><th class="r">Paid</th><th class="r">Held</th><th></th></tr></thead><tbody>${ks.map((k) => `<tr><td>${esc(projLabel(k.project_id))}</td><td>${esc(k.scope)}</td><td class="r">${money(k.contract_value)}</td><td class="r">${k.retention_pct ? esc(k.retention_pct) + "%" : "None"}</td><td class="r">${money(kCertified(k))}</td><td class="r">${money(kPaid(k))}</td><td class="r">${k.retention_released ? "Released" : money(kRetention(k))}</td>
+      <td class="r nowrap">${can(u, "subs", "edit") || isQS(u) || isPMof(u, k.project_id) ? `<button class="btn small" data-act="${act(() => newPayment(k))}">Claim</button>` : ""}${isPMof(u, k.project_id) || hasTag(u, "MD") ? ` <button class="btn small" data-act="${act(() => rateContract(k))}">Rate</button>` : ""}${mgr && !k.retention_released && kRetention(k) ? ` <button class="btn small" data-act="${act(() => releaseRetention(k))}">Release retention</button>` : ""}</td></tr>`).join("")}</tbody></table>` : '<p class="muted small">No contract yet.</p>';
+    const pays = ks.flatMap((k) => paysOf(k.id)).sort((a, b) => String(b.period_to).localeCompare(String(a.period_to)));
+    const rts = ks.flatMap((k) => (k.ratings || []).map((x) => Object.assign({ pid: k.project_id }, x))).sort((a, b) => String(b.at).localeCompare(String(a.at)));
+    detail(s.name + " · " + s.trade, [["Contact", esc([s.contact, s.phone, s.telegram].filter(Boolean).join(" · "))], ["Company documents", (s.patent ? "Patent ✓" : "Patent ✗") + " · " + (s.vat ? "VAT ✓" : "VAT ✗") + " · Insurance " + (s.insurance_until ? fmtDate(s.insurance_until) : "not set")],
+      ["Status", subStatusChip(s)], ["Rating", r ? stars(r) + " " + r.toFixed(1) + " from " + rts.length + " ratings" : "Not rated yet"], s.notes ? ["Notes", esc(s.notes)] : null],
+      (mgr ? btn("Edit", () => subForm(s)) + btn("New contract", () => contractForm(s), "primary") : ""),
+      `<h4>Contracts</h4>${kt}<h4>Payment certificates</h4>${pays.length ? `<ul class="mini-l">${pays.map((x) => { const k = byId("sub_contracts", x.contract_id); return `<li data-act="${act(() => openPayment(x))}" class="click">${badge(x.status)}<span><b>${esc(x.pc_no)} · ${esc(projLabel(k.project_id))}</b><small>to ${esc(fmtDate(x.period_to))} · claimed ${money(x.claimed)}${x.status !== "Claimed" ? " · certified " + money(x.certified) : ""}</small></span></li>`; }).join("")}</ul>` : '<p class="muted small">None yet.</p>'}
+      ${rts.length ? `<h4>Ratings</h4><ul class="hist">${rts.map((x) => `<li><small>${esc(fmtDate(x.at))} · ${esc(staffName(x.by))} · ${esc(projLabel(x.pid))}</small><br>Quality ${stars(x.quality)} Time ${stars(x.time)} Safety ${stars(x.safety)}${x.note ? "<br>" + esc(x.note) : ""}</li>`).join("")}</ul>` : ""}`);
+    const md = $("#modal .modal"); if (md) md.classList.add("wide");
+  }
+  function payTable(rows) {
+    return table([{ label: "No.", get: (x) => `<small>${esc(x.pc_no)}</small>` }, { label: "Subcontractor", get: (x) => { const k = byId("sub_contracts", x.contract_id) || {}; return `<b>${esc((byId("subcontractors", k.sub_id) || {}).name || "")}</b><br><small>${esc(projLabel(k.project_id))}</small>`; } },
+      { label: "Up to", get: (x) => fmtDate(x.period_to) }, { label: "Claimed", get: (x) => money(x.claimed) }, { label: "Certified", get: (x) => x.status === "Claimed" ? "—" : money(x.certified) },
+      { label: "Retention", get: (x) => x.retention_amt ? money(x.retention_amt) : "—" }, { label: "Status", get: (x) => badge(x.status) }], rows, openPayment);
+  }
+  function subTable(list, pid) {
+    return table([{ label: "Subcontractor", get: (s) => `<b>${esc(s.name)}</b><br><small>${esc([s.contact, s.phone].filter(Boolean).join(" · "))}</small>` }, { label: "Trade", get: (s) => esc(s.trade) },
+      { label: "Projects", get: (s) => `<small>${esc(contractsOf(s.id).map((k) => (byId("projects", k.project_id) || {}).code).join(", "))}</small>` },
+      { label: "Contract", get: (s) => money(sum(contractsOf(s.id).filter((k) => !pid || k.project_id === pid), (k) => k.contract_value)) },
+      { label: "Paid", get: (s) => { const ks = contractsOf(s.id).filter((k) => !pid || k.project_id === pid), v = sum(ks, (k) => k.contract_value), pd = sum(ks, kPaid); return `${pct(pd, v)}% ${bar(pct(pd, v))}`; } },
+      { label: "Retention held", get: (s) => { const h = sum(contractsOf(s.id).filter((k) => !pid || k.project_id === pid), kRetention); return h ? money(h) : contractsOf(s.id).some((k) => k.retention_pct) ? "$0" : "None"; } },
+      { label: "Rating", get: (s) => subRating(s.id) ? stars(subRating(s.id)) : '<span class="muted">—</span>' }, { label: "Status", get: (s) => subStatusChip(s) }], list, openSub);
+  }
+  SCREENS.subs = (u) => {
+    const T = tabs("subs", [["subs", "Subcontractors"], ["pay", "Payment certificates"]]);
+    const all = db.subcontractors.filter((s) => matchSearch(s, ["name", "trade", "contact", "phone"])).filter((s) => !state.project || contractsOf(s.id).some((k) => k.project_id === state.project));
+    const ks = db.sub_contracts.filter((k) => k.status === "Active" && byProjectFilter(k)), pays = db.sub_payments.filter((x) => { const k = byId("sub_contracts", x.contract_id); return k && byProjectFilter(k); });
+    const waiting = pays.filter((x) => x.status !== "Paid"), ins = db.subcontractors.filter((s) => s.status === "Active" && insDays(s) != null && insDays(s) <= 30);
+    const head = `<h1>Subcontractors</h1><p class="muted">Contracts, payment claims, retention (optional), insurance and rating. Payments: claimed → QS checks → PM approves → Finance pays.</p>
+      ${kpis5([["Active subcontractors", String(db.subcontractors.filter((s) => s.status === "Active").length)], ["Active contracts", money(sum(ks, (k) => k.contract_value))], ["Payments in progress", String(waiting.length), money(sum(waiting, (x) => x.status === "Claimed" ? x.claimed : x.certified - x.retention_amt)), waiting.length ? "o" : ""],
+        ["Retention held", money(sum(ks, kRetention)), ks.filter((k) => !k.retention_pct).length + " contracts without retention"], ["Insurance ending ≤ 30 days", String(ins.length), ins.map((s) => s.name).join(", "), ins.length ? "r" : ""]])}${T.html}`;
+    if (T.cur === "pay") return head + toolbar(u, {}) + payTable(pays.filter((x) => matchSearch(x, ["pc_no", "note"])).sort((a, b) => (a.status === "Paid") - (b.status === "Paid") || String(b.period_to).localeCompare(String(a.period_to))));
+    return head + toolbar(u, { buttons: can(u, "subs", "approve") ? btn("Add subcontractor", () => subForm(), "primary") : "" }) + subTable(all);
+  };
+
+  // ================= TESTING, HANDOVER & WARRANTY =================
+  const TT = {
+    IR: { name: "Insulation resistance", system: "Electrical", limitLabel: "Pass if every reading is at least (MΩ)", limit: 1, instrument: "Insulation tester",
+      cols: [["id", "Circuit"], ["v1", "L–N (MΩ)", "n"], ["v2", "L–E (MΩ)", "n"], ["v3", "N–E (MΩ)", "n"]], pass: (r, L) => [r.v1, r.v2, r.v3].every((v) => Number(v) >= L) },
+    ER: { name: "Earth electrode resistance", system: "Electrical", limitLabel: "Pass if the reading is at most (Ω)", limit: 5, instrument: "Earth tester",
+      cols: [["id", "Electrode / location"], ["v1", "Reading (Ω)", "n"]], pass: (r, L) => Number(r.v1) <= L },
+    RCD: { name: "RCD trip test", system: "Electrical", limitLabel: "Pass if trip time is at most (ms)", limit: 300, instrument: "Multifunction tester",
+      cols: [["id", "Circuit / RCD"], ["v1", "Rating (mA)", "n"], ["v2", "Trip time (ms)", "n"]], pass: (r, L) => Number(r.v2) > 0 && Number(r.v2) <= L },
+    PT: { name: "Pipe pressure test", system: "Plumbing", limitLabel: "Allowed pressure drop (bar)", limit: 0.2, instrument: "Pressure gauge",
+      cols: [["id", "Pipe section"], ["v1", "Test pressure (bar)", "n"], ["v2", "Start (bar)", "n"], ["v3", "End (bar)", "n"], ["v4", "Time (min)", "n"]], pass: (r, L) => Number(r.v2) - Number(r.v3) <= L && Number(r.v4) >= 30 && Number(r.v2) >= Number(r.v1) },
+    CCTV: { name: "CCTV commissioning", system: "ELV", limitLabel: "", limit: null, instrument: "",
+      cols: [["id", "Camera"], ["v1", "Image clear", "yn"], ["v2", "Night vision", "yn"], ["v3", "Recording on NVR", "yn"]], pass: (r) => r.v1 === "Yes" && r.v2 === "Yes" && r.v3 === "Yes" },
+    DATA: { name: "Data point test (Cat6)", system: "ELV", limitLabel: "Maximum length (m)", limit: 90, instrument: "Cable certifier",
+      cols: [["id", "Point ID"], ["v1", "Length (m)", "n"], ["v2", "Tester result", "pf"]], pass: (r, L) => r.v2 === "Pass" && Number(r.v1) <= L }
+  };
+  const rowDone = (t, r) => TT[t].cols.every(([k]) => r[k] !== "" && r[k] != null);
+  const rowPass = (test, r) => rowDone(test.test_type, r) ? TT[test.test_type].pass(r, Number(test.limit_value == null ? TT[test.test_type].limit : test.limit_value)) : null;
+  const testResult = (test) => { const rs = (test.rows || []).map((r) => rowPass(test, r)); return !rs.length || rs.some((x) => x === null) ? (rs.some((x) => x === false) ? "Fail" : "Open") : rs.every(Boolean) ? "Pass" : "Fail"; };
+  const HO_CATS = ["As-built drawings", "O&M manuals", "Warranty certificates", "Test reports", "Keys & access cards", "Training", "Spare parts", "Other"];
+  const canTest = (u, pid) => can(u, "handover", "edit") && inScope(u, pid);
+  function newTest(u, pid) {
+    formModal("New test sheet", [
+      { name: "project_id", label: "Project", type: "select", options: projectOptions(u), required: true, value: pid || state.project },
+      { name: "test_type", label: "Test", type: "select", options: Object.keys(TT).map((k) => [k, TT[k].system + " · " + TT[k].name]), required: true },
+      { name: "location", label: "Location / board / system", required: true, help: "Example: DB-L3, riser L1-L2, CCTV banking hall" },
+      { name: "test_date", label: "Test date", type: "date", value: today() }
+    ], async (x) => {
+      const p = byId("projects", x.project_id), T = TT[x.test_type];
+      const r = await save("tests", Object.assign(x, { test_no: nextCode(db.tests, "test_no", "TC-" + projShort(p) + "-"), system: T.system, instrument: T.instrument, instrument_sn: "", calib_until: null, limit_value: T.limit,
+        rows: [{ id: "" }, { id: "" }, { id: "" }], result: "Open", tested_by: u.id, witness: "", photos: [], defect_ids: [], note: "" }), (t) => t.test_no + " " + T.name + " · " + t.location);
+      setTimeout(() => editTest(byId("tests", r.id) || r), 60); // open the sheet to fill in the results
+    }, "Create test sheet");
+  }
+  function editTest(t0) {
+    const t = Object.assign({}, t0, { rows: (t0.rows || []).map((r) => Object.assign({}, r)), photos: (t0.photos || []).slice() }), T = TT[t.test_type];
+    const cell = (r, i, [k, l, ty]) => ty === "yn" ? `<select data-r="${i}" data-k="${k}" aria-label="${esc(l)}"><option value="">${esc(l)}</option>${["Yes", "No"].map((o) => `<option ${r[k] === o ? "selected" : ""}>${o}</option>`).join("")}</select>`
+      : ty === "pf" ? `<select data-r="${i}" data-k="${k}" aria-label="${esc(l)}"><option value="">${esc(l)}</option>${["Pass", "Fail"].map((o) => `<option ${r[k] === o ? "selected" : ""}>${o}</option>`).join("")}</select>`
+      : `<input data-r="${i}" data-k="${k}" ${ty === "n" ? 'type="number" step="any" inputmode="decimal"' : ""} value="${esc(r[k] == null ? "" : r[k])}" aria-label="${esc(l)}" placeholder="${esc(l)}">`;
+    const grid = () => `<div class="tgrid" style="--tc:${T.cols.length}"><div class="th">${T.cols.map(([, l]) => `<span>${esc(l)}</span>`).join("")}<span>Result</span><span></span></div>${t.rows.map((r, i) => { const ps = rowPass(t, r); return `<div class="tr ${ps === false ? "bad" : ps ? "good" : ""}">${T.cols.map((c) => cell(r, i, c)).join("")}<span class="res">${ps == null ? "—" : ps ? chip("Pass", "g") : chip("Fail", "r")}</span><button type="button" class="rm" data-rmr="${i}" aria-label="Remove line">×</button></div>`; }).join("")}</div>`;
+    const calibWarn = () => t.calib_until && t.calib_until < (t.test_date || today()) ? '<div class="alert warn">The instrument calibration has expired. Results may not be accepted by the client.</div>' : "";
+    const body = () => `<form id="tform"><p class="muted small">${esc(projLabel(t.project_id))} · ${esc(T.system)} · ${esc(t.location)}</p>
+      <div class="grid3f"><label class="field"><span>Instrument</span><input data-f="instrument" value="${esc(t.instrument || "")}"></label><label class="field"><span>Serial no.</span><input data-f="instrument_sn" value="${esc(t.instrument_sn || "")}"></label><label class="field"><span>Calibrated until</span><input type="date" data-f="calib_until" value="${esc(t.calib_until || "")}"></label></div>
+      <div id="t-cal">${calibWarn()}</div>
+      ${T.limitLabel ? `<label class="field"><span>${esc(T.limitLabel)}</span><input type="number" step="any" data-f="limit_value" value="${esc(t.limit_value == null ? T.limit : t.limit_value)}"></label>` : ""}
+      <div id="t-grid">${grid()}</div><button type="button" class="btn small" id="t-add">+ Add line</button>
+      <p class="muted small">A failed line creates a defect automatically when you save, so the correction is tracked in QA/QC.</p>
+      <div class="grid2f"><label class="field"><span>Witnessed by (client / consultant)</span><input data-f="witness" value="${esc(t.witness || "")}"></label><label class="field"><span>Test date</span><input type="date" data-f="test_date" value="${esc(t.test_date || today())}"></label></div>
+      <label class="field"><span>Note</span><textarea data-f="note" rows="2">${esc(t.note || "")}</textarea></label>
+      <div class="field"><span>Photos of readings (optional)</span><label class="btn"><input type="file" accept="image/*" capture="environment" id="t-cam" hidden>${svgI("camera")} Take photo</label> <label class="btn"><input type="file" accept="image/*" multiple id="t-ph" hidden>Choose photos</label><div class="capgrid" id="t-phs"></div></div>
+      <div class="form-actions"><button type="button" class="btn" data-act="${act(modalBack)}">Cancel</button><button type="submit" class="btn primary">Save test</button></div></form>`;
+    openModal(t.test_no + " · " + T.name, body(), (m) => {
+      const f = m.querySelector("#tform");
+      const paintPh = () => { f.querySelector("#t-phs").innerHTML = t.photos.map((p, i) => `<div class="cap"><span class="ph"><img src="${p}" alt="Photo ${i + 1}"><button type="button" class="rm" data-prm="${i}">×</button></span></div>`).join(""); f.querySelectorAll("[data-prm]").forEach((b) => b.onclick = () => { t.photos.splice(Number(b.dataset.prm), 1); paintPh(); }); };
+      const repaint = () => { f.querySelector("#t-grid").innerHTML = grid(); f.querySelectorAll("[data-rmr]").forEach((b) => b.onclick = () => { t.rows.splice(Number(b.dataset.rmr), 1); repaint(); }); translateNow(f.querySelector("#t-grid")); };
+      // update only the result of the line being typed in, so the phone keyboard and focus are never lost
+      const resCell = (i) => { const row = f.querySelectorAll("#t-grid .tr")[i]; if (!row) return; const ps = rowPass(t, t.rows[i]); row.classList.toggle("bad", ps === false); row.classList.toggle("good", !!ps); row.querySelector(".res").innerHTML = ps == null ? "—" : ps ? chip("Pass", "g") : chip("Fail", "r"); translateNow(row); };
+      const setCell = (el) => { const i = Number(el.dataset.r); t.rows[i][el.dataset.k] = el.type === "number" ? (el.value === "" ? "" : Number(el.value)) : el.value; resCell(i); };
+      f.addEventListener("input", (e) => { const el = e.target; if (el.dataset.r != null) setCell(el); if (el.dataset.f) { t[el.dataset.f] = el.type === "number" ? (el.value === "" ? null : Number(el.value)) : el.value; if (el.dataset.f === "limit_value") t.rows.forEach((_, i) => resCell(i)); if (el.dataset.f === "calib_until" || el.dataset.f === "test_date") f.querySelector("#t-cal").innerHTML = calibWarn(); } });
+      f.addEventListener("change", (e) => { const el = e.target; if (el.dataset.r != null) setCell(el); });
+      f.querySelector("#t-add").onclick = () => { t.rows.push({ id: "" }); repaint(); };
+      const addPh = async (e) => { for (const file of e.target.files) { try { t.photos.push(await compressImage(file)); } catch (x) { toast("Could not read a photo", true); } } e.target.value = ""; paintPh(); };
+      f.querySelector("#t-cam").onchange = addPh; f.querySelector("#t-ph").onchange = addPh; paintPh(); repaint();
+      f.addEventListener("submit", async (e) => {
+        e.preventDefault(); const b = f.querySelector("button[type=submit]"); b.disabled = true;
+        try {
+          t.rows = t.rows.filter((r) => String(r.id || "").trim() || TT[t.test_type].cols.slice(1).some(([k]) => r[k] !== "" && r[k] != null));
+          if (!t.rows.length) throw new Error("Add at least one line.");
+          const u = me(), ids = (t.defect_ids || []).slice();
+          for (const r of t.rows) if (rowPass(t, r) === false && !r.defect_id) {
+            const d = await save("defects", { project_id: t.project_id, location: t.location + " · " + r.id, description: "Test failed " + t.test_no + ": " + T.name.toLowerCase() + " " + r.id, discipline: T.system, priority: "High",
+              assigned_to: t.tested_by || u.id, due_date: new Date(Date.now() + 3 * 86400000).toLocaleDateString("en-CA"), status: "Open", photo: "", raised_by: u.id, evidence: [], close_evidence: [], inspection_id: "" }, "Defect from failed test " + t.test_no + " · " + r.id);
+            r.defect_id = d.id; ids.push(d.id);
+          }
+          const photos = await storeFiles(t.photos, "test");
+          const res = testResult(t);
+          await patch("tests", t.id, { rows: t.rows, result: res, instrument: t.instrument, instrument_sn: t.instrument_sn, calib_until: t.calib_until || null, limit_value: t.limit_value == null ? null : Number(t.limit_value), witness: t.witness, test_date: t.test_date, note: t.note, photos, defect_ids: ids }, t.test_no + " " + T.name + ": " + res);
+          closeModal(); render(); toast(t.test_no + ": " + res + (ids.length > (t0.defect_ids || []).length ? " · defect created for failed lines" : ""));
+        } catch (err) { b.disabled = false; toast(err.message, true); }
+      });
+    });
+    const md = $("#modal .modal"); if (md) md.classList.add("wide");
+  }
+  function openTest(t) {
+    const u = me(), T = TT[t.test_type];
+    const rows = `<table class="boq"><thead><tr>${T.cols.map(([, l]) => `<th>${esc(l)}</th>`).join("")}<th>Result</th></tr></thead><tbody>${(t.rows || []).map((r) => { const ps = rowPass(t, r); return `<tr>${T.cols.map(([k]) => `<td>${esc(r[k] == null ? "" : r[k])}</td>`).join("")}<td>${ps == null ? "—" : ps ? chip("Pass", "g") : chip("Fail", "r")}</td></tr>`; }).join("")}</tbody></table>`;
+    const defs = (t.defect_ids || []).map((id) => byId("defects", id)).filter(Boolean);
+    detail(t.test_no + " · " + T.name, [["Project", esc(projLabel(t.project_id))], ["Location", esc(t.location)], ["Result", badge(t.result)], ["Instrument", esc([t.instrument, t.instrument_sn && "SN " + t.instrument_sn].filter(Boolean).join(" · ")) + (t.calib_until ? " · calibrated to " + fmtDate(t.calib_until) + (t.calib_until < t.test_date ? ' <span class="tag bad">expired</span>' : " ✓") : "")],
+      T.limitLabel ? ["Pass rule", esc(T.limitLabel) + " " + esc(t.limit_value == null ? T.limit : t.limit_value)] : null, ["Tested by", esc(staffName(t.tested_by)) + " · " + fmtDate(t.test_date)], ["Witness", esc(t.witness)], t.note ? ["Note", esc(t.note)] : null,
+      defs.length ? ["Defects", defs.map((d) => `<a href="#" data-act="${act(() => openDefect(d))}">${esc(defectNo(d))}</a> ${badge(d.status)}`).join(" ")] : null],
+      (canTest(u, t.project_id) ? btn("Edit results", () => editTest(t), "primary") : "") + btn("PDF English", () => testPdf(t, "en")) + btn("PDF ខ្មែរ", () => testPdf(t, "km")),
+      rows + ((t.photos || []).length ? `<h4>Photos</h4>${gallery(t.photos)}` : ""));
+    const md = $("#modal .modal"); if (md) md.classList.add("wide");
+  }
+  const TTK = { IR: "ការធ្វើតេស្តភាពធន់អ៊ីសូឡង់", ER: "ការធ្វើតេស្តភាពធន់ដីដី (Earth)", RCD: "ការធ្វើតេស្តឧបករណ៍ RCD", PT: "ការធ្វើតេស្តសម្ពាធបំពង់", CCTV: "ការដំណើរការកាមេរ៉ា CCTV", DATA: "ការធ្វើតេស្តចំណុចបណ្តាញ (Cat6)" };
+  async function testPdf(t, lang) {
+    const km = lang === "km", T = TT[t.test_type], p = byId("projects", t.project_id) || {}, title = km ? TTK[t.test_type] : T.name + " test";
+    const L = km ? { form: "ទម្រង់ GID-TC-" + t.test_type, d: "ព័ត៌មានលម្អិត", pr: "គម្រោង", loc: "ទីតាំង", ins: "ឧបករណ៍", cal: "ក្រិតតាមខ្នាតរហូតដល់", rule: "លក្ខខណ្ឌជាប់", res: "លទ្ធផល", lines: "លទ្ធផលតាមខ្សែ", pass: "ជាប់", fail: "មិនជាប់", open: "មិនទាន់ចប់", sign: "ហត្ថលេខា", by: "ធ្វើតេស្តដោយ", wit: "សាក្សី", pm: "អ្នកគ្រប់គ្រងគម្រោង", sig: "ហត្ថលេខា / កាលបរិច្ឆេទ", ph: "រូបថត", gen: "បង្កើតដោយប្រព័ន្ធគ្រប់គ្រង GID ·", page: (a, b) => "ទំព័រ " + a + "/" + b, date: "កាលបរិច្ឆេទ", note: "កំណត់ចំណាំ" }
+      : { form: "Form GID-TC-" + t.test_type, d: "Details", pr: "Project", loc: "Location", ins: "Instrument", cal: "Calibrated until", rule: "Pass rule", res: "Result", lines: "Results", pass: "PASS", fail: "FAIL", open: "OPEN", sign: "Sign-off", by: "Tested by", wit: "Witness", pm: "Project Manager", sig: "Signature / date", ph: "Photos", gen: "GID Management System · generated", page: (a, b) => "Page " + a + " of " + b, date: "Date", note: "Note" };
+    const R = (x) => x === "Pass" ? L.pass : x === "Fail" ? L.fail : L.open;
+    const blocks = [`<h2><i>1</i>${L.d}</h2><table class="sf-t"><tr><th>${L.pr}</th><td>${esc(p.code)} ${esc(p.name)}</td><th>${L.loc}</th><td>${esc(t.location)}</td></tr><tr><th>${L.ins}</th><td>${esc([t.instrument, t.instrument_sn && "SN " + t.instrument_sn].filter(Boolean).join(" · "))}</td><th>${L.cal}</th><td>${t.calib_until ? esc(rDate(t.calib_until, lang)) : "—"}</td></tr>
+      <tr><th>${L.date}</th><td>${esc(rDate(t.test_date, lang))}</td><th>${L.rule}</th><td>${T.limitLabel ? esc(T.limitLabel + " " + (t.limit_value == null ? T.limit : t.limit_value)) : "Yes / Yes / Yes"}</td></tr></table>`,
+      `<h2><i>2</i>${L.lines}</h2><table class="sf-t"><tr>${T.cols.map(([, l]) => `<th>${esc(l)}</th>`).join("")}<th>${L.res}</th></tr>${(t.rows || []).map((r) => { const ps = rowPass(t, r); return `<tr>${T.cols.map(([k]) => `<td>${esc(r[k] == null ? "" : r[k])}</td>`).join("")}<td><b>${ps == null ? "—" : ps ? L.pass : L.fail}</b></td></tr>`; }).join("")}</table>${t.note ? `<div class="sf-box"><b>${L.note}:</b> ${esc(t.note)}</div>` : ""}`,
+      `<h2><i>3</i>${L.sign}</h2><div class="sf-sign"><div><small>${L.by}</small><b>${esc(staffName(t.tested_by))}</b><em>${L.sig}</em></div><div><small>${L.wit}</small><b>${esc(t.witness || "")}</b><em>${L.sig}</em></div><div><small>${L.pm}</small><b>${esc(staffName(p.pm_id))}</b><em>${L.sig}</em></div><div><small>&nbsp;</small><b>&nbsp;</b><em>${L.sig}</em></div></div>`];
+    sfCss();
+    await makePdf({ lang, no: t.test_no, fileName: t.test_no + "-" + (km ? "KH" : "EN") + ".pdf", head: `<div class="rp-top">${pdfLogo()}<div class="rp-title"><h1 class="sf-h1">${esc(title)}</h1><small>${esc(t.test_no)} · ${L.form}</small><span class="rp-sess ${t.result === "Pass" ? "" : "sf-open"}">${R(t.result)}</span></div></div>`,
+      mini: (x) => `<div class="rp-mini"><span><b>${x}</b> · ${esc(p.code)} · ${esc(t.test_no)}</span><span>${L.form}</span></div>`, contTitle: title, photoTitle: L.ph, blocks, photos: (t.photos || []).map((src, i) => ({ src, cap: String(i + 1) })), footLeft: L.gen + " " + esc(pdfGenerated()), pageLabel: L.page });
+  }
+  function hoItemForm(u, pid, it) {
+    it = it || {};
+    formModal(it.id ? "Update · " + it.title : "Add handover item", [
+      { name: "project_id", label: "Project", type: "select", options: projectOptions(u), required: true, value: it.project_id || pid || state.project }, { name: "category", label: "Type", type: "select", options: HO_CATS, value: it.category || HO_CATS[0] },
+      { name: "title", label: "Item", required: true, value: it.title || "" }, { name: "status", label: "Status", type: "select", options: ["Pending", "Received", "Handed over"], value: it.status || "Pending" },
+      { name: "due_date", label: "Due", type: "date", value: it.due_date || "" }, { name: "evidence", label: "File or photo (optional)", type: "evidence", help: "As-built PDF, signed handover note…" }, { name: "note", label: "Note", type: "textarea", value: it.note || "" }
+    ], async (x) => {
+      const ev = (it.evidence || []).concat(await storeEvidence(x.evidence || [], "handover")); x.evidence = ev; x.due_date = x.due_date || null; x.updated_by = u.id;
+      if (it.id) await patch("handover_items", it.id, x, "Handover item " + x.title + ": " + x.status); else await save("handover_items", x, "Handover item added: " + x.title);
+    }, it.id ? "Save" : "Add item");
+  }
+  function warrantyForm(u, pid, w) {
+    w = w || {};
+    formModal(w.id ? "Edit warranty" : "Add warranty", [
+      { name: "project_id", label: "Project", type: "select", options: projectOptions(u), required: true, value: w.project_id || pid || state.project }, { name: "item", label: "Equipment / work", required: true, value: w.item || "" },
+      { name: "supplier", label: "Supplier / subcontractor", value: w.supplier || "" }, { name: "start_date", label: "Warranty starts", type: "date", required: true, value: w.start_date || today() },
+      { name: "end_date", label: "Warranty ends", type: "date", required: true, value: w.end_date || "" }, { name: "evidence", label: "Warranty certificate (optional)", type: "evidence" }, { name: "note", label: "Note", type: "textarea", value: w.note || "" }
+    ], async (x) => {
+      x.evidence = (w.evidence || []).concat(await storeEvidence(x.evidence || [], "warranty"));
+      if (w.id) await patch("warranties", w.id, x, "Warranty updated: " + x.item); else await save("warranties", x, "Warranty added: " + x.item + " until " + x.end_date);
+    }, w.id ? "Save" : "Add warranty");
+  }
+  const wDays = (w) => Math.ceil(daysUntil(w.end_date));
+  const wChip = (w) => { const d = wDays(w); return d < 0 ? chip("Ended", "n") : d <= 14 ? chip("Ends in " + d + " days", "r") : d <= 60 ? chip("Ends in " + d + " days", "w") : chip("Valid", "g"); };
+  const dlpEnd = (p) => { if (!p.handover_date) return null; const d = new Date(p.handover_date + "T00:00:00"); d.setMonth(d.getMonth() + Number(p.dlp_months || 12)); return d.toLocaleDateString("en-CA"); };
+  function setHandoverDate(p) {
+    formModal("Handover date · " + p.code, [{ name: "handover_date", label: "Handover date", type: "date", required: true, value: p.handover_date || today() }, { name: "dlp_months", label: "Defect liability period", type: "select", options: [["6", "6 months"], ["12", "12 months"], ["24", "24 months"]], value: String(p.dlp_months || 12) }],
+      async (x) => { await patch("projects", p.id, { handover_date: x.handover_date, dlp_months: Number(x.dlp_months) }, p.code + " handover date " + x.handover_date); }, "Save");
+  }
+  function handoverBody(u, pids, pid) {
+    const tests = db.tests.filter((t) => pids.has(t.project_id)).filter((t) => matchSearch(t, ["test_no", "location"])).sort((a, b) => String(b.test_date).localeCompare(String(a.test_date)));
+    const items = db.handover_items.filter((h) => pids.has(h.project_id)), ws = db.warranties.filter((w) => pids.has(w.project_id)).sort((a, b) => String(a.end_date).localeCompare(String(b.end_date)));
+    const p = pid ? byId("projects", pid) : null, dl = p ? dlpEnd(p) : null, edit = can(u, "handover", "edit");
+    const sys = ["Electrical", "ELV", "Plumbing"].map((s) => { const ts = tests.filter((t) => t.system === s); const ok = ts.filter((t) => t.result === "Pass").length;
+      return `<div class="tc"><h4>${esc(s)} ${chip(ok + "/" + ts.length + (ts.some((t) => t.result === "Fail") ? " · " + ts.filter((t) => t.result === "Fail").length + " failed" : ""), ts.some((t) => t.result === "Fail") ? "r" : ts.length && ok === ts.length ? "g" : "w")}</h4>${bar(pct(ok, ts.length), ts.some((t) => t.result === "Fail"))}<small>${esc(Object.values(TT).filter((x) => x.system === s).map((x) => x.name).join(" · "))}</small></div>`; }).join("")
+      + `<div class="tc"><h4>Handover pack ${chip(items.filter((h) => h.status !== "Pending").length + "/" + items.length, items.length && items.every((h) => h.status !== "Pending") ? "g" : "w")}</h4>${bar(pct(items.filter((h) => h.status !== "Pending").length, items.length))}<small>${esc(HO_CATS.slice(0, 6).join(" · "))}</small></div>`;
+    return `${kpis5([["Tests passed", tests.filter((t) => t.result === "Pass").length + " / " + tests.length, "", "g"], ["Tests failed", String(tests.filter((t) => t.result === "Fail").length), "defect raised for each failed line", tests.some((t) => t.result === "Fail") ? "r" : ""],
+      ["Handover items done", items.filter((h) => h.status !== "Pending").length + " / " + items.length], ["Warranties ending ≤ 60 days", String(ws.filter((w) => wDays(w) >= 0 && wDays(w) <= 60).length), "", ws.some((w) => wDays(w) >= 0 && wDays(w) <= 14) ? "r" : ""],
+      p ? ["Defect liability ends", dl ? fmtDate(dl) : "—", p.handover_date ? (p.dlp_months || 12) + " months after handover " + fmtDate(p.handover_date) : "Set the handover date"] : ["Projects", String(pids.size)]])}
+      <div class="tc-grid">${sys}</div>
+      <div class="sec-h"><h2>Test sheets</h2>${edit ? btn("New test sheet", () => newTest(u, pid), "primary") : ""}${p && canManageProject(u) ? btn("Set handover date", () => setHandoverDate(p)) : ""}</div>
+      ${table([{ label: "No.", get: (t) => `<small>${esc(t.test_no)}</small>` }, { label: "Test", get: (t) => `<b>${esc(TT[t.test_type].name)}</b><br><small>${esc(t.location)}</small>` }, pid ? null : { label: "Project", get: (t) => esc(projLabel(t.project_id)) }, { label: "System", get: (t) => esc(t.system) },
+        { label: "Date", get: (t) => fmtDate(t.test_date) }, { label: "Lines", get: (t) => String((t.rows || []).length) }, { label: "Result", get: (t) => badge(t.result) }].filter(Boolean), tests, openTest)}
+      <div class="sec-h"><h2>Handover pack</h2>${edit ? btn("Add item", () => hoItemForm(u, pid)) : ""}</div>
+      ${table([{ label: "Type", get: (h) => esc(h.category) }, { label: "Item", get: (h) => `<b>${esc(h.title)}</b>${(h.evidence || []).length ? " 📎" : ""}` }, pid ? null : { label: "Project", get: (h) => esc(projLabel(h.project_id)) }, { label: "Due", get: (h) => fmtDate(h.due_date) }, { label: "Status", get: (h) => badge(h.status) }].filter(Boolean), items, (h) => edit ? hoItemForm(u, pid, h) : null)}
+      <div class="sec-h"><h2>Warranties</h2>${edit ? btn("Add warranty", () => warrantyForm(u, pid)) : ""}</div>
+      ${table([{ label: "Equipment / work", get: (w) => `<b>${esc(w.item)}</b>${w.note ? `<br><small>${esc(w.note)}</small>` : ""}` }, pid ? null : { label: "Project", get: (w) => esc(projLabel(w.project_id)) }, { label: "Supplier", get: (w) => esc(w.supplier) }, { label: "From", get: (w) => fmtDate(w.start_date) }, { label: "Until", get: (w) => fmtDate(w.end_date) }, { label: "Alert", get: wChip }].filter(Boolean), ws, (w) => edit ? warrantyForm(u, pid, w) : null)}`;
+  }
+  SCREENS.handover = (u) => {
+    const pids = new Set(myProjects(u).filter((p) => !state.project || p.id === state.project).map((p) => p.id));
+    return `<h1>Handover & warranty</h1><p class="muted">Test sheets with pass/fail, the handover pack for the client, and warranties with alerts 60 and 14 days before they end.</p>${toolbar(u, {})}${handoverBody(u, pids, state.project || null)}`;
+  };
+
+  // ================= PROJECT PAGE (everything about one job in one place) =================
+  const PTABS = [["overview", "Overview", "projects"], ["daily", "Daily reports", "daily"], ["docs", "Drawings", "docs"], ["requests", "Requests", "requests"], ["qaqc", "QA/QC", "qaqc"], ["safety", "Safety", "safety"],
+    ["vo", "Variations", "vo"], ["subs", "Subcontractors", "subs"], ["cost", "Cost", "cost"], ["handover", "Handover", "handover"], ["team", "Team", "projects"]];
+  function embedScreen(key, u, pid) {
+    const keep = state.project; state.project = pid;
+    if (key === "requests" && !state.tab.requests && LEVEL[level(u, "requests")] >= LEVEL.approve) state.tab.requests = "all";
+    try { let h = SCREENS[key](u); h = h.replace(/^\s*<h1>[\s\S]*?<\/h1>(\s*<p class="muted">[\s\S]*?<\/p>)?/, ""); return `<div class="embed">${h}</div>`; } finally { state.project = keep; }
+  }
+  function projectCounts(pid) {
+    return { requests: db.requests.filter((r) => r.project_id === pid && r.status === "Pending").length, qaqc: db.defects.filter((f) => f.project_id === pid && f.status !== "Closed").length,
+      safety: db.safety.filter((s) => s.project_id === pid && s.status === "Open").length, vo: db.variations.filter((v) => v.project_id === pid && ["Raised", "Priced", "PM checked", "MD approved", "Sent to client"].includes(v.status)).length };
+  }
+  function planPct(p) { if (!p.start_date || !p.end_date) return null; const a = new Date(p.start_date).getTime(), b = new Date(p.end_date).getTime(); return Math.max(0, Math.min(100, Math.round((Date.now() - a) * 100 / Math.max(1, b - a)))); }
+  function projectOverview(u, p) {
+    const L = db.cost_lines.filter((c) => c.project_id === p.id), cu = pct(sum(L, (l) => l.actual), sum(L, (l) => l.budget)), plan = planPct(p), gap = plan == null ? 0 : Number(p.progress) - plan;
+    const odDef = db.defects.filter((f) => f.project_id === p.id && f.status === "Open"), openSafe = db.safety.filter((s) => s.project_id === p.id && s.status === "Open");
+    const voWait = db.variations.filter((v) => v.project_id === p.id && ["Raised", "Priced", "PM checked", "MD approved", "Sent to client"].includes(v.status));
+    const reqs = db.requests.filter((r) => r.project_id === p.id && r.status === "Pending"), failT = db.tests.filter((t) => t.project_id === p.id && t.result === "Fail");
+    const exp = new Date().getHours() >= 9 ? siteExpected(u).filter((x) => x.m.project_id === p.id && !x.rs.some((d) => d.session === "Morning")) : [];
+    const att = [].concat(
+      odDef.slice(0, 4).map((f) => [chip("QA/QC", "r"), defectNo(f) + " " + f.description, f.location + (f.due_date < today() ? " · overdue" : " · fix by " + fmtDate(f.due_date)), () => openDefect(f)]),
+      openSafe.map((s) => [chip("Safety", "r"), s.rec_type + ": " + s.description, s.severity + " · " + fmtDate(s.rec_date), () => openSafety(s)]),
+      voWait.map((v) => [chip("Variation", "w"), v.vo_no + " " + v.title, v.status + (v.amount ? " · " + money(v.amount) : ""), () => openVO(v)]),
+      reqs.slice(0, 3).map((r) => [chip("Request", "w"), r.ref_no + " " + r.title, "Waiting for " + ((r.steps || [])[r.step_index] || {}).role, () => openRequest(r)]),
+      failT.map((t) => [chip("Test", "r"), t.test_no + " " + TT[t.test_type].name + " failed", t.location, () => openTest(t)]),
+      exp.map((x) => [chip("Report", "n"), x.s ? x.s.name : staffName(x.m.staff_id), "Morning report not sent yet", null]));
+    const lastReps = db.daily_reports.filter((d) => d.kind !== "Design" && d.project_id === p.id).sort((a, b) => String(b.submitted_at || b.report_date).localeCompare(String(a.submitted_at || a.report_date))).slice(0, 3);
+    const ks = db.sub_contracts.filter((k) => k.project_id === p.id);
+    return `${kpis5([["Progress", esc(p.progress) + "%", bar(p.progress)], plan == null ? null : ["Plan today", plan + "%", gap >= 0 ? "on or ahead of plan" : Math.abs(gap) + " points behind", gap < -15 ? "r" : gap < -5 ? "o" : "g"],
+      can(u, "cost", "view") ? ["Cost used", cu + "%", "of " + money(sum(L, (l) => l.budget)) + " budget", cu > Number(p.progress) + 15 ? "r" : cu > Number(p.progress) + 5 ? "o" : ""] : null,
+      can(u, "vo", "view") ? ["Variations", "+" + money(voApproved(p.id)), voWait.length + " in progress" + (can(u, "cost", "view") ? " · contract " + money(revisedContract(p)) : "")] : null,
+      ["Open issues", String(odDef.length + openSafe.length + failT.length), odDef.length + " defects · " + openSafe.length + " safety · " + failT.length + " failed tests", odDef.length + openSafe.length + failT.length ? "r" : "g"]])}
+      <div class="g3"><section class="card"><div class="card-head"><h2>Needs attention on this project</h2></div>${att.length ? `<ul class="mini-l">${att.slice(0, 8).map(([c, t, s, go]) => `<li ${go ? `data-act="${act(go)}" class="click"` : ""}>${c}<span><b>${esc(t)}</b><small>${esc(s)}</small></span>${go ? '<span class="rt btn small">Open</span>' : ""}</li>`).join("")}</ul>` : '<p class="muted">Nothing waiting. 👍</p>'}</section>
+      <section class="card"><div class="card-head"><h2>Progress by scope</h2>${canUpdateProgress(u, p) ? `<button class="btn small" data-act="${act(() => updateProgress(p))}">Update</button>` : ""}</div>${scopeTable(p)}</section></div>
+      <div class="g2"><section class="card"><div class="card-head"><h2>Latest site reports</h2><a class="link" href="#" data-act="${act(() => { state.tab["p:" + p.id] = "daily"; render(); })}">View all</a></div>${lastReps.length ? `<ul class="mini-l">${lastReps.map((d) => `<li data-act="${act(() => openDaily(d))}" class="click">${chip(d.report_date === today() ? "Today" : fmtDate(d.report_date), d.report_date === today() ? "g" : "n")}<span><b>${esc(d.session || "Report")} · ${esc(d.manpower || 0)} workers</b><small>${esc(staffName(d.author_id))}${d.submitted_at ? " · " + esc(timeOf(d.submitted_at)) : ""}${d.loc_status ? " · " + esc(d.loc_status) : ""} · ${reportPhotos(d).length} photos</small></span></li>`).join("")}</ul>${gallery(lastReps.flatMap(reportPhotos).slice(0, 4), "small")}` : '<p class="muted">No site report yet.</p>'}</section>
+      ${can(u, "subs", "view") ? `<section class="card"><div class="card-head"><h2>Subcontractors on this job</h2></div>${ks.length ? `<ul class="mini-l">${ks.map((k) => { const s = byId("subcontractors", k.sub_id) || {}; const r = (k.ratings || []).length ? sum(k.ratings, (x) => (x.quality + x.time + x.safety) / 3) / k.ratings.length : 0;
+        return `<li data-act="${act(() => openSub(s))}" class="click"><span><b>${esc(s.name)}</b><small>${esc(k.scope)} · ${money(k.contract_value)}${k.retention_pct ? " · retention " + esc(k.retention_pct) + "%" : " · no retention"}</small></span><span class="rt"><b>${pct(kPaid(k), k.contract_value)}% paid</b><br>${r ? stars(r) : ""}</span></li>`; }).join("")}</ul>` : '<p class="muted">None yet.</p>'}</section>` : ""}</div>`;
+  }
+  function projectTeam(u, p) {
+    const mem = db.project_members.filter((m) => m.project_id === p.id).map((m) => [m, byId("staff", m.staff_id)]).filter(([, s]) => s && !s.left_on);
+    return `<section class="card"><div class="card-head"><h2>Project org chart</h2>${btn("Full view and PDF", () => openProjectOrg(p))}${canManageProject(u) ? btn("Manage team", () => manageTeam(p), "primary") : ""}</div>${orgChartHtml(projectOrgData(p))}</section>
+      <section class="card"><div class="card-head"><h2>Team list <span class="count">${mem.length + 1}</span></h2></div><ul class="people">${[byId("staff", p.pm_id)].filter(Boolean).map((s) => `<li data-act="${act(() => openPerson(s))}">${avatar(s)}<b>${esc(s.name)}</b><small>Project Manager${s.phone ? " · " + esc(s.phone) : ""}</small></li>`).join("")}${mem.map(([m, s]) => `<li data-act="${act(() => openPerson(s))}">${avatar(s)}<b>${esc(s.name)}</b><small>${esc(s.title)}${s.phone ? " · " + esc(s.phone) : ""}</small></li>`).join("")}</ul></section>`;
+  }
+  function projectPage(u, p) {
+    const tabsOk = PTABS.filter(([, , mod]) => navVisible(u, mod));
+    const key = "p:" + p.id; let cur = state.tab[key] || "overview"; if (!tabsOk.some((t) => t[0] === cur)) cur = "overview";
+    const n = projectCounts(p.id);
+    const tabHtml = `<div class="ptabs" role="tablist">${tabsOk.map(([k, l]) => `<button role="tab" aria-selected="${k === cur}" class="${k === cur ? "on" : ""}" data-act="${act(() => { state.tab[key] = k; state.search = ""; render(); const el = document.querySelector(".ptabs .on"); if (el) el.scrollIntoView({ inline: "center", block: "nearest" }); })}">${esc(l)}${n[k] ? `<i>${n[k]}</i>` : ""}</button>`).join("")}</div>`;
+    let body;
+    if (cur === "overview") body = projectOverview(u, p);
+    else if (cur === "team") body = projectTeam(u, p);
+    else if (cur === "vo") { const rows = db.variations.filter((v) => v.project_id === p.id).sort((a, b) => String(b.vo_no).localeCompare(String(a.vo_no))); body = voKpis(rows, p) + `<div class="sec-h"><span class="grow"></span>${can(u, "vo", "edit") ? btn("New variation", () => newVO(u, p.id), "primary") : ""}</div>` + voTable(rows); }
+    else if (cur === "subs") { const list = db.subcontractors.filter((s) => contractsOf(s.id).some((k) => k.project_id === p.id)); const pays = db.sub_payments.filter((x) => (byId("sub_contracts", x.contract_id) || {}).project_id === p.id);
+      body = subTable(list, p.id) + `<div class="sec-h"><h2>Payment certificates</h2></div>` + payTable(pays.sort((a, b) => (a.status === "Paid") - (b.status === "Paid") || String(b.period_to).localeCompare(String(a.period_to)))); }
+    else if (cur === "handover") body = handoverBody(u, new Set([p.id]), p.id);
+    else body = embedScreen(cur, u, p.id);
+    const acts = (canUpdateProgress(u, p) ? btn("Update progress", () => updateProgress(p), "primary") : "") + (canManageProject(u) ? btn("Site location", () => editSiteLocation(p)) : "");
+    return `<h1>Projects</h1><p class="muted">${esc(p.code)} · everything about this job in one place</p>
+      <a class="backlink" href="#projects">‹ All projects</a>
+      <div class="phub-h"><div><span class="pc">${esc(p.code)} · ${esc(p.location || "")} · ${esc(p.status)}</span><h2>${esc(p.name)}</h2><span class="meta">Client: ${esc(p.client || "")} · PM ${esc(staffName(p.pm_id))} · ${fmtDate(p.start_date)} → ${fmtDate(p.end_date)}${can(u, "cost", "view") ? " · Contract " + money(revisedContract(p)) : ""}</span></div><div class="phub-acts">${acts}</div></div>
+      ${tabHtml}<div class="ptab-body">${body}</div>`;
+  }
+
   // ---------- PEOPLE ----------
   const leaveTaken = (id) => sum(db.requests.filter((r) => r.requester_id === id && r.type === "Leave" && r.status === "Approved"), (r) => r.leave_days);
   // ---------- staff: add, edit, remove (HR, MD and the system administrator) ----------
@@ -2596,6 +3177,9 @@
   // ---------- DASHBOARD ----------
   const SVGI = {
     back: '<path d="M15 18l-6-6 6-6"/>',
+    vo: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M12 11v6M9 14h6"/>',
+    subs: '<circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><path d="M16 4.5a3 3 0 0 1 0 6M18 14.5c1.8.9 3 2.9 3 5.5"/>',
+    handover: '<path d="M9 4h6a1 1 0 0 1 1 1v1H8V5a1 1 0 0 1 1-1z"/><path d="M8 5H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><path d="m9 14 2 2 4-4"/>',
     svr: '<path d="M12 21s-6-5.3-6-10a6 6 0 0 1 12 0c0 4.7-6 10-6 10z"/><path d="M9.5 10.5l1.8 1.8 3.4-3.6"/>',
     dashboard: '<path d="M4 13h6V4H4zM14 20h6v-9h-6zM4 20h6v-4H4zM14 4v4h6V4z"/>',
     home: '<path d="M3 11.5 12 4l9 7.5"/><path d="M5 10v10h14V10"/><path d="M10 20v-5h4v5"/>',
@@ -3171,11 +3755,159 @@
       ${row(linkedN ? (linkedN === staffNow().length ? true : null) : false, linkedN + " of " + staffNow().length + " staff linked to Telegram", notLinked.length ? "Not linked yet: " + esc(notLinked.slice(0, 12).join(", ")) + (notLinked.length > 12 ? " and " + (notLinked.length - 12) + " more" : "") : "Everyone is linked.")}
     </ul></section>`;
   }
+  // ---------- DEVICES (Settings) ----------
+  // Every phone or computer that unlocks the app gets its own ID on that device. It reports in every minute while the app is open.
+  // The System Admin can sign a device out: next time it reports in, the app locks and asks for the passkey again.
+  const DEV_ID_KEY = "gid-device-id", DEV_LOCAL = "gid-devices", ONLINE_MIN = 3;
+  const DEV = { list: [], loaded: 0, missing: false, loading: false };
+  function deviceId() {
+    let id = null; try { id = localStorage.getItem(DEV_ID_KEY); } catch (e) { /* ignore */ }
+    if (!id) { id = uid(); try { localStorage.setItem(DEV_ID_KEY, id); } catch (e) { /* ignore */ } }
+    return id;
+  }
+  function deviceInfo() {
+    const ua = navigator.userAgent || "", touchMac = /Macintosh/.test(ua) && navigator.maxTouchPoints > 1;
+    const os = /iPhone/.test(ua) ? "iPhone" : /iPad/.test(ua) || touchMac ? "iPad" : /Android/.test(ua) ? (/Mobile/.test(ua) ? "Android phone" : "Android tablet")
+      : /Windows/.test(ua) ? "Windows" : /CrOS/.test(ua) ? "Chromebook" : /Mac OS X|Macintosh/.test(ua) ? "Mac" : /Linux/.test(ua) ? "Linux" : "Other";
+    const browser = /Edg\//.test(ua) ? "Edge" : /OPR\//.test(ua) ? "Opera" : /SamsungBrowser/.test(ua) ? "Samsung Internet" : /Telegram/.test(ua) ? "Telegram" : /FBAN|FBAV/.test(ua) ? "Facebook"
+      : /CriOS|Chrome\//.test(ua) ? "Chrome" : /FxiOS|Firefox\//.test(ua) ? "Firefox" : /Safari\//.test(ua) ? "Safari" : "Browser";
+    const kind = /iPhone|Android phone/.test(os) ? "Phone" : /iPad|tablet/.test(os) ? "Tablet" : "Computer";
+    let app = false; try { app = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true; } catch (e) { /* ignore */ }
+    return { os, browser: app ? browser + " (app)" : browser, kind, name: os + " · " + browser + (app ? " app" : "") };
+  }
+  function devLocal() { try { return JSON.parse(localStorage.getItem(DEV_LOCAL) || "[]"); } catch (e) { return []; } }
+  function devLocalSave(list) { try { localStorage.setItem(DEV_LOCAL, JSON.stringify(list)); } catch (e) { /* ignore */ } }
+  // One call: register or refresh this device. Returns its status ("active", "signed out" or "terminated").
+  async function devBeat() {
+    if (!state.user) return "active";
+    const i = deviceInfo(), id = deviceId(), now = nowIso();
+    if (Store.mode === "supabase") {
+      const { data, error } = await Store.client.rpc("device_beat", { p_id: id, p_staff: state.user, p_name: i.name, p_os: i.os, p_browser: i.browser, p_kind: i.kind, p_ua: (navigator.userAgent || "").slice(0, 300) });
+      if (error) { if (/device_beat|device_sessions|schema cache|does not exist/i.test(error.message)) DEV.missing = true; throw new Error(error.message); }
+      DEV.missing = false; return data || "active";
+    }
+    const list = devLocal(); let r = list.find((x) => x.id === id);
+    if (r && r.status !== "active") return r.status;
+    if (!r) { r = { id, first_seen: now, status: "active" }; list.push(r); }
+    Object.assign(r, { staff_id: state.user, device_name: r.label ? r.device_name : i.name, os: i.os, browser: i.browser, kind: i.kind, last_seen: now });
+    devLocalSave(list); return "active";
+  }
+  async function devLoad(force) {
+    if (DEV.loading || (!force && Date.now() - DEV.loaded < 20000)) return;
+    DEV.loading = true;
+    try {
+      if (Store.mode === "supabase") {
+        const { data, error } = await Store.client.from("device_sessions").select("*").order("last_seen", { ascending: false }).limit(1000);
+        if (error) { DEV.missing = true; DEV.list = []; } else { DEV.missing = false; DEV.list = data || []; }
+      } else DEV.list = devLocal();
+      DEV.loaded = Date.now();
+    } finally { DEV.loading = false; }
+  }
+  async function devUpdate(id, p) {
+    if (Store.mode === "supabase") { const { error } = await Store.client.from("device_sessions").update(p).eq("id", id); if (error) throw new Error(error.message); }
+    else { const list = devLocal(); const r = list.find((x) => x.id === id); if (r) Object.assign(r, p); devLocalSave(list); }
+    const r = DEV.list.find((x) => x.id === id); if (r) Object.assign(r, p);
+  }
+  // This device was signed out: forget it, lock the app and tell the person why on the passkey screen
+  function devKick(status) {
+    if (devKick.done) return; devKick.done = true;
+    try {
+      localStorage.removeItem(DEV_ID_KEY);
+      sessionStorage.setItem("gid-kicked", status === "terminated" ? "This device was signed out by the System Admin. Enter the passkey to sign in again." : "This device was signed out. Enter the passkey to sign in again.");
+    } catch (e) { /* ignore */ }
+    if (window.GID_LOCK) window.GID_LOCK(); else location.reload();
+  }
+  async function devCheck() {
+    if (document.visibilityState === "hidden" || offlineNow()) return;
+    try { const st = await devBeat(); if (st && st !== "active") devKick(st); } catch (e) { /* no internet or table missing: try again later */ }
+  }
+  // The lock button: mark this device as signed out by its own user, then lock
+  async function lockThisDevice() {
+    try { await devUpdate(deviceId(), { status: "signed out", ended_at: nowIso(), ended_by: state.user }); } catch (e) { /* ignore */ }
+    try { localStorage.removeItem(DEV_ID_KEY); } catch (e) { /* ignore */ }
+    if (window.GID_LOCK) window.GID_LOCK();
+  }
+  const canEndDevices = (u) => hasTag(u, "SYSADMIN") || hasTag(u, "BACKUPADMIN");
+  const minsAgo = (iso) => iso ? Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000)) : 1e9;
+  function agoTxt(iso) {
+    const m = minsAgo(iso);
+    if (m >= 1e9) return "never"; if (m < 1) return "just now"; if (m < 60) return m + " min ago";
+    const h = Math.round(m / 60); if (h < 24) return h + " h ago"; const d = Math.round(h / 24); return d + (d === 1 ? " day ago" : " days ago");
+  }
+  function devState(d) {
+    if (d.status === "terminated") return ["Signed out by admin", "r"];
+    if (d.status === "signed out") return ["Signed out", "n"];
+    const m = minsAgo(d.last_seen);
+    if (m <= ONLINE_MIN) return ["Online now", "g"];
+    if (m > 30 * 1440) return ["Not used 30+ days", "n"];
+    return ["Signed in", "w"];
+  }
+  const devIcon = (d) => d.kind === "Computer" ? "🖥️" : d.kind === "Tablet" ? "📱" : "📱";
+  function endDevice(d) {
+    const who = staffName(d.staff_id);
+    formModal("Sign out device", [{ name: "why", label: "Reason (optional, for the activity log)", help: "For example: phone lost, staff left, shared computer" }], async (v) => {
+      await devUpdate(d.id, { status: "terminated", ended_at: nowIso(), ended_by: state.user, ended_note: v.why || "" });
+      try { await Store.insert("audit_log", { at: nowIso(), actor_id: state.user, action: "Signed out device", tbl: "device_sessions", record_id: d.id, summary: (d.label || d.device_name) + " · " + who + (v.why ? " · " + v.why : "") }); } catch (e) { /* ignore */ }
+      toast("Signed out. The device will lock within a minute if it is open.");
+    }, "Sign out device", { extraHtml: `<p><b>${esc(d.label || d.device_name)}</b> · ${esc(who)}</p><p class="muted small">The app on that device locks and asks for the passkey again. Its data on the server is not changed.</p>` });
+  }
+  function endOthers(list) {
+    formModal("Sign out all other devices", [{ name: "why", label: "Reason (optional, for the activity log)" }], async (v) => {
+      for (const d of list) await devUpdate(d.id, { status: "terminated", ended_at: nowIso(), ended_by: state.user, ended_note: v.why || "" });
+      try { await Store.insert("audit_log", { at: nowIso(), actor_id: state.user, action: "Signed out device", tbl: "device_sessions", record_id: "", summary: list.length + " devices signed out" + (v.why ? " · " + v.why : "") }); } catch (e) { /* ignore */ }
+      toast(list.length + " devices signed out.");
+    }, "Sign out " + list.length + " devices", { extraHtml: `<p class="muted small">Every device except this one locks and asks for the passkey again (${list.length} devices).</p>` });
+  }
+  function renameDevice(d) {
+    formModal("Name this device", [{ name: "label", label: "Name", value: d.label || "", help: "For example: Site office laptop, Sophea's iPhone" }], async (v) => {
+      await devUpdate(d.id, { label: v.label || null });
+    }, "Save");
+  }
+  function openDevice(d) {
+    const st = devState(d), mine = d.id === deviceId(), can_ = canEndDevices(me());
+    detail(d.label || d.device_name, [["Status", chip(st[0], st[1])], ["Device", esc(devIcon(d) + " " + d.kind + " · " + d.os + " · " + d.browser)], ["Used by", esc(staffName(d.staff_id))],
+      ["First signed in", d.first_seen ? fmtDate(d.first_seen) + " " + rTime(d.first_seen) : ""], ["Last active", d.last_seen ? fmtDate(d.last_seen) + " " + rTime(d.last_seen) + " · " + esc(agoTxt(d.last_seen)) : ""],
+      d.status !== "active" ? ["Signed out", (d.ended_at ? fmtDate(d.ended_at) + " " + rTime(d.ended_at) : "") + (d.ended_by ? " · " + esc(staffName(d.ended_by)) : "") + (d.ended_note ? " · " + esc(d.ended_note) : "")] : null],
+      (can_ ? btn("Rename", () => renameDevice(d)) : "") + (can_ && !mine && d.status === "active" ? btn("Sign out device", () => endDevice(d), "danger") : ""),
+      mine ? '<p class="muted small">This is the device you are using now. Use the lock button in the menu to sign it out.</p>' : "");
+  }
+  function devicesCard(u) {
+    if (!DEV.loaded) AFTER.push(() => devLoad().then(() => { if (state.route === "admin" && !$("#modal")) render(); }));
+    if (DEV.missing) return `<section class="card"><h2>Devices</h2><p class="warnline">The devices table is not in the database yet. Paste supabase/update-v18.sql into Supabase → SQL Editor and press Run.</p></section>`;
+    const can_ = canEndDevices(u), me_ = deviceId();
+    const all = DEV.list.slice().sort((a, b) => String(b.last_seen || "").localeCompare(String(a.last_seen || "")));
+    const act_ = all.filter((d) => d.status === "active"), online = act_.filter((d) => minsAgo(d.last_seen) <= ONLINE_MIN);
+    const phones = act_.filter((d) => d.kind !== "Computer").length, people = new Set(act_.map((d) => d.staff_id)).size;
+    const ended30 = all.filter((d) => d.status !== "active" && minsAgo(d.ended_at || d.last_seen) <= 30 * 1440).length;
+    const T = tabs("devices", [["on", "Signed in (" + act_.length + ")"], ["live", "Online now (" + online.length + ")"], ["off", "Signed out"]]);
+    const q = String(state.search || "").toLowerCase();
+    const rows = (T.cur === "on" ? act_ : T.cur === "live" ? online : all.filter((d) => d.status !== "active"))
+      .filter((d) => !q || [d.label, d.device_name, staffName(d.staff_id)].join(" ").toLowerCase().includes(q));
+    const others = act_.filter((d) => d.id !== me_);
+    return `<section class="card devices"><div class="card-head"><h2>Devices</h2><div class="quick">${btn("Refresh", async () => { await devLoad(true); render(); })}${can_ && others.length ? btn("Sign out all other devices", () => endOthers(others), "danger") : ""}</div></div>
+      <p class="muted small">Every phone or computer that unlocked the app. Online now = used in the last ${ONLINE_MIN} minutes. ${can_ ? "Tap a device to rename it or sign it out." : "Only the System Admin can sign devices out."}</p>
+      ${kpis5([["Signed-in devices", String(act_.length), people + " people"], ["Online now", String(online.length), "", online.length ? "g" : ""], ["Phones & tablets", String(phones), (act_.length - phones) + " computers"], ["Signed out (30 days)", String(ended30)]])}
+      ${T.html}
+      ${table([{ label: "Device", get: (d) => `<b>${devIcon(d)} ${esc(d.label || d.device_name)}</b>${d.id === me_ ? ' <span class="chip g">This device</span>' : ""}${d.label ? `<br><small class="muted">${esc(d.device_name)}</small>` : ""}` },
+        { label: "Used by", get: (d) => esc(staffName(d.staff_id)) },
+        { label: "Last active", get: (d) => esc(agoTxt(d.last_seen)) },
+        { label: "Since", get: (d) => d.first_seen ? fmtDate(d.first_seen) : "" },
+        { label: "Status", get: (d) => { const s = devState(d); return chip(s[0], s[1]); } },
+        { label: "", get: (d) => can_ && d.id !== me_ && d.status === "active" ? `<button class="btn danger small" data-act="${act(() => endDevice(d))}">Sign out</button>` : "" }], rows, openDevice)}</section>`;
+  }
+  // report in now, every minute, and whenever the app comes back to the screen
+  function devStart() {
+    devCheck(); setInterval(devCheck, 60000);
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") devCheck(); });
+    setInterval(() => { if (state.route === "admin" && !$("#modal") && document.visibilityState === "visible") devLoad(true).then(() => { if (state.route === "admin" && !$("#modal")) render(); }); }, 60000);
+  }
+
   SCREENS.admin = (u) => {
     const audit = db.audit_log.slice().sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 60);
     const sys = isAdminPage(u);
     return `<h1>Settings</h1><p class="muted">${canManagePerms(u) ? "Control who can see and do what, and check the activity log." : "System settings and activity log."}</p>
       ${isAdminPage(u) ? healthCard() : ""}
+      ${isAdminPage(u) ? devicesCard(u) : ""}
       ${permEditor(u)}
       ${sys ? `<section class="card"><h2>Data</h2><p>${Store.mode === "supabase" ? "Connected to Supabase. Every change is saved in the online database and everyone using this link sees it." : "Browser demo: data is saved only in this browser on this device. Connect Supabase (see SETUP.md) to share data between people."}</p>
         <div class="quick">${btn("Reset demo data", resetDemo, "danger")}
@@ -3185,11 +3917,16 @@
   };
 
   function go(route) { location.hash = "#" + route; }
-  function routeFromHash() { const u = me(); const def = can(u, "dashboard", "view") ? "dashboard" : "home"; const r = (location.hash || "").replace(/^#\/?/, "") || def; return SCREENS[r] ? r : def; }
+  function routeFromHash() {
+    const u = me(); const def = can(u, "dashboard", "view") ? "dashboard" : "home"; let r = (location.hash || "").replace(/^#\/?/, "") || def;
+    // a project page: #projects/<id>
+    const pm = /^projects\/(.+)$/.exec(r); state.pid = pm ? decodeURIComponent(pm[1]) : ""; if (pm) r = "projects";
+    return SCREENS[r] ? r : def;
+  }
 
   // Switch person (demo): a window with everyone in org chart order, photos and a search box.
   // (The phone's own drop-down list cannot be coloured reliably, so it is not used.)
-  function switchUser(id) { state.user = id; try { localStorage.setItem(LS_KEY + "-user", state.user); } catch (x) { /* ignore */ } state.project = ""; state.search = ""; state.showAll = false; permDraft = null; closeDrawer(); closeAllModals(); render(); }
+  function switchUser(id) { state.user = id; setTimeout(devCheck, 50); try { localStorage.setItem(LS_KEY + "-user", state.user); } catch (x) { /* ignore */ } state.project = ""; state.search = ""; state.showAll = false; permDraft = null; closeDrawer(); closeAllModals(); render(); }
   function openUserPicker() {
     const u = me();
     const sections = [["EXEC", "Executive"]].concat(ORG_DEPTS).map(([k, label]) => {
@@ -3266,7 +4003,8 @@
     const pendN = myApprovals(u).length, mods = unreadByModule(u), unread = unreadCount(u);
     const nb = (k, v) => v ? `<span class="nb">${badgeTxt(v)}</span>` : "";
     const navItems = NAV.filter(([, , m]) => navVisible(u, m));
-    const nav = navItems.map(([r, label]) =>
+    let lastGroup = "";
+    const nav = navItems.map(([r, label, , grp]) => (grp && grp !== lastGroup ? `<div class="ngroup">${esc((lastGroup = grp))}</div>` : "") +
       `<a href="#${r}" class="${r === route ? "on" : ""}${mods[r] ? " has-nb" : ""}" data-badge="${r}">${svgI(r)}<span class="nl">${esc(label)}</span>${r === "requests" && pendN && !mods[r] ? `<span class="pill-n" title="Waiting for your approval">${pendN}</span>` : ""}${nb(r, mods[r])}</a>`).join("");
     let body = SCREENS[route](u);
     let title = "", sub = "";
@@ -3280,7 +4018,7 @@
       <button data-act="${act(() => document.body.classList.toggle("nav-open"))}" aria-label="Open full menu">${svgI("menu")}<span>Menu</span></button></nav>`;
     $("#app").innerHTML = `<div class="app">
       <aside class="rail" aria-label="Main menu"><a class="logo" href="#" aria-label="GID home"><img src="img/logo-landscape.png" alt="Green In Design · Interior &amp; Exterior"></a>
-        <div class="rail-sub"><span class="demo">DEMO</span>${isAdminPage(u) ? `<button class="resetbtn" title="Put the demo back to its starting data" data-act="${act(resetDemo)}">${svgI("reset")}<span>Reset demo</span></button>` : `<span class="rs-name">Management system</span>`}<button class="lockbtn" title="Lock the demo on this device" aria-label="Lock the demo on this device" data-act="${act(() => { if (window.GID_LOCK) window.GID_LOCK(); })}">${svgI("lock")}</button></div>
+        <div class="rail-sub"><span class="demo">DEMO</span>${isAdminPage(u) ? `<button class="resetbtn" title="Put the demo back to its starting data" data-act="${act(resetDemo)}">${svgI("reset")}<span>Reset demo</span></button>` : `<span class="rs-name">Management system</span>`}<button class="lockbtn" title="Lock the demo on this device" aria-label="Lock the demo on this device" data-act="${act(lockThisDevice)}">${svgI("lock")}</button></div>
         <div class="rail-label">Menu</div>
         <nav class="nav">${nav}</nav>
         <button class="me-card" data-act="${act(() => openPerson(u))}" aria-label="My profile">${avatar(u, "av lg")}<span><b>${esc(u.name)}</b><small>${esc(u.title)}</small></span></button></aside>
@@ -3297,7 +4035,7 @@
           </div></header>
         <div class="banner"><b>Demo:</b> tap your name at the top to switch person and test each role</div>
         ${body}
-      </main>${tabbar}</div>`;
+      </main>${tabbar}${outboxBar()}</div>`;
     const gq = $("#gq"), gres = $("#gres");
     gq.addEventListener("input", () => {
       const res = globalSearch(gq.value);
@@ -3335,8 +4073,9 @@
       let saved = null; try { saved = localStorage.getItem(LS_KEY + "-user"); } catch (e) { /* ignore */ }
       state.user = byId("staff", saved) ? saved : "s01";
       const deep = /^#open=([a-z_]+):(.+)$/.exec(location.hash || "");
-      if (deep) { history.replaceState(null, "", location.pathname + location.search); render(); openRecord(deep[1], decodeURIComponent(deep[2])); return; }
+      if (deep) { history.replaceState(null, "", location.pathname + location.search); render(); devStart(); openRecord(deep[1], decodeURIComponent(deep[2])); return; }
       render();
+      devStart();
     } catch (e) {
       await gateOpen();
       $("#app").innerHTML = `<div class="setup card"><h1>Could not start</h1><p>${esc(e.message)}</p><p class="muted">Check config.js and SETUP.md step 3.</p></div>`;

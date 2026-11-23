@@ -6,6 +6,13 @@
 -- Use fake data only. The live Phase 1 system will use real staff logins and strict per-role rules.
 
 drop table if exists public.notifications cascade;
+drop table if exists public.warranties cascade;
+drop table if exists public.handover_items cascade;
+drop table if exists public.tests cascade;
+drop table if exists public.sub_payments cascade;
+drop table if exists public.sub_contracts cascade;
+drop table if exists public.subcontractors cascade;
+drop table if exists public.variations cascade;
 drop table if exists public.site_visits cascade;
 drop table if exists public.app_settings cascade;
 drop table if exists public.monthly_costs cascade;
@@ -63,7 +70,9 @@ create table public.projects (
   progress numeric,
   lat numeric,
   lng numeric,
-  scopes jsonb
+  scopes jsonb,
+  handover_date date,
+  dlp_months int
 );
 
 create table public.project_members (
@@ -399,6 +408,121 @@ create table public.site_visits (
   approved_at timestamptz
 );
 
+create table public.variations (
+  id text primary key default gen_random_uuid()::text,
+  created_at timestamptz not null default now(),
+  vo_no text,
+  project_id text,
+  title text,
+  reason text,
+  asked_by text,
+  asked_date date,
+  time_days int,
+  lines jsonb,
+  markup_pct numeric,
+  amount numeric,
+  status text,
+  evidence jsonb,
+  client_evidence jsonb,
+  client_ref text,
+  claim_id text,
+  raised_by text,
+  history jsonb
+);
+
+create table public.subcontractors (
+  id text primary key default gen_random_uuid()::text,
+  created_at timestamptz not null default now(),
+  name text,
+  trade text,
+  contact text,
+  phone text,
+  telegram text,
+  patent boolean,
+  vat boolean,
+  insurance_until date,
+  status text,
+  notes text
+);
+
+create table public.sub_contracts (
+  id text primary key default gen_random_uuid()::text,
+  created_at timestamptz not null default now(),
+  sub_id text,
+  project_id text,
+  scope text,
+  contract_value numeric,
+  retention_pct numeric,
+  start_date date,
+  end_date date,
+  status text,
+  ratings jsonb,
+  retention_released boolean
+);
+
+create table public.sub_payments (
+  id text primary key default gen_random_uuid()::text,
+  created_at timestamptz not null default now(),
+  contract_id text,
+  pc_no text,
+  period_to date,
+  claimed numeric,
+  certified numeric,
+  retention_amt numeric,
+  status text,
+  note text,
+  evidence jsonb,
+  history jsonb,
+  paid_at timestamptz
+);
+
+create table public.tests (
+  id text primary key default gen_random_uuid()::text,
+  created_at timestamptz not null default now(),
+  test_no text,
+  project_id text,
+  system text,
+  test_type text,
+  location text,
+  instrument text,
+  instrument_sn text,
+  calib_until date,
+  limit_value numeric,
+  rows jsonb,
+  result text,
+  tested_by text,
+  witness text,
+  test_date date,
+  photos jsonb,
+  defect_ids jsonb,
+  note text
+);
+
+create table public.handover_items (
+  id text primary key default gen_random_uuid()::text,
+  created_at timestamptz not null default now(),
+  project_id text,
+  category text,
+  title text,
+  status text,
+  due_date date,
+  evidence jsonb,
+  note text,
+  updated_by text
+);
+
+create table public.warranties (
+  id text primary key default gen_random_uuid()::text,
+  created_at timestamptz not null default now(),
+  project_id text,
+  item text,
+  supplier text,
+  start_date date,
+  end_date date,
+  evidence jsonb,
+  note text
+);
+
 create table public.notifications (
   id text primary key default gen_random_uuid()::text,
   created_at timestamptz not null default now(),
@@ -470,6 +594,20 @@ alter table public.app_settings enable row level security;
 create policy "demo open access" on public.app_settings for all to anon, authenticated using (true) with check (true);
 alter table public.site_visits enable row level security;
 create policy "demo open access" on public.site_visits for all to anon, authenticated using (true) with check (true);
+alter table public.variations enable row level security;
+create policy "demo open access" on public.variations for all to anon, authenticated using (true) with check (true);
+alter table public.subcontractors enable row level security;
+create policy "demo open access" on public.subcontractors for all to anon, authenticated using (true) with check (true);
+alter table public.sub_contracts enable row level security;
+create policy "demo open access" on public.sub_contracts for all to anon, authenticated using (true) with check (true);
+alter table public.sub_payments enable row level security;
+create policy "demo open access" on public.sub_payments for all to anon, authenticated using (true) with check (true);
+alter table public.tests enable row level security;
+create policy "demo open access" on public.tests for all to anon, authenticated using (true) with check (true);
+alter table public.handover_items enable row level security;
+create policy "demo open access" on public.handover_items for all to anon, authenticated using (true) with check (true);
+alter table public.warranties enable row level security;
+create policy "demo open access" on public.warranties for all to anon, authenticated using (true) with check (true);
 alter table public.notifications enable row level security;
 create policy "demo open access" on public.notifications for all to anon, authenticated using (true) with check (true);
 
@@ -584,3 +722,44 @@ begin
 end $$;
 drop trigger if exists daily_reports_server_time on public.daily_reports;
 create trigger daily_reports_server_time before insert on public.daily_reports for each row execute function public.daily_report_server_time();
+-- GID Management System - update for version 18: Devices (who is signed in on which phone or computer). Safe to run; keeps all data.
+create table if not exists public.device_sessions (
+  id text primary key,
+  created_at timestamptz not null default now(),
+  staff_id text,
+  device_name text,
+  label text,
+  os text,
+  browser text,
+  kind text,
+  user_agent text,
+  first_seen timestamptz not null default now(),
+  last_seen timestamptz not null default now(),
+  status text not null default 'active',
+  ended_at timestamptz,
+  ended_by text,
+  ended_note text
+);
+create index if not exists device_sessions_last_seen on public.device_sessions (last_seen desc);
+alter table public.device_sessions enable row level security;
+drop policy if exists "demo open access" on public.device_sessions;
+create policy "demo open access" on public.device_sessions for all to anon, authenticated using (true) with check (true);
+grant select, insert, update, delete on public.device_sessions to anon, authenticated;
+
+-- Each open app calls this once a minute. It uses the server's clock, and it never turns a signed-out device back on:
+-- it returns 'terminated' or 'signed out' so the app locks itself.
+create or replace function public.device_beat(p_id text, p_staff text, p_name text, p_os text, p_browser text, p_kind text, p_ua text)
+returns text language plpgsql security definer set search_path = public as $$
+declare st text;
+begin
+  select status into st from public.device_sessions where id = p_id;
+  if st is not null and st <> 'active' then return st; end if;
+  insert into public.device_sessions (id, staff_id, device_name, os, browser, kind, user_agent, first_seen, last_seen, status)
+  values (p_id, p_staff, p_name, p_os, p_browser, p_kind, left(p_ua, 300), now(), now(), 'active')
+  on conflict (id) do update set staff_id = excluded.staff_id, device_name = excluded.device_name, os = excluded.os, browser = excluded.browser,
+    kind = excluded.kind, user_agent = excluded.user_agent, last_seen = now()
+  where public.device_sessions.status = 'active';
+  return 'active';
+end $$;
+revoke all on function public.device_beat(text, text, text, text, text, text, text) from public;
+grant execute on function public.device_beat(text, text, text, text, text, text, text) to anon, authenticated;
