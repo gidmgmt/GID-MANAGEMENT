@@ -23,6 +23,8 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <!-- Animated start-up intro (plays first, then the passkey screen shows) -->
+  <script src="splash-particles.js"></script>
   <div id="app"><div class="setup card"><p>Loading…</p></div></div>
   <script src="config.js"></script>
   <script src="data.js"></script>
@@ -106,6 +108,8 @@
       };
     }
     // Start loading the app straight away, even while the passkey screen is showing
+    // When the intro finishes, put the cursor in the passkey box
+    window.addEventListener("gid:splash-done", function () { var p = document.getElementById("pk"); if (p) p.focus(); });
     if (savedPass() === PASS_HASH) openGate(); else showGate();
     bootApp();
   </script>
