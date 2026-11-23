@@ -55,7 +55,8 @@ create table public.projects (
   budget numeric,
   progress numeric,
   lat numeric,
-  lng numeric
+  lng numeric,
+  scopes jsonb
 );
 
 create table public.project_members (
@@ -222,7 +223,11 @@ create table public.inspections (
   inspector_id text,
   insp_date date,
   result text,
-  notes text
+  notes text,
+  evidence jsonb,
+  result_evidence jsonb,
+  result_note text,
+  checked_at timestamptz
 );
 
 create table public.defects (
@@ -235,7 +240,18 @@ create table public.defects (
   due_date date,
   status text,
   photo text,
-  raised_by text
+  raised_by text,
+  discipline text,
+  priority text,
+  evidence jsonb,
+  close_evidence jsonb,
+  correction text,
+  fixed_by text,
+  fixed_at timestamptz,
+  closed_by text,
+  closed_at timestamptz,
+  verify_note text,
+  inspection_id text
 );
 
 create table public.safety (

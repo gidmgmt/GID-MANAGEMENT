@@ -20,16 +20,19 @@
   const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
   const split = (s) => String(s || "").split(",").map((x) => x.trim()).filter(Boolean);
 
-  let ACTS = new Map(), actSeq = 0;
+  let ACTS = new Map(), actSeq = 0, OPENER = null;
   const act = (fn) => { const k = "a" + ++actSeq; ACTS.set(k, fn); return k; };
   document.addEventListener("click", (e) => {
     const el = e.target.closest("[data-act]");
     if (!el) return;
     const fn = ACTS.get(el.dataset.act);
-    if (fn) { e.preventDefault(); fn(e, el); }
+    if (!fn) return;
+    e.preventDefault();
+    OPENER = () => fn(e, el); // a window opened by this tap can be opened again (fresh) when the person comes back to it
+    try { fn(e, el); } finally { OPENER = null; }
   });
 
-  document.addEventListener("keydown", (e) => { if (e.key !== "Escape") return; if (document.getElementById("modal")) document.getElementById("modal").remove(); else if (document.getElementById("drawer")) document.getElementById("drawer").remove(); });
+  document.addEventListener("keydown", (e) => { if (e.key !== "Escape") return; if (document.getElementById("modal")) modalBack(); else if (document.getElementById("drawer")) document.getElementById("drawer").remove(); });
   function toast(msg, bad) {
     let box = document.getElementById("toasts");
     if (!box) { box = document.createElement("div"); box.id = "toasts"; box.setAttribute("role", "status"); box.setAttribute("aria-live", "polite"); document.body.appendChild(box); }
@@ -490,7 +493,7 @@
       }
       host.remove();
       const url = URL.createObjectURL(pdf.output("blob"));
-      openModal(o.fileName, `<iframe class="pdf" src="${url}" title="PDF preview"></iframe><div class="form-actions"><a class="btn primary" href="${url}" download="${esc(o.fileName)}">${km ? "ទាញយក" : "Download"} ${esc(o.fileName)}</a><button class="btn" data-act="${act(closeModal)}">${km ? "បិទ" : "Close"}</button></div>`);
+      openModal(o.fileName, `<iframe class="pdf" src="${url}" title="PDF preview"></iframe><div class="form-actions"><a class="btn primary" href="${url}" download="${esc(o.fileName)}">${km ? "ទាញយក" : "Download"} ${esc(o.fileName)}</a><button class="btn" data-act="${act(modalBack)}">${km ? "បិទ" : "Close"}</button></div>`);
       try { const a = document.createElement("a"); a.href = url; a.download = o.fileName; document.body.appendChild(a); a.click(); a.remove(); } catch (e) { /* the button above still works */ }
     } catch (err) { host.remove(); toast(err.message || String(err), true); }
   }
@@ -827,15 +830,64 @@
   }
 
   // ---------- modal and forms ----------
+  // Windows open on top of each other. A window opened from inside another one has a Back button
+  // (and the phone's back button works too): Back returns to the window underneath, as it was.
+  // After saving, the window underneath opens again with the new information.
+  const MSTACK = []; let REOPENING = false, POP_SKIP = 0;
+  function modalActs(node) { const keep = new Map(); node.querySelectorAll("[data-act]").forEach((el) => { const f = ACTS.get(el.dataset.act); if (f) keep.set(el.dataset.act, f); }); return keep; }
   function openModal(title, bodyHtml, onReady) {
-    closeModal();
-    const m = document.createElement("div"); m.className = "modal-wrap"; m.id = "modal";
-    m.innerHTML = `<div class="modal" role="dialog" aria-modal="true"><div class="modal-head"><h3>${esc(title)}</h3><button class="x" data-act="${act(closeModal)}" aria-label="Close window">×</button></div><div class="modal-body">${bodyHtml}</div></div>`;
-    m.addEventListener("click", (e) => { if (e.target === m) closeModal(); });
+    const cur = $("#modal");
+    if (cur) {
+      if (!REOPENING && cur.dataset.title !== title) {
+        const body = cur.querySelector(".modal-body");
+        MSTACK.push({ title: cur.dataset.title, node: cur, acts: modalActs(cur), reopen: cur._reopen || null, scroll: body ? body.scrollTop : 0 });
+      }
+      cur.remove();
+    }
+    const m = document.createElement("div"); m.className = "modal-wrap"; m.id = "modal"; m.dataset.title = title;
+    m._reopen = REOPENING ? REOPENING : OPENER;
+    const back = MSTACK.length ? `<button class="mback" data-act="${act(modalBack)}" aria-label="Back">${svgI("back")}<span>Back</span></button>` : "";
+    m.innerHTML = `<div class="modal${MSTACK.length ? " nested" : ""}" role="dialog" aria-modal="true"><div class="modal-head">${back}<h3>${esc(title)}</h3><button class="x" data-act="${act(closeAllModals)}" aria-label="Close window">×</button></div><div class="modal-body">${bodyHtml}</div></div>`;
+    m.addEventListener("click", (e) => { if (e.target === m) closeAllModals(); });
     document.body.appendChild(m);
+    if (!(history.state && history.state.gidModal)) { try { history.pushState({ gidModal: true }, "", location.href); } catch (e) { /* ignore */ } }
     if (onReady) onReady(m);
+    if (typeof translateNow === "function") translateNow(m);
   }
-  function closeModal() { const m = $("#modal"); if (m) m.remove(); }
+  // Back (Cancel, Back button, phone back): show the window underneath exactly as it was
+  function modalBack() {
+    const m = $("#modal"); if (m) m.remove();
+    const prev = MSTACK.pop();
+    if (!prev) { syncHistory(); return; }
+    prev.acts.forEach((f, k) => ACTS.set(k, f));
+    document.body.appendChild(prev.node);
+    const b = prev.node.querySelector(".modal-body"); if (b) b.scrollTop = prev.scroll;
+  }
+  // After a save: open the window underneath again, so it shows the new information
+  function closeModal() {
+    const m = $("#modal"); if (m) m.remove();
+    const prev = MSTACK.pop();
+    if (!prev) { syncHistory(); return; }
+    if (prev.reopen) {
+      const r = prev.reopen; REOPENING = r;
+      try { r(); } catch (e) { console.error(e); } finally { REOPENING = false; }
+      const n = $("#modal"); if (n && n.dataset.title === prev.title) { const b = n.querySelector(".modal-body"); if (b) b.scrollTop = prev.scroll; return; }
+    }
+    if (!$("#modal")) { prev.acts.forEach((f, k) => ACTS.set(k, f)); document.body.appendChild(prev.node); }
+  }
+  function dropModal() { const m = $("#modal"); if (m) m.remove(); }
+  function closeAllModals() { MSTACK.length = 0; const m = $("#modal"); if (m) m.remove(); syncHistory(); }
+  // Keep the phone's back button in step with the windows
+  function syncHistory() {
+    setTimeout(() => { if (!$("#modal") && history.state && history.state.gidModal) { POP_SKIP++; history.back(); } }, 0);
+  }
+  window.addEventListener("popstate", () => {
+    if (POP_SKIP) { POP_SKIP--; return; }
+    if ($("#modal")) {
+      modalBack();
+      if ($("#modal")) { try { history.pushState({ gidModal: true }, "", location.href); } catch (e) { /* ignore */ } }
+    }
+  });
 
   // fields: {name,label,type:text|number|date|textarea|select|photo|staff|project|supplier, options, required, value}
   function fieldHtml(f) {
@@ -855,7 +907,7 @@
 
   function formModal(title, fields, onSubmit, submitLabel, opts) {
     opts = opts || {};
-    const body = `<form id="mform">${fields.map(fieldHtml).join("")}${opts.extraHtml || ""}<div class="form-actions"><button type="button" class="btn" data-act="${act(closeModal)}">Cancel</button><button type="submit" class="btn primary">${esc(submitLabel || "Save")}</button></div></form>`;
+    const body = `<form id="mform">${fields.map(fieldHtml).join("")}${opts.extraHtml || ""}<div class="form-actions"><button type="button" class="btn" data-act="${act(modalBack)}">Cancel</button><button type="submit" class="btn primary">${esc(submitLabel || "Save")}</button></div></form>`;
     openModal(title, body, (m) => {
       if (opts.onReady) opts.onReady(m);
       m.querySelectorAll("[data-evidence]").forEach((wrap) => {
@@ -944,7 +996,7 @@
     if (isSiteEng(u)) quick.push(btn("Site daily report", () => newSiteDaily(u)));
     if (isDesigner(u)) quick.push(btn("My daily work", () => newDesignDaily(u)));
     if (can(u, "stock", "view") || level(u, "stock") === "edit") quick.push(btn("Check stock", () => go("stock")));
-    if (can(u, "qaqc", "edit")) quick.push(btn("Report a defect", () => newDefect(u)));
+    if (canRaiseQA(u)) quick.push(btn("Report a defect", () => newDefect(u)));
     if (can(u, "safety", "edit")) quick.push(btn("Safety record", () => newSafety(u)));
     if (can(u, "dashboard", "view")) quick.push(btn("Open dashboard", () => go("dashboard")));
 
@@ -1032,7 +1084,7 @@
         <div class="summary">${anyStock ? `<div><span class="tag ok">From stock</span> ${sum(c, (x) => x.from)} units released by the store after PM approval</div>` : ""}
           ${anyOrder ? `<div><span class="tag order">To order</span> ${money(orderAmt)} · route: PM → QS${orderAmt >= APPROVAL_LIMIT ? " → MD" : ""} → Procurement</div>` : ""}
           ${!anyOrder && anyStock ? "<div>Nothing to buy: route is PM → Store.</div>" : ""}</div>
-        <div class="form-actions"><button class="btn" data-act="${act(closeModal)}">Cancel</button><button class="btn primary" id="mr-go">Submit request</button></div>`;
+        <div class="form-actions"><button class="btn" data-act="${act(modalBack)}">Cancel</button><button class="btn primary" id="mr-go">Submit request</button></div>`;
     };
     const paint = () => {
       const m = $("#modal .modal-body"); m.innerHTML = body();
@@ -1139,8 +1191,8 @@
     const cur = new Set(db.project_members.filter((m) => m.project_id === p.id).map((m) => m.staff_id));
     const box = (g, label) => `<fieldset class="pickset"><legend>${label}</legend><div class="pickgrid">${inGroup(g).map((s) => `<label class="pick"><input type="checkbox" name="mem" value="${s.id}" ${cur.has(s.id) ? "checked" : ""}>${avatar(s, "av sm")}<span><b>${esc(s.name)}</b><small>${esc(s.title)}</small></span></label>`).join("")}</div></fieldset>`;
     openModal("Team · " + p.code, `<form id="tform"><label class="field"><span>Project Manager *</span><select name="pm_id" required>${inGroup("PM").map((s) => `<option value="${s.id}" ${s.id === p.pm_id ? "selected" : ""}>${esc(s.name)} · ${esc(s.title)}</option>`).join("")}</select></label>
-      ${box("SITE", "Site team")}${box("QS", "QS team")}${box("DESIGN", "Design team")}
-      <div class="form-actions"><button type="button" class="btn" data-act="${act(closeModal)}">Cancel</button><button type="submit" class="btn primary">Save team</button></div></form>`, (m) => {
+      ${box("SITE", "Site team")}${box("QS", "QS team")}${box("DESIGN", "Design team")}${box("ENG", "Technical & Engineering team (optional)")}
+      <div class="form-actions"><button type="button" class="btn" data-act="${act(modalBack)}">Cancel</button><button type="submit" class="btn primary">Save team</button></div></form>`, (m) => {
       m.querySelector("#tform").addEventListener("submit", async (e) => {
         e.preventDefault();
         const f = new FormData(e.target), want = new Set(f.getAll("mem")), pmId = f.get("pm_id");
@@ -1153,21 +1205,102 @@
       });
     });
   }
+  // ---------- project progress by scope ----------
+  // A project has one or more scopes. Each scope has a share of the project (%) and its own progress (%).
+  // Project progress = sum of (share × progress) ÷ total share. Example: Structure 40% share at 50% done
+  // and Architecture 60% share at 20% done → 40×50% + 60×20% = 20 + 12 = 32% for the project.
+  const SCOPES = ["Structure", "Architecture", "Landscape", "Electrical", "Plumbing", "MVAC", "HVAC", "ELV"];
+  // Usual shares of a full-scope building project; used as the starting point, the PM or QS can change them
+  const SCOPE_SHARE = { Structure: 30, Architecture: 30, Landscape: 5, Electrical: 12, Plumbing: 6, MVAC: 4, HVAC: 8, ELV: 5 };
+  const SCOPE_INFO = { MVAC: "Mechanical ventilation and air conditioning", HVAC: "Heating, ventilation and air conditioning", ELV: "Extra-low voltage: CCTV, data, access, fire alarm" };
+  function defaultShares(list) {
+    const tot = list.reduce((a, k) => a + (SCOPE_SHARE[k] || 10), 0); let left = 100;
+    return list.map((k, i) => { const w = i === list.length - 1 ? left : Math.round((SCOPE_SHARE[k] || 10) * 100 / tot); left -= w; return { scope: k, weight: w, progress: 0 }; });
+  }
+  const scopesOf = (p) => Array.isArray(p.scopes) ? p.scopes : [];
+  function overallProgress(list) { const tw = list.reduce((a, x) => a + (Number(x.weight) || 0), 0); return tw ? Math.round(list.reduce((a, x) => a + (Number(x.weight) || 0) * (Number(x.progress) || 0), 0) / tw) : 0; }
+  // Who may update progress: the boss, Project Managers, the project's site engineers and the QS team
+  function canUpdateProgress(u, p) {
+    if (canManageProject(u) || isSysAdmin(u)) return true;
+    const g = groupsOf(u), mine = db.project_members.some((m) => m.project_id === p.id && m.staff_id === u.id);
+    if (g.includes("SITE")) return mine;
+    if (g.includes("QS")) return mine || !teamOf(p.id, "QS").length;
+    return false;
+  }
+  // Only the boss, PMs and QS change the scopes and their shares; site engineers enter progress only
+  const canSetShares = (u) => canManageProject(u) || isSysAdmin(u) || groupsOf(u).includes("QS");
+  const HOW_CALC = "How it is calculated: each scope's share of the project × its progress, added together. Example: Structure 40% share at 50% done + Architecture 60% share at 20% done = 20% + 12% = 32% for the project. Shares must add up to 100%.";
+  function scopePicker(sel) {
+    sel = sel || [];
+    return `<fieldset class="pickset scopepick"><legend>Project scope *</legend><label class="pick full"><input type="checkbox" class="sc-full" ${sel.length === SCOPES.length ? "checked" : ""}><span><b>Full scope</b><small>All scopes below</small></span></label>
+      <div class="pickgrid">${SCOPES.map((k) => `<label class="pick"><input type="checkbox" name="scope" value="${k}" ${sel.includes(k) ? "checked" : ""}><span><b>${k}</b>${SCOPE_INFO[k] ? `<small>${esc(SCOPE_INFO[k])}</small>` : ""}</span></label>`).join("")}</div></fieldset>`;
+  }
+  function wireScopePicker(m) {
+    const full = m.querySelector(".sc-full"), boxes = [...m.querySelectorAll('input[name="scope"]')];
+    if (!full) return;
+    full.addEventListener("change", () => boxes.forEach((b) => { b.checked = full.checked; }));
+    boxes.forEach((b) => b.addEventListener("change", () => { full.checked = boxes.every((x) => x.checked); }));
+  }
+  const pickedScopes = (m) => [...m.querySelectorAll('input[name="scope"]:checked')].map((b) => b.value);
+  function scopeTable(p) {
+    const list = scopesOf(p);
+    if (!list.length) return '<p class="muted small">No scopes set yet. Tap Update progress to choose the scopes.</p>';
+    return `<table class="scopet"><thead><tr><th>Scope</th><th class="r">Share</th><th>Progress</th></tr></thead><tbody>${list.map((x) => `<tr><td><b>${esc(x.scope)}</b>${x.by ? `<small>${esc(staffName(x.by))} · ${esc(fmtDate(x.at))}</small>` : ""}</td><td class="r">${esc(x.weight)}%</td><td>${bar(x.progress)} <span class="pc">${esc(x.progress)}%</span></td></tr>`).join("")}</tbody>
+      <tfoot><tr><td><b>Project</b></td><td class="r">${list.reduce((a, x) => a + (Number(x.weight) || 0), 0)}%</td><td>${bar(overallProgress(list))} <b class="pc">${overallProgress(list)}%</b></td></tr></tfoot></table><p class="muted small howcalc">${esc(HOW_CALC)}</p>`;
+  }
+  function updateProgress(p) {
+    const u = me(), shares = canSetShares(u), mgr = canManageProject(u);
+    let list = scopesOf(p).map((x) => Object.assign({}, x));
+    const rowsHtml = () => list.map((x, i) => `<tr data-i="${i}"><td><b>${esc(x.scope)}</b>${SCOPE_INFO[x.scope] ? `<small>${esc(SCOPE_INFO[x.scope])}</small>` : ""}</td>
+        <td><input class="num sc-w" type="number" min="0" max="100" step="1" inputmode="numeric" value="${esc(x.weight)}" ${shares ? "" : "readonly"} aria-label="Share of project % for ${esc(x.scope)}"></td>
+        <td><input class="num sc-p" type="number" min="0" max="100" step="1" inputmode="numeric" value="${esc(x.progress)}" aria-label="Progress % for ${esc(x.scope)}"></td></tr>`).join("");
+    const body = () => `<form id="pform">${shares ? `<details class="scdet"${list.length ? "" : " open"}><summary>Scopes in this project (${list.length})</summary>${scopePicker(list.map((x) => x.scope))}<button type="button" class="btn small sc-apply">Apply scopes</button></details>` : ""}
+      ${list.length ? `<table class="scopet edit"><thead><tr><th>Scope</th><th>Share of project %</th><th>Progress %</th></tr></thead><tbody>${rowsHtml()}</tbody>
+      <tfoot><tr><td><b>Project progress</b></td><td><span class="sc-tw"></span></td><td><b class="sc-total"></b></td></tr></tfoot></table>
+      ${shares ? '<button type="button" class="btn small sc-even">Use usual shares</button>' : '<p class="muted small">Shares are set by the PM or QS.</p>'}
+      <p class="muted small howcalc">${esc(HOW_CALC)}</p>` : '<p class="muted">Choose the scopes of this project first.</p>'}
+      ${mgr ? `<label class="field"><span>Status</span><select name="status">${["Active", "On hold", "Completed"].map((x) => `<option ${x === p.status ? "selected" : ""}>${x}</option>`).join("")}</select></label>` : ""}
+      <div class="form-actions"><button type="button" class="btn" data-act="${act(modalBack)}">Cancel</button><button type="submit" class="btn primary" ${list.length ? "" : "disabled"}>Save progress</button></div></form>`;
+    const wire = (m) => {
+      const f = m.querySelector("#pform");
+      const read = () => f.querySelectorAll("tbody tr[data-i]").forEach((tr) => { const x = list[tr.dataset.i]; x.weight = Math.max(0, Math.min(100, Math.round(Number(tr.querySelector(".sc-w").value) || 0))); x.progress = Math.max(0, Math.min(100, Math.round(Number(tr.querySelector(".sc-p").value) || 0))); });
+      const calc = () => { read(); const tw = list.reduce((a, x) => a + x.weight, 0); const tEl = f.querySelector(".sc-tw"), oEl = f.querySelector(".sc-total");
+        if (tEl) { tEl.textContent = tw + "%"; tEl.className = "sc-tw " + (tw === 100 ? "ok" : "bad"); } if (oEl) oEl.textContent = overallProgress(list) + "%"; };
+      const redraw = () => { const b = m.querySelector(".modal-body"); b.innerHTML = body(); wire(m); if (typeof translateNow === "function") translateNow(m); };
+      wireScopePicker(m);
+      f.addEventListener("input", calc); calc();
+      const ap = f.querySelector(".sc-apply"); if (ap) ap.addEventListener("click", () => { read(); const pick = pickedScopes(f); if (!pick.length) { toast("Choose at least one scope.", true); return; }
+        const fresh = defaultShares(pick); list = fresh.map((x) => Object.assign(x, (list.find((o) => o.scope === x.scope) || {}), { weight: x.weight })); redraw(); });
+      const ev = f.querySelector(".sc-even"); if (ev) ev.addEventListener("click", () => { read(); const d = defaultShares(list.map((x) => x.scope)); list.forEach((x, i) => { x.weight = d[i].weight; }); redraw(); });
+      f.addEventListener("submit", async (e) => {
+        e.preventDefault(); read();
+        const tw = list.reduce((a, x) => a + x.weight, 0);
+        if (tw !== 100) { toast("The shares must add up to 100% (now " + tw + "%).", true); return; }
+        const old = scopesOf(p), now = nowIso();
+        const out = list.map((x) => { const o = old.find((y) => y.scope === x.scope) || {}; const changed = o.progress !== x.progress || o.weight !== x.weight; return { scope: x.scope, weight: x.weight, progress: x.progress, by: changed ? u.id : (o.by || u.id), at: changed ? now : (o.at || now) }; });
+        const v = { scopes: out, progress: overallProgress(out) }; const st = f.querySelector('select[name="status"]'); if (st) v.status = st.value;
+        const b = f.querySelector("button[type=submit]"); b.disabled = true;
+        try { await patch("projects", p.id, v, p.code + " progress " + v.progress + "% (" + out.map((x) => x.scope + " " + x.progress + "%").join(", ") + ")"); closeModal(); render(); toast("Progress saved: " + v.progress + "%"); }
+        catch (err) { b.disabled = false; toast(err.message, true); }
+      });
+    };
+    openModal("Progress · " + p.code, body(), wire);
+  }
+
   function openProject(p) {
     const u = me();
     const canEdit = canManageProject(u);
-    const acts = canEdit ? btn("Update progress", () => formModal("Update " + p.code, [
-      { name: "progress", label: "Progress (%)", type: "number", value: p.progress }, { name: "status", label: "Status", type: "select", options: ["Active", "On hold", "Completed"], value: p.status }
-    ], async (v) => { v.progress = Math.max(0, Math.min(100, Number(v.progress) || 0)); await patch("projects", p.id, v, p.code + " progress " + v.progress + "%"); })) + btn("Manage team", () => manageTeam(p), "primary")
-      + btn("Site location", () => editSiteLocation(p)) : "";
+    const acts = (canUpdateProgress(u, p) ? btn("Update progress", () => updateProgress(p), canEdit ? "" : "primary") : "")
+      + (canEdit ? btn("Manage team", () => manageTeam(p), "primary") + btn("Site location", () => editSiteLocation(p)) : btn("Org chart", () => openProjectOrg(p)));
     const li = (m) => `<li>${esc(staffName(m.staff_id))} · <small>${esc(m.role)}</small></li>`;
     const last = db.daily_reports.filter((d) => d.kind !== "Design" && d.project_id === p.id).sort((a, b) => String(b.report_date).localeCompare(String(a.report_date)))[0];
-    const teamHtml = `<h4>Site team</h4><ul class="hist">${teamOf(p.id, "SITE").map(li).join("") || "<li>No one assigned</li>"}</ul><h4>QS team</h4><ul class="hist">${teamOf(p.id, "QS").map(li).join("") || "<li>No QS assigned (all QS check its requests)</li>"}</ul><h4>Design team</h4><ul class="hist">${teamOf(p.id, "DESIGN").map(li).join("") || "<li>No designer assigned</li>"}</ul>`
+    const teamHtml = `<h4>Progress by scope</h4>${scopeTable(p)}<h4 class="ochead"><span>Project org chart</span>${btn("Full view and PDF", () => openProjectOrg(p))}</h4>${orgChartHtml(projectOrgData(p))}`
       + (last ? `<h4>Latest site report · ${fmtDate(last.report_date)} · ${esc(staffName(last.author_id))}</h4><p>${esc(last.work_done)}</p>${gallery(reportPhotos(last))}` : "");
     detail(p.code + " · " + p.name, [["Client", esc(p.client)], ["Location", esc(p.location)], ["Site pin", hasSitePin(p) ? `<a href="https://maps.google.com/?q=${p.lat},${p.lng}" target="_blank" rel="noopener">${Number(p.lat).toFixed(5)}, ${Number(p.lng).toFixed(5)}</a> · reports must be within ${SITE_RADIUS} m` : '<span class="tag order">Not set</span>'],
       ["Project Manager", esc(staffName(p.pm_id))], ["Status", badge(p.status)],
       ["Dates", fmtDate(p.start_date) + " to " + fmtDate(p.end_date)], ["Progress", bar(p.progress) + " " + esc(p.progress) + "%"],
       can(u, "cost", "view") ? ["Contract value", money(p.contract_value)] : null], acts, teamHtml);
+    const pm = $("#modal .modal"); if (pm) pm.classList.add("wide");
   }
 
   // ---------- site location (GPS) ----------
@@ -1212,7 +1345,7 @@
     });
   }
   function editSiteLocation(p) {
-    openModal("Site location · " + p.code, `<form id="lform">${locationField(p)}<div class="form-actions"><button type="button" class="btn" data-act="${act(closeModal)}">Cancel</button><button class="btn primary" type="submit">Save location</button></div></form>`, (m) => {
+    openModal("Site location · " + p.code, `<form id="lform">${locationField(p)}<div class="form-actions"><button type="button" class="btn" data-act="${act(modalBack)}">Cancel</button><button class="btn primary" type="submit">Save location</button></div></form>`, (m) => {
       wireLocation(m);
       m.querySelector("#lform").addEventListener("submit", async (e) => {
         e.preventDefault(); const ll = parseLatLng(m.querySelector("#site_loc").value);
@@ -1229,10 +1362,11 @@
       { name: "start_date", label: "Start", type: "date", value: today() }, { name: "end_date", label: "Finish", type: "date" },
       { name: "contract_value", label: "Contract value (USD)", type: "number" }, { name: "budget", label: "Cost budget (USD)", type: "number" }
     ], async (v) => {
+      const pick = pickedScopes(document.getElementById("mform")); if (!pick.length) throw new Error("Choose the project scope: Full scope, or one or more scopes.");
       const ll = parseLatLng(v.site_loc); if (!ll) throw new Error("Set the site location: tap Use my location on site, or paste the pin from Google Maps.");
-      delete v.site_loc;
-      await save("projects", Object.assign(v, ll, { status: "Active", progress: 0 }), "New project " + v.code);
-    }, "Create project", { extraHtml: locationField({}), onReady: wireLocation });
+      delete v.site_loc; delete v.scope;
+      await save("projects", Object.assign(v, ll, { status: "Active", progress: 0, scopes: defaultShares(pick) }), "New project " + v.code);
+    }, "Create project", { extraHtml: scopePicker([]) + '<p class="muted small">Each scope gets a usual share of the project to start with. The PM or QS can change the shares in Update progress.</p>' + locationField({}), onReady: (m) => { wireLocation(m); wireScopePicker(m); } });
   }
 
   function openTask(t) {
@@ -1256,7 +1390,7 @@
     const T = tabs("projects", [["projects", "Projects"], ["tasks", "Tasks"]]);
     if (T.cur === "projects") {
       const rows = myProjects(u).filter((p) => matchSearch(p, ["code", "name", "client"]));
-      return `<h1>Projects & Tasks</h1>${T.html}${toolbar(u, { project: false, buttons: can(u, "projects", "admin") ? btn("New project", () => newProject(u), "primary") : "" })}
+      return `<h1>Projects & Tasks</h1>${T.html}${toolbar(u, { project: false, buttons: canManageProject(u) ? btn("New project", () => newProject(u), "primary") : "" })}
         ${table([{ label: "Code", get: (p) => esc(p.code) }, { label: "Project", get: (p) => `<b>${esc(p.name)}</b><br><small>${esc(p.client)}</small>` },
           { label: "PM", get: (p) => esc(staffName(p.pm_id)) }, { label: "Progress", get: (p) => bar(p.progress) + `<small>${esc(p.progress)}%</small>` },
           { label: "Finish", get: (p) => fmtDate(p.end_date) }, { label: "Status", get: (p) => badge(p.status) }], rows, openProject)}`;
@@ -1355,7 +1489,7 @@
         <div class="field"><span>Photos ${s === "Morning" ? "(optional)" : "*"}</span><input type="file" accept="image/*" multiple id="sd-ph">
           <div class="capgrid">${f.photos.map((p, i) => `<div class="cap"><span class="ph"><img src="${p}" alt="Photo ${i + 1}"><button type="button" class="rm" data-prm="${i}" aria-label="Remove photo">×</button></span><input data-cap="${i}" placeholder="Caption for photo ${i + 1}" value="${esc(f.captions[i] || "")}"></div>`).join("")}</div>
           <small>Add as many photos as you need, then write a short caption under each one. Captions go into the PDF report.</small></div>
-        <div class="form-actions"><button type="button" class="btn" data-act="${act(closeModal)}">Cancel</button><button type="button" class="btn primary" id="sd-go">Send ${s.toLowerCase()} report</button></div>`;
+        <div class="form-actions"><button type="button" class="btn" data-act="${act(modalBack)}">Cancel</button><button type="button" class="btn primary" id="sd-go">Send ${s.toLowerCase()} report</button></div>`;
     };
     const paint = () => {
       const m = $("#modal .modal-body"); m.innerHTML = body();
@@ -1394,11 +1528,11 @@
             // With the shared database the server sets the send time and the late flag, so a wrong phone clock cannot change them
             late: Store.mode === "supabase" ? null : li.late, late_minutes: Store.mode === "supabase" ? -1 : li.late_minutes },
             (r) => projLabel(f.project_id) + " " + s.toLowerCase() + " report " + r.report_date + (r.late ? " · LATE, sent " + timeOf(r.submitted_at) : "") + (lc.loc_status === "Away from site" ? " · away from site " + fmtDist(lc.distance_m) : lc.loc_status === "No location" ? " · no location" : ""));
-          render();
+          render(); dropModal(); // the sent form is finished: Report sent takes its place
           openModal("Report sent", `<div class="sent"><div class="tick">✓</div><p><b>${esc(projLabel(rec.project_id))} · ${esc(s)} report</b><br>${photos.length} photo${photos.length === 1 ? "" : "s"} · sent ${esc(timeOf(rec.submitted_at || sentAt))}</p>
             <p class="quick" style="justify-content:center">${locChip(rec)}${lateChip(rec)}</p>${rec.late ? `<p class="muted small">Morning reports are due before ${LATE_AT}. Your PM and the MD have been told.</p>` : ""}
             <p class="muted">Download the photo report as a PDF to share with the client or the office.</p>
-            <div class="quick" style="justify-content:center">${btn("PDF in English", () => reportPdf(rec, "en"), "primary")}${btn("PDF ជាភាសាខ្មែរ", () => reportPdf(rec, "km"), "primary")}${btn("Close", closeModal)}</div></div>`);
+            <div class="quick" style="justify-content:center">${btn("PDF in English", () => reportPdf(rec, "en"), "primary")}${btn("PDF ជាភាសាខ្មែរ", () => reportPdf(rec, "km"), "primary")}${btn("Close", closeAllModals)}</div></div>`);
         } catch (err) { toast(err.message, true); e.target.disabled = false; e.target.textContent = "Send " + s.toLowerCase() + " report"; }
       };
     };
@@ -1419,7 +1553,7 @@
         <div class="entry"><div><input id="dd-other" placeholder="Other work (meetings, site visit, office)"></div><label><span>Hours</span><input type="number" min="0" max="16" step="0.5" id="dd-oh"></label><span></span></div></div>
       <label class="field"><span>Notes / problems</span><textarea id="dd-note" rows="2"></textarea></label>
       <label class="field"><span>Screenshots or photos (optional)</span><input type="file" accept="image/*" multiple id="dd-ph"><div class="gallery" id="dd-prev"></div></label>
-      <div class="form-actions"><button class="btn" data-act="${act(closeModal)}">Cancel</button><button class="btn primary" id="dd-go">Send report</button></div>`;
+      <div class="form-actions"><button class="btn" data-act="${act(modalBack)}">Cancel</button><button class="btn primary" id="dd-go">Send report</button></div>`;
     openModal("My daily work · " + fmtDate(today()), body, (m) => {
       const shots = [];
       $("#dd-ph", m).addEventListener("change", async (e) => { for (const f of e.target.files) { try { shots.push(await compressImage(f)); } catch (x) { toast("Could not read a photo", true); } } $("#dd-prev", m).innerHTML = shots.map((s) => `<span class="ph"><img src="${s}" alt=""></span>`).join(""); });
@@ -1720,46 +1854,161 @@
 
   // ---------- QA/QC ----------
   const qaqcBoss = (u) => can(u, "qaqc", "admin") || hasTag(u, "QAQC");
+  // ---------- QA/QC: defects and inspections ----------
+  // Raised ("imposed") by the executive, Project Managers, the QS team and QA/QC inspectors, always with a photo or PDF.
+  // The site team corrects the defect, again with a photo or PDF; the person who raised it (or the PM) checks and closes it.
+  const canRaiseQA = (u) => groupsOf(u).some((g) => ["EXEC", "PM", "QS"].includes(g)) || hasTag(u, "QAQC") || qaqcBoss(u);
+  const QA_DISC = ["Architecture", "Structure", "Mechanical", "Electrical", "Plumbing", "Fire", "ELV"];
+  const defectNo = (f) => "DEF-" + String(db.defects.slice().sort((a, b) => String(a.created_at || "").localeCompare(String(b.created_at || "")) || String(a.id).localeCompare(String(b.id))).indexOf(f) + 1).padStart(4, "0");
+  const inspNo = (i) => "INS-" + String(db.inspections.slice().sort((a, b) => String(a.created_at || "").localeCompare(String(b.created_at || "")) || String(a.id).localeCompare(String(b.id))).indexOf(i) + 1).padStart(4, "0");
+  const qaEvidence = (f) => (f.evidence && f.evidence.length ? f.evidence : f.photo ? [{ type: "image", name: "defect.jpg", url: f.photo }] : []);
   function newDefect(u, preset) {
+    preset = preset || {};
+    const siteTeam = (pid) => { const t = pid ? teamOf(pid, "SITE").map((m) => byId("staff", m.staff_id)).filter(Boolean) : []; return t.length ? t : inGroup("SITE"); };
     formModal("Report a defect", [
-      { name: "project_id", label: "Project", type: "select", options: projectOptions(u), required: true, value: (preset && preset.project_id) || state.project },
-      { name: "location", label: "Location", required: true, value: (preset && preset.location) || "" }, { name: "description", label: "Defect", type: "textarea", required: true },
-      { name: "assigned_to", label: "Who fixes it", type: "select", options: staffOptions(inGroup("SITE")), required: true },
-      { name: "due_date", label: "Fix by", type: "date", value: today() }, { name: "photo", label: "Photo", type: "photo" }
-    ], async (v) => { await save("defects", Object.assign(v, { status: "Open", raised_by: u.id }), "Defect: " + v.description); });
+      { name: "project_id", label: "Project", type: "select", options: projectOptions(u), required: true, value: preset.project_id || state.project },
+      { name: "location", label: "Location", required: true, value: preset.location || "" }, { name: "discipline", label: "Discipline", type: "select", options: QA_DISC, value: preset.discipline || "" },
+      { name: "description", label: "Defect", type: "textarea", required: true },
+      { name: "priority", label: "Priority", type: "select", options: ["Low", "Medium", "High"], value: "Medium" },
+      { name: "assigned_to", label: "Who fixes it", type: "select", options: staffOptions(siteTeam(preset.project_id || state.project)), required: true },
+      { name: "due_date", label: "Fix by", type: "date", value: today() },
+      { name: "evidence", label: "Photos or files", type: "evidence", required: true, requiredMsg: "Attach at least one photo, image or PDF of the defect.", help: "Required. Take a photo with the camera, or attach images or a PDF." }
+    ], async (v) => {
+      v.evidence = await storeEvidence(v.evidence, "defect");
+      await save("defects", Object.assign(v, { status: "Open", raised_by: u.id, photo: "", close_evidence: [], inspection_id: preset.inspection_id || "" }), "Defect: " + v.description);
+    }, "Send defect");
+  }
+  function newInspection(u) {
+    formModal("New inspection", [
+      { name: "project_id", label: "Project", type: "select", options: projectOptions(u), required: true, value: state.project }, { name: "title", label: "What is inspected", required: true },
+      { name: "area", label: "Area" }, { name: "discipline", label: "Discipline", type: "select", options: QA_DISC },
+      { name: "insp_date", label: "Date", type: "date", value: today() }, { name: "notes", label: "Checklist notes", type: "textarea" },
+      { name: "evidence", label: "Photos or files", type: "evidence", required: true, requiredMsg: "Attach at least one photo, image or PDF (for example the checklist or drawing).", help: "Required. Photo of the work, the signed checklist or the drawing." }
+    ], async (v) => { v.evidence = await storeEvidence(v.evidence, "inspection"); await save("inspections", Object.assign(v, { inspector_id: u.id, result: "Open", result_evidence: [] }), "Inspection: " + v.title); }, "Send inspection");
+  }
+  function inspectionResult(i, result) {
+    formModal((result === "Passed" ? "Passed" : "Failed") + " · " + i.title, [
+      { name: "result_note", label: result === "Passed" ? "What was checked" : "What failed", type: "textarea", required: true },
+      { name: "result_evidence", label: "Photos or files of the result", type: "evidence", required: true, requiredMsg: "Attach a photo, image or PDF of the result.", help: "Required. Photo of the work as inspected, or the signed checklist." }
+    ], async (v) => {
+      const ev = await storeEvidence(v.result_evidence, "inspection-result");
+      await patch("inspections", i.id, { result, result_note: v.result_note, result_evidence: ev, checked_at: nowIso() }, "Inspection " + result.toLowerCase() + ": " + i.title);
+    }, result === "Passed" ? "Save: passed" : "Save: failed");
   }
   function openInspection(i) {
     const u = me(); const acts = [];
-    if (i.result === "Open" && (i.inspector_id === u.id || qaqcBoss(u))) {
-      acts.push(btn("Failed", async () => { await patch("inspections", i.id, { result: "Failed" }, "Inspection failed: " + i.title); closeModal(); render(); }, "danger"));
-      acts.push(btn("Passed", async () => { await patch("inspections", i.id, { result: "Passed" }, "Inspection passed: " + i.title); closeModal(); render(); }, "primary"));
+    if (i.result === "Open" && (i.inspector_id === u.id || qaqcBoss(u) || canRaiseQA(u))) {
+      acts.push(btn("Failed", () => inspectionResult(i, "Failed"), "danger"));
+      acts.push(btn("Passed", () => inspectionResult(i, "Passed"), "primary"));
     }
-    if (i.result === "Failed" && can(u, "qaqc", "edit")) acts.push(btn("Raise defect", () => newDefect(u, { project_id: i.project_id, location: i.area })));
-    detail(i.title, [["Project", esc(projLabel(i.project_id))], ["Area", esc(i.area)], ["Discipline", esc(i.discipline)], ["Inspector", esc(staffName(i.inspector_id))], ["Date", fmtDate(i.insp_date)], ["Result", badge(i.result)], ["Notes", esc(i.notes)]], acts.join(""));
+    if (i.result === "Failed" && canRaiseQA(u)) acts.push(btn("Raise defect", () => newDefect(u, { project_id: i.project_id, location: i.area, discipline: i.discipline, inspection_id: i.id })));
+    acts.push(btn("PDF English", () => qaPdf("insp", i, "en")) + btn("PDF ខ្មែរ", () => qaPdf("insp", i, "km")));
+    const raised = db.defects.filter((f) => f.inspection_id === i.id);
+    detail(inspNo(i) + " · " + i.title, [["Project", esc(projLabel(i.project_id))], ["Area", esc(i.area)], ["Discipline", esc(i.discipline)], ["Inspector", esc(staffName(i.inspector_id))], ["Date", fmtDate(i.insp_date)], ["Result", badge(i.result)],
+      ["Checklist notes", esc(i.notes)], i.result_note ? ["Result notes", esc(i.result_note)] : null, raised.length ? ["Defects raised", raised.map((f) => esc(defectNo(f)) + " " + badge(f.status)).join(" ")] : null], acts.join(""),
+      `<h4>Evidence: inspection</h4>${evidenceHtml(i.evidence)}${(i.result_evidence || []).length ? `<h4>Evidence: result</h4>${evidenceHtml(i.result_evidence)}` : ""}`);
+  }
+  function fixDefect(f) {
+    formModal("Correction · " + defectNo(f), [
+      { name: "correction", label: "What was corrected", type: "textarea", required: true, value: f.correction || "" },
+      { name: "close_evidence", label: "Photos or files of the correction", type: "evidence", required: true, requiredMsg: "Attach a photo, image or PDF that shows the correction.", help: "Required. Show the defect fixed, from the same angle as the first photo if possible." }
+    ], async (v) => {
+      const ev = await storeEvidence(v.close_evidence, "defect-fix");
+      await patch("defects", f.id, { status: "Fixed", correction: v.correction, close_evidence: ev, fixed_by: me().id, fixed_at: nowIso() }, "Defect fixed: " + f.description);
+    }, "Send correction");
+  }
+  function verifyDefect(f, ok) {
+    formModal((ok ? "Close" : "Reopen") + " · " + defectNo(f), [{ name: "verify_note", label: ok ? "Checked on site (note)" : "Why it is not accepted", type: "textarea", required: !ok }],
+      async (v) => { await patch("defects", f.id, ok ? { status: "Closed", verify_note: v.verify_note, closed_by: me().id, closed_at: nowIso() } : { status: "Open", verify_note: v.verify_note }, "Defect " + (ok ? "closed" : "reopened") + ": " + f.description); },
+      ok ? "Close defect" : "Reopen");
   }
   function openDefect(f) {
     const u = me(); const acts = [];
-    const set = (status) => async () => { await patch("defects", f.id, { status }, "Defect " + status.toLowerCase() + ": " + f.description); closeModal(); render(); };
-    if (f.status === "Open" && (f.assigned_to === u.id || can(u, "qaqc", "edit"))) acts.push(btn("Mark fixed", set("Fixed"), "primary"));
-    if (f.status === "Fixed" && (qaqcBoss(u) || isPMof(u, f.project_id))) { acts.push(btn("Reopen", set("Open"))); acts.push(btn("Close", set("Closed"), "primary")); }
-    detail(f.description, [["Project", esc(projLabel(f.project_id))], ["Location", esc(f.location)], ["Assigned to", esc(staffName(f.assigned_to))], ["Fix by", fmtDate(f.due_date)], ["Raised by", esc(staffName(f.raised_by))], ["Status", badge(f.status)]], acts.join(""),
-      f.photo ? `<img class="photo" src="${f.photo}" alt="Defect photo">` : "");
+    if (f.status === "Open" && (f.assigned_to === u.id || can(u, "qaqc", "edit") || isPMof(u, f.project_id))) acts.push(btn("Send correction", () => fixDefect(f), "primary"));
+    if (f.status === "Fixed" && (qaqcBoss(u) || isPMof(u, f.project_id) || f.raised_by === u.id || canRaiseQA(u))) { acts.push(btn("Reopen", () => verifyDefect(f, false))); acts.push(btn("Close", () => verifyDefect(f, true), "primary")); }
+    acts.push(btn("PDF English", () => qaPdf("defect", f, "en")) + btn("PDF ខ្មែរ", () => qaPdf("defect", f, "km")));
+    detail(defectNo(f) + " · " + f.description, [["Project", esc(projLabel(f.project_id))], ["Location", esc(f.location)], ["Discipline", esc(f.discipline)], ["Priority", f.priority ? badge(f.priority) : ""],
+      ["Raised by", esc(staffName(f.raised_by))], ["Assigned to", esc(staffName(f.assigned_to))], ["Fix by", fmtDate(f.due_date)], ["Status", badge(f.status)],
+      f.correction ? ["Correction", esc(f.correction) + (f.fixed_by ? ` <small>· ${esc(staffName(f.fixed_by))} ${f.fixed_at ? esc(fmtDate(f.fixed_at)) : ""}</small>` : "")] : null,
+      f.verify_note || f.closed_by ? ["Checked", esc(f.verify_note || "") + (f.closed_by ? ` <small>· ${esc(staffName(f.closed_by))} ${f.closed_at ? esc(fmtDate(f.closed_at)) : ""}</small>` : "")] : null], acts.join(""),
+      `<h4>Evidence: defect</h4>${evidenceHtml(qaEvidence(f))}${(f.close_evidence || []).length ? `<h4>Evidence: correction</h4>${evidenceHtml(f.close_evidence)}` : f.status === "Open" ? '<p class="muted small">A photo or file of the correction is required.</p>' : ""}`);
+  }
+  // ---------- QA/QC PDF forms (English or Khmer) ----------
+  const QAT = {
+    en: { titleD: "Quality Defect & Corrective Action Report", titleI: "Quality Inspection Report", formD: "Form GID-QA-F01", formI: "Form GID-QA-F02", details: "Details", project: "Project", loc: "Location / area",
+      disc: "Discipline", pri: "Priority", raised: "Raised by", date: "Date", assigned: "To be fixed by", due: "Fix by", found: "Defect found", evidence: "Evidence: before and after", before: "BEFORE · defect", after: "AFTER · correction",
+      noAfter: "Waiting for the correction photo", correction: "Correction", corrected: "What was corrected", fixedBy: "Corrected by", verify: "Verification", note: "Note", status: "Status",
+      sign: "Sign-off", raiser: "Raised by", fixer: "Corrected by", checker: "Checked and closed by", pm: "Project Manager", sigLine: "Signature / date", photos: "Evidence photos",
+      inspector: "Inspector", checklist: "Checklist notes", result: "Result", passed: "PASSED", failed: "FAILED", open: "OPEN", closed: "CLOSED", fixed: "FIXED · TO CHECK", resultNote: "Result notes",
+      inspEv: "Evidence: inspection and result", inspPh: "INSPECTION", resPh: "RESULT", defectsRaised: "Defects raised", none: "None", priMap: {}, discMap: {}, from: "From inspection",
+      generated: "GID Management System · generated", page: (a, b) => "Page " + a + " of " + b, cont: "continued", files: (n) => n + " file" + (n === 1 ? "" : "s"), attachments: "Attachments" },
+    km: { titleD: "របាយការណ៍ចំណុចខ្វះខាតគុណភាព និងវិធានការកែតម្រូវ", titleI: "របាយការណ៍ត្រួតពិនិត្យគុណភាព", formD: "ទម្រង់ GID-QA-F01", formI: "ទម្រង់ GID-QA-F02", details: "ព័ត៌មានលម្អិត", project: "គម្រោង", loc: "ទីតាំង / តំបន់",
+      disc: "ផ្នែក", pri: "អាទិភាព", raised: "រាយការណ៍ដោយ", date: "កាលបរិច្ឆេទ", assigned: "អ្នកជួសជុល", due: "ជួសជុលត្រឹម", found: "ចំណុចខ្វះខាតដែលរកឃើញ", evidence: "ភស្តុតាង៖ មុន និងក្រោយ", before: "មុន · ចំណុចខ្វះខាត", after: "ក្រោយ · ការកែតម្រូវ",
+      noAfter: "រង់ចាំរូបថតការកែតម្រូវ", correction: "ការកែតម្រូវ", corrected: "អ្វីដែលបានកែតម្រូវ", fixedBy: "កែតម្រូវដោយ", verify: "ការផ្ទៀងផ្ទាត់", note: "កំណត់ចំណាំ", status: "ស្ថានភាព",
+      sign: "ហត្ថលេខា", raiser: "រាយការណ៍ដោយ", fixer: "កែតម្រូវដោយ", checker: "ពិនិត្យ និងបិទដោយ", pm: "អ្នកគ្រប់គ្រងគម្រោង", sigLine: "ហត្ថលេខា / កាលបរិច្ឆេទ", photos: "រូបថតភស្តុតាង",
+      inspector: "អ្នកត្រួតពិនិត្យ", checklist: "កំណត់ចំណាំបញ្ជីត្រួតពិនិត្យ", result: "លទ្ធផល", passed: "ជាប់", failed: "មិនជាប់", open: "មិនទាន់បិទ", closed: "បានបិទ", fixed: "បានជួសជុល · រង់ចាំពិនិត្យ", resultNote: "កំណត់ចំណាំលទ្ធផល",
+      inspEv: "ភស្តុតាង៖ ការត្រួតពិនិត្យ និងលទ្ធផល", inspPh: "ការត្រួតពិនិត្យ", resPh: "លទ្ធផល", defectsRaised: "ចំណុចខ្វះខាតដែលបានបង្កើត", none: "គ្មាន", from: "ពីការត្រួតពិនិត្យ",
+      priMap: { Low: "ទាប", Medium: "មធ្យម", High: "ខ្ពស់" }, discMap: { Architecture: "ស្ថាបត្យកម្ម", Structure: "រចនាសម្ព័ន្ធ", Mechanical: "មេកានិច", Electrical: "អគ្គិសនី", Plumbing: "ទឹក និងលូ", Fire: "ប្រព័ន្ធអគ្គិភ័យ", ELV: "ប្រព័ន្ធតង់ស្យុងទាប (ELV)" },
+      generated: "បង្កើតដោយប្រព័ន្ធគ្រប់គ្រង GID ·", page: (a, b) => "ទំព័រ " + a + "/" + b, cont: "បន្ត", files: (n) => "ឯកសារ " + n, attachments: "ឯកសារភ្ជាប់" }
+  };
+  async function qaPdf(kind, r, lang) {
+    const L = QAT[lang], p = byId("projects", r.project_id) || {}, T = (m, v) => esc((m && m[v]) || v || "");
+    const imgs = (l) => (l || []).filter((x) => x.type !== "pdf"), pdfs = (l) => (l || []).filter((x) => x.type === "pdf");
+    const ph = (x, empty) => x ? `<div class="img" style="background-image:url('${String(x.url).replace(/'/g, "%27")}')"></div>` : `<div class="img empty">${empty}</div>`;
+    const person = (id) => byId("staff", id) || {};
+    let no, title, form, stamp, blocks, before, after;
+    if (kind === "defect") {
+      no = defectNo(r); title = L.titleD; form = L.formD; before = qaEvidence(r); after = r.close_evidence || [];
+      stamp = r.status === "Closed" ? L.closed : r.status === "Fixed" ? L.fixed : L.open;
+      const rb = person(r.raised_by), fx = person(r.fixed_by), cl = person(r.closed_by), pm = person(p.pm_id), insp = r.inspection_id ? byId("inspections", r.inspection_id) : null;
+      const files = pdfs(before).concat(pdfs(after));
+      blocks = [
+        `<h2><i>1</i>${L.details}</h2><table class="sf-t"><tr><th>${L.project}</th><td>${esc(p.code)} ${esc(p.name)}</td><th>${L.loc}</th><td>${esc(r.location || "")}</td></tr>
+          <tr><th>${L.disc}</th><td>${T(L.discMap, r.discipline)}</td><th>${L.pri}</th><td>${T(L.priMap, r.priority)}</td></tr>
+          <tr><th>${L.raised}</th><td>${esc(rb.name || "")} · ${esc(rb.title || "")}</td><th>${L.date}</th><td>${esc(rDate((r.created_at || today()).slice(0, 10), lang))}</td></tr>
+          <tr><th>${L.assigned}</th><td>${esc(person(r.assigned_to).name || "")}</td><th>${L.due}</th><td>${esc(rDate(r.due_date, lang))}</td></tr>
+          ${insp ? `<tr><th>${L.from}</th><td colspan="3">${esc(inspNo(insp))} · ${esc(insp.title)}</td></tr>` : ""}</table>`,
+        `<h2><i>2</i>${L.found}</h2><div class="sf-box">${esc(r.description || "")}</div>`,
+        `<h2><i>3</i>${L.evidence}</h2><div class="sf-ba"><div class="bf"><div class="hd">${L.before}</div>${ph(imgs(before)[0], L.none)}<p>${esc(rb.name || "")}</p></div><div class="af"><div class="hd">${L.after}</div>${ph(imgs(after)[0], L.noAfter)}<p>${r.fixed_by ? esc(fx.name || "") + " · " + esc(fmtDate(r.fixed_at)) : "—"}</p></div></div>`,
+        `<h2><i>4</i>${L.correction}</h2><table class="sf-t"><tr><th>${L.corrected}</th><td>${esc(r.correction || "—")}</td></tr><tr><th>${L.fixedBy}</th><td>${r.fixed_by ? esc(fx.name) + " · " + esc(fmtDate(r.fixed_at)) + " " + esc(timeOf(r.fixed_at)) : "—"}</td></tr>
+          <tr><th>${L.verify}</th><td>${esc(r.verify_note || "—")}${r.closed_by ? " · " + esc(cl.name) + " · " + esc(fmtDate(r.closed_at)) : ""}</td></tr>
+          <tr><th>${L.attachments}</th><td>${L.files(before.length + after.length)}${files.length ? " · " + files.map((f) => esc(f.name)).join(", ") : ""}</td></tr></table>`,
+        `<h2><i>5</i>${L.sign}</h2><div class="sf-sign"><div><small>${L.raiser}</small><b>${esc(rb.name || "—")}</b><em>${esc(rb.title || "")}</em></div><div><small>${L.fixer}</small><b>${r.fixed_by ? esc(fx.name) : "—"}</b><em>${L.sigLine}</em></div>
+          <div><small>${L.checker}</small><b>${r.closed_by ? esc(cl.name) : "—"}</b><em>${L.sigLine}</em></div><div><small>${L.pm}</small><b>${esc(pm.name || "—")}</b><em>${L.sigLine}</em></div></div>`];
+    } else {
+      no = inspNo(r); title = L.titleI; form = L.formI; before = r.evidence || []; after = r.result_evidence || [];
+      stamp = r.result === "Passed" ? L.passed : r.result === "Failed" ? L.failed : L.open;
+      const ins = person(r.inspector_id), pm = person(p.pm_id), raised = db.defects.filter((f) => f.inspection_id === r.id);
+      const tick = (on, t) => `<span class="sf-chk"><i class="${on ? "on" : ""}">${on ? "✓" : ""}</i>${t}</span>`;
+      blocks = [
+        `<h2><i>1</i>${L.details}</h2><table class="sf-t"><tr><th>${L.project}</th><td>${esc(p.code)} ${esc(p.name)}</td><th>${L.loc}</th><td>${esc(r.area || "")}</td></tr>
+          <tr><th>${L.disc}</th><td>${T(L.discMap, r.discipline)}</td><th>${L.date}</th><td>${esc(rDate(r.insp_date, lang))}</td></tr><tr><th>${L.inspector}</th><td colspan="3">${esc(ins.name || "")} · ${esc(ins.title || "")}</td></tr></table>`,
+        `<h2><i>2</i>${L.checklist}</h2><div class="sf-box">${esc(r.notes || "—")}</div>`,
+        `<h2><i>3</i>${L.result}</h2><table class="sf-t"><tr><th>${L.result}</th><td>${tick(r.result === "Passed", L.passed)}${tick(r.result === "Failed", L.failed)}${tick(r.result === "Open", L.open)}</td></tr>
+          <tr><th>${L.resultNote}</th><td>${esc(r.result_note || "—")}</td></tr><tr><th>${L.defectsRaised}</th><td>${raised.length ? raised.map((f) => esc(defectNo(f) + " · " + f.description)).join("<br>") : L.none}</td></tr></table>`,
+        `<h2><i>4</i>${L.inspEv}</h2><div class="sf-ba"><div class="bf"><div class="hd">${L.inspPh}</div>${ph(imgs(before)[0], L.none)}<p>${esc(fmtDate(r.insp_date))}</p></div><div class="af"><div class="hd">${L.resPh}</div>${ph(imgs(after)[0], L.none)}<p>${r.checked_at ? esc(fmtDate(r.checked_at)) + " " + esc(timeOf(r.checked_at)) : "—"}</p></div></div>`,
+        `<h2><i>5</i>${L.sign}</h2><div class="sf-sign"><div><small>${L.inspector}</small><b>${esc(ins.name || "—")}</b><em>${L.sigLine}</em></div><div><small>${L.pm}</small><b>${esc(pm.name || "—")}</b><em>${L.sigLine}</em></div><div><small>&nbsp;</small><b>&nbsp;</b><em>${L.sigLine}</em></div><div><small>&nbsp;</small><b>&nbsp;</b><em>${L.sigLine}</em></div></div>`];
+    }
+    const more = imgs(before).concat(imgs(after));
+    if (!document.getElementById("sf-css")) { const st = document.createElement("style"); st.id = "sf-css"; st.textContent = SF_CSS; document.head.appendChild(st); }
+    await makePdf({ lang, no, fileName: no + "-" + (lang === "km" ? "KH" : "EN") + ".pdf",
+      head: `<div class="rp-top">${pdfLogo()}<div class="rp-title"><h1 class="sf-h1">${title}</h1><small>${esc(no)} · ${form}</small><span class="rp-sess ${/OPEN|FIXED|FAILED|មិន|រង់ចាំ/.test(stamp) ? "sf-open" : ""}">${stamp}</span></div></div>`,
+      mini: (t) => `<div class="rp-mini"><span><b>${t}</b> · ${esc(p.code)} · ${esc(no)}</span><span>${form}</span></div>`,
+      contTitle: title + " (" + L.cont + ")", photoTitle: L.photos, blocks,
+      photos: more.length > 2 ? more.map((x, i) => ({ src: x.url, cap: i < imgs(before).length ? (kind === "defect" ? L.before : L.inspPh) : (kind === "defect" ? L.after : L.resPh) })) : [],
+      footLeft: L.generated + " " + esc(pdfGenerated()), pageLabel: L.page });
   }
   SCREENS.qaqc = (u) => {
     const T = tabs("qaqc", [["defects", "Defects (snag list)"], ["insp", "Inspections"]]);
     if (T.cur === "insp") {
       const rows = db.inspections.filter((i) => inScope(u, i.project_id)).filter(byProjectFilter).filter((i) => matchSearch(i, ["title", "area"])).sort((a, b) => String(b.insp_date).localeCompare(String(a.insp_date)));
-      return `<h1>QA/QC & Snags</h1>${T.html}${toolbar(u, { buttons: can(u, "qaqc", "edit") ? btn("New inspection", () => formModal("New inspection", [
-        { name: "project_id", label: "Project", type: "select", options: projectOptions(u), required: true, value: state.project }, { name: "title", label: "What is inspected", required: true },
-        { name: "area", label: "Area" }, { name: "discipline", label: "Discipline", type: "select", options: ["Architecture", "Structure", "Mechanical", "Electrical", "Plumbing", "Fire", "ELV"] },
-        { name: "insp_date", label: "Date", type: "date", value: today() }, { name: "notes", label: "Checklist notes", type: "textarea" }
-      ], async (v) => { await save("inspections", Object.assign(v, { inspector_id: u.id, result: "Open" }), "Inspection: " + v.title); }), "primary") : "" })}
-        ${table([{ label: "Date", get: (i) => fmtDate(i.insp_date) }, { label: "Inspection", get: (i) => `<b>${esc(i.title)}</b>` }, { label: "Project", get: (i) => esc(projLabel(i.project_id)) },
+      return `<h1>QA/QC & Snags</h1>${T.html}${toolbar(u, { buttons: canRaiseQA(u) ? btn("New inspection", () => newInspection(u), "primary") : "" })}
+        ${table([{ label: "Date", get: (i) => fmtDate(i.insp_date) }, { label: "Inspection", get: (i) => `<small>${esc(inspNo(i))}</small> <b>${esc(i.title)}</b>` }, { label: "Project", get: (i) => esc(projLabel(i.project_id)) },
           { label: "Inspector", get: (i) => esc(staffName(i.inspector_id)) }, { label: "Result", get: (i) => badge(i.result) }], rows, openInspection)}`;
     }
     const rows = db.defects.filter((f) => inScope(u, f.project_id)).filter(byProjectFilter).filter((f) => matchSearch(f, ["description", "location"])).sort((a, b) => (a.status === "Closed") - (b.status === "Closed"));
-    return `<h1>QA/QC & Snags</h1>${T.html}${toolbar(u, { buttons: can(u, "qaqc", "edit") ? btn("Report defect", () => newDefect(u), "primary") : "" })}
-      ${table([{ label: "Defect", get: (f) => `<b>${esc(f.description)}</b>` + (f.photo ? " 📷" : "") }, { label: "Location", get: (f) => esc(f.location) }, { label: "Project", get: (f) => esc(projLabel(f.project_id)) },
+    return `<h1>QA/QC & Snags</h1>${T.html}${toolbar(u, { buttons: canRaiseQA(u) ? btn("Report defect", () => newDefect(u), "primary") : "" })}
+      ${table([{ label: "No.", get: (f) => `<small>${esc(defectNo(f))}</small>` }, { label: "Defect", get: (f) => `<b>${esc(f.description)}</b>` + (qaEvidence(f).length ? " 📷" : "") }, { label: "Location", get: (f) => esc(f.location) }, { label: "Project", get: (f) => esc(projLabel(f.project_id)) },
         { label: "Assigned to", get: (f) => esc(staffName(f.assigned_to)) }, { label: "Fix by", get: (f) => fmtDate(f.due_date) + (f.status === "Open" && f.due_date < today() ? ' <span class="late">late</span>' : "") },
         { label: "Status", get: (f) => badge(f.status) }], rows, openDefect)}`;
   };
@@ -1911,7 +2160,7 @@
   .sf-chk{display:inline-flex;align-items:center;gap:4px;margin:0 10px 2px 0;white-space:nowrap}.sf-chk i{width:12px;height:12px;border:1.4px solid #3b4b41;border-radius:2px;display:inline-block;font-style:normal;font-size:9px;line-height:10px;text-align:center;color:#fff}.sf-chk i.on{background:#2e8540;border-color:#2e8540}
   .sf-sev{display:inline-block;padding:1px 10px;border-radius:4px;margin-right:6px;border:1px solid #d5dfd6;color:#8a93a6}.sf-sev.on{color:#fff;font-weight:700}.sf-sev.on.low{background:#1a7f42;border-color:#1a7f42}.sf-sev.on.medium{background:#b97800;border-color:#b97800}.sf-sev.on.high{background:#c0362c;border-color:#c0362c}
   .sf-box{border:1px solid #d5dfd6;border-radius:6px;padding:8px 10px;min-height:44px;white-space:pre-wrap}
-  .sf-ba{display:grid;grid-template-columns:1fr 1fr;gap:12px}.sf-ba>div{border:1px solid #d5dfd6;border-radius:8px;overflow:hidden}.sf-ba .hd{padding:5px 9px;color:#fff;font-weight:700;font-size:11.5px}.sf-ba .bf .hd{background:#c0362c}.sf-ba .af .hd{background:#1a7f42}
+  .sf-ba{display:grid;grid-template-columns:1fr 1fr;gap:12px}.sf-ba>div{border:1px solid #d5dfd6;border-radius:8px;overflow:hidden}.sf-ba .hd{display:block;width:auto;height:auto;border-radius:0;padding:5px 9px;color:#fff;font-weight:700;font-size:11.5px}.sf-ba .bf .hd{background:#c0362c}.sf-ba .af .hd{background:#1a7f42}
   .sf-ba .img{height:200px;background:#eef0f4 center/cover no-repeat}.sf-ba .img.empty{display:flex;align-items:center;justify-content:center;color:#8a93a6;font-size:12px}.sf-ba p{padding:5px 9px;font-size:11px;color:#4a5a50}
   .sf-sign{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.sf-sign>div{border:1px solid #d5dfd6;border-radius:6px;padding:7px 9px;height:76px;position:relative;font-size:11.5px}.sf-sign small{display:block;color:#6b7488;font-size:10px}.sf-sign em{position:absolute;left:9px;right:9px;bottom:6px;border-top:1px dashed #9aa79f;padding-top:3px;font-style:normal;font-size:9.5px;color:#7d8c83}
   .sf-two{display:grid;grid-template-columns:1.1fr .9fr;gap:14px}.sf-mx{width:auto!important;border-collapse:separate!important;border-spacing:2px}.sf-mx td{width:34px;height:22px;text-align:center;font-weight:700;border:0!important;border-radius:3px;padding:0!important;font-size:10.5px}
@@ -1945,15 +2194,101 @@
         { name: "telegram_chat_id", label: "Telegram ID (for alerts)", value: s.telegram_chat_id || "", help: "Each person can also link this themselves: bell > Settings > Telegram alerts." }
       ], async (v) => { await patch("staff", s.id, v, "Permission change for " + s.name + ": groups " + v.groups + "; tags " + v.tags); }), "primary") : "");
   }
+  // ================= organization charts (same look as the GID company org chart) =================
+  // Departments in the order of the company chart: Administration, Finance, Quantity Surveyor, Engineering & Technical, Architect, Project
+  const ORG_DEPTS = [["ADMIN", "Administration"], ["FIN", "Finance"], ["QS", "Quantity Surveyor"], ["ENG", "Engineering & Technical"], ["DESIGN", "Architect"], ["PROJECT", "Project"]];
+  const sidNo = (s) => Number(String(s.id).replace(/\D/g, "")) || 999;
+  // Seniority inside a department: managers and directors, then senior staff, then staff, then interns
+  const orgTier = (s) => /\bMD\b/.test(s.tags || "") ? 0 : /director|manager|head/i.test(s.title) ? 1 : /senior/i.test(s.title) ? 2 : /intern/i.test(s.title) ? 4 : 3;
+  const orgSort = (a, b) => orgTier(a) - orgTier(b) || sidNo(a) - sidNo(b);
+  function orgDeptOf(s) { const g = groupsOf(s); if (g.includes("EXEC")) return "EXEC"; if (g[0] === "PM" || g[0] === "SITE") return "PROJECT"; return g[0] || "ADMIN"; }
+  // Rows inside a department: one row for each level, like the company chart
+  function orgRows(list, dept) {
+    if (dept === "PROJECT") {
+      const pms = list.filter((s) => groupsOf(s)[0] === "PM").sort(orgSort), site = list.filter((s) => groupsOf(s)[0] !== "PM").sort(orgSort);
+      return [pms, site].filter((r) => r.length);
+    }
+    const rows = {}; list.slice().sort(orgSort).forEach((s) => { const t = Math.max(1, orgTier(s)); (rows[t] = rows[t] || []).push(s); });
+    return Object.keys(rows).sort().map((k) => rows[k]);
+  }
+  const ocNode = (s, cls) => `<button type="button" class="ocn${cls ? " " + cls : ""}" data-act="${act(() => openPerson(s))}">${avatar(s, "ocp")}<b>${esc(s.name)}</b><i>${esc(s.title)}</i></button>`;
+  // o = { levels: [[staff], [staff]] (top of the chart), branches: [{ label, rows: [[staff]], empty }] }
+  function orgChartHtml(o) {
+    const lv = (o.levels || []).filter((l) => l && l.length);
+    return `<div class="oc">${lv.map((l, i) => `${i ? '<div class="oc-v"></div>' : ""}${l.label ? `<span class="oc-l top">${esc(l.label)}</span>` : ""}<div class="oc-top">${l.map((s) => ocNode(s, i ? "" : "lead")).join("")}</div>`).join("")}
+      ${o.branches.length ? `<div class="oc-v"></div><div class="oc-br${o.grid ? " " + o.grid : ""}${o.branches.length <= 2 ? " few" : ""}"${o.grid ? "" : ` style="--occols:${o.branches.length}"`}>${o.branches.map((b, i, all) => `<section class="oc-d ${b.cls || ((i === 0 ? "rs " : "") + (i === all.length - 1 ? "re" : ""))}">${/trunk/.test(b.cls || "") ? '<i class="oc-trunk"></i>' : ""}<span class="oc-l">${esc(b.label)}</span>${b.rows.length ? b.rows.map((r) => `<div class="oc-r">${r.map((s) => ocNode(s)).join("")}</div>`).join("") : `<p class="muted small oc-none">${esc(b.empty || "Not assigned yet")}</p>`}</section>`).join("")}</div>` : ""}</div>`;
+  }
+  function companyOrg(filter) {
+    const list = db.staff.filter(filter || (() => true));
+    const top = list.filter((s) => orgDeptOf(s) === "EXEC").sort(orgSort);
+    // Same layout as the company chart: Administration and Finance; then QS, Engineering and Architect; then Project across the full width
+    // Row 1: Administration, Finance, Quantity Surveyor, Engineering & Technical. Row 2: Architect and Project.
+    const LAYOUT = { ADMIN: "c3 rs", FIN: "c3 trunk", QS: "c3", ENG: "c3 re", DESIGN: "c6 rs", PROJECT: "c6 re" };
+    const branches = ORG_DEPTS.map(([k, label]) => { const inDept = list.filter((s) => orgDeptOf(s) === k); return { label, rows: orgRows(inDept, k), n: inDept.length, cls: LAYOUT[k] }; }).filter((b) => b.n);
+    const full = branches.length === ORG_DEPTS.length;
+    if (!full) branches.forEach((b, i, all) => { b.cls = (i === 0 ? "rs " : "") + (i === all.length - 1 ? "re" : ""); });
+    return orgChartHtml({ levels: [top], branches, grid: full ? "co" : "" });
+  }
+  // A project's own org chart: Managing Director, the Project Manager, then the teams assigned to the project
+  function projectOrgData(p) {
+    const md = withTag("MD")[0], pm = byId("staff", p.pm_id);
+    const mem = (g) => teamOf(p.id, g).map((m) => byId("staff", m.staff_id)).filter(Boolean).filter((s, i, a) => a.indexOf(s) === i && s.id !== p.pm_id);
+    const site = mem("SITE").sort(orgSort);
+    const branches = [
+      { label: "Site team", rows: [site.filter((s) => orgTier(s) <= 1), site.filter((s) => orgTier(s) === 2), site.filter((s) => orgTier(s) >= 3)].filter((r) => r.length), empty: "No site team assigned yet" },
+      { label: "Quantity Surveyor", rows: orgRows(mem("QS"), "QS"), empty: "No QS assigned yet" },
+      { label: "Architect", rows: orgRows(mem("DESIGN"), "DESIGN"), empty: "No designer assigned yet" }
+    ];
+    branches.push({ label: "Engineering & Technical", rows: orgRows(mem("ENG"), "ENG"), empty: "Not assigned" });
+    return { levels: [md ? [md] : [], pm ? Object.assign([pm], { label: "Project Manager" }) : []], branches };
+  }
+  async function orgChartPdf(p, lang) {
+    const km = lang === "km", data = projectOrgData(p), host = document.createElement("div");
+    const T = (t) => km ? (I18N.t(t) || t) : t;
+    host.className = "oc-print" + (km ? " km" : "");
+    host.innerHTML = `<div class="ocp-head">${pdfLogo()}<div class="ocp-title"><h1>${km ? "តារាងរចនាសម្ព័ន្ធគម្រោង" : "Project Organization Chart"}</h1><p><b>${esc(p.code)} · ${esc(p.name)}</b> · ${esc(p.client || "")} · ${esc(p.location || "")}</p></div></div>`
+      + orgChartHtml(data).replace(/data-act="[^"]*"/g, "") + `<div class="ocp-foot"><span>GID Management System · ${km ? "បង្កើតនៅ" : "generated"} ${esc(pdfGenerated())}</span><span>${esc(p.code)}</span></div>`;
+    if (km) host.querySelectorAll(".oc-l, .oc-none").forEach((el) => { el.textContent = T(el.textContent); });
+    host.querySelectorAll(".oc-l.top").forEach((el) => el.remove());
+    toast(km ? "កំពុងបង្កើត PDF…" : "Making the PDF…");
+    document.body.appendChild(host);
+    try {
+      await Promise.all(PDF_LIBS.map(loadScript));
+      await Promise.race([document.fonts.ready, new Promise((r) => setTimeout(r, 4000))]);
+      await Promise.all([...host.querySelectorAll("img")].map((im) => im.complete ? 0 : new Promise((r) => { im.onload = im.onerror = r; })));
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const canvas = await window.html2canvas(host, { scale: 2, useCORS: true, backgroundColor: "#ffffff", logging: false });
+      const pdf = new window.jspdf.jsPDF({ unit: "mm", format: "a4", orientation: "landscape", compress: true });
+      const w = 297, h = Math.min(210, (canvas.height / canvas.width) * w), iw = h < 210 ? w : (canvas.width / canvas.height) * 210;
+      pdf.addImage(canvas.toDataURL("image/jpeg", 0.9), "JPEG", (297 - iw) / 2, 0, iw, h);
+      host.remove();
+      const name = p.code + "-OrgChart-" + (km ? "KH" : "EN") + ".pdf", url = URL.createObjectURL(pdf.output("blob"));
+      openModal(name, `<iframe class="pdf" src="${url}" title="PDF preview"></iframe><div class="form-actions"><a class="btn primary" href="${url}" download="${esc(name)}">${km ? "ទាញយក" : "Download"} ${esc(name)}</a><button class="btn" data-act="${act(modalBack)}">${km ? "បិទ" : "Close"}</button></div>`);
+      try { const a = document.createElement("a"); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); } catch (e) { /* the button above still works */ }
+    } catch (err) { host.remove(); toast(err.message || String(err), true); }
+  }
+  function openProjectOrg(p) {
+    openModal("Org chart · " + p.code, `<p class="muted small">${esc(p.name)} · made from the team assigned in Manage team. Tap a person to see details.</p>${orgChartHtml(projectOrgData(p))}
+      <div class="form-actions">${canManageProject(me()) ? btn("Manage team", () => manageTeam(p)) : ""}${btn("PDF English", () => orgChartPdf(p, "en"), "primary")}${btn("PDF ខ្មែរ", () => orgChartPdf(p, "km"), "primary")}</div>`, (m) => m.querySelector(".modal").classList.add("wide"));
+  }
+
   SCREENS.people = (u) => {
     const rows = db.staff.filter((s) => matchSearch(s, ["name", "title"]));
-    const sections = Object.keys(GROUPS).map((g) => { const list = rows.filter((s) => groupsOf(s)[0] === g);
-      return list.length ? `<section class="card"><h2>${esc(GROUPS[g])} <span class="count">${list.length}</span></h2><ul class="people">${list.map((s) => `<li data-act="${act(() => openPerson(s))}">${avatar(s)}<b>${esc(s.name)}</b><small>${esc(s.title)}${groupsOf(s).length > 1 ? " · also " + esc(groupsOf(s).slice(1).map((x) => GROUPS[x]).join(", ")) : ""}</small></li>`).join("")}</ul></section>` : ""; }).join("");
-    return `<h1>People</h1><p class="muted">${db.staff.length} staff. HR owner: ${esc(withTag("HR").map((s) => s.name).join(", "))}.</p>${toolbar(u, { project: false })}<div class="grid2">${sections}</div>`;
+    const t = tabs("people", [["chart", "Org chart"], ["list", "List"]]);
+    let content;
+    if (t.cur === "chart") content = rows.length ? `<section class="card occard">${companyOrg((s) => rows.includes(s))}</section>` : '<div class="empty">No one matches.</div>';
+    else {
+      const top = rows.filter((s) => orgDeptOf(s) === "EXEC");
+      const depts = [["EXEC", "Managing Director"]].concat(ORG_DEPTS).map(([k, label]) => { const list = (k === "EXEC" ? top : rows.filter((s) => orgDeptOf(s) === k)); const ordered = k === "EXEC" ? list : [].concat(...orgRows(list, k));
+        return ordered.length ? `<section class="card"><h2>${esc(label)} <span class="count">${ordered.length}</span></h2><ul class="people">${ordered.map((s) => `<li data-act="${act(() => openPerson(s))}">${avatar(s)}<b>${esc(s.name)}</b><small>${esc(s.title)}${groupsOf(s).length > 1 ? " · also " + esc(groupsOf(s).slice(1).map((x) => GROUPS[x]).join(", ")) : ""}</small></li>`).join("")}</ul></section>` : ""; }).join("");
+      content = `<div class="grid2">${depts}</div>`;
+    }
+    return `<h1>People</h1><p class="muted">${db.staff.length} staff. HR owner: ${esc(withTag("HR").map((s) => s.name).join(", "))}.</p>${t.html}${toolbar(u, { project: false })}${content}`;
   };
 
   // ---------- DASHBOARD ----------
   const SVGI = {
+    back: '<path d="M15 18l-6-6 6-6"/>',
     dashboard: '<path d="M4 13h6V4H4zM14 20h6v-9h-6zM4 20h6v-4H4zM14 4v4h6V4z"/>',
     home: '<path d="M3 11.5 12 4l9 7.5"/><path d="M5 10v10h14V10"/><path d="M10 20v-5h4v5"/>',
     requests: '<path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/>',
@@ -2500,13 +2835,13 @@
       <label class="chk"><input type="checkbox" id="rk-tg" checked> Keep everyone's Telegram link</label>
       <label class="chk"><input type="checkbox" id="rk-set" checked> Keep permission settings and alert choices</label>
       <label class="chk"><input type="checkbox" id="rk-ok"> I understand that test records will be deleted</label>
-      <div class="form-actions"><button type="button" class="btn" data-act="${act(closeModal)}">Cancel</button>
+      <div class="form-actions"><button type="button" class="btn" data-act="${act(modalBack)}">Cancel</button>
         <button type="button" class="btn danger-solid" id="rk-go" disabled data-act="${act(async (e, el) => {
           el.disabled = true; el.textContent = "Resetting…";
           try {
             await Store.reset({ telegram: $("#rk-tg").checked, settings: $("#rk-set").checked });
             permDraft = null; tgStatus.checked = false; tgLast = {};
-            closeModal(); toast("Demo data reset. Everything is back to the starting point.");
+            closeAllModals(); toast("Demo data reset. Everything is back to the starting point.");
             go(can(me(), "dashboard", "view") ? "dashboard" : "home"); render();
           } catch (err) { el.disabled = false; el.textContent = "Reset to demo data"; toast("Reset failed: " + err.message, true); }
         })}">Reset to demo data</button></div></div>`, (m) => {
@@ -2543,9 +2878,20 @@
   function go(route) { location.hash = "#" + route; }
   function routeFromHash() { const u = me(); const def = can(u, "dashboard", "view") ? "dashboard" : "home"; const r = (location.hash || "").replace(/^#\/?/, "") || def; return SCREENS[r] ? r : def; }
 
-  function userPicker(u) {
-    const order = Object.keys(GROUPS);
-    return `<select id="who" aria-label="Acting as">${order.map((g) => `<optgroup label="${esc(GROUPS[g])}">${db.staff.filter((s) => groupsOf(s)[0] === g).map((s) => `<option value="${s.id}" ${s.id === u.id ? "selected" : ""}>${esc(s.name)} · ${esc(s.title)}</option>`).join("")}</optgroup>`).join("")}</select>`;
+  // Switch person (demo): a window with everyone in org chart order, photos and a search box.
+  // (The phone's own drop-down list cannot be coloured reliably, so it is not used.)
+  function switchUser(id) { state.user = id; try { localStorage.setItem(LS_KEY + "-user", state.user); } catch (x) { /* ignore */ } state.project = ""; state.search = ""; state.showAll = false; permDraft = null; closeDrawer(); closeAllModals(); render(); }
+  function openUserPicker() {
+    const u = me();
+    const sections = [["EXEC", "Executive"]].concat(ORG_DEPTS).map(([k, label]) => {
+      const list = db.staff.filter((s) => orgDeptOf(s) === k); const ordered = k === "EXEC" ? list.sort(orgSort) : [].concat(...orgRows(list, k));
+      return ordered.length ? `<h5 class="upk-h">${esc(label)}</h5>${ordered.map((s) => `<button type="button" class="upk${s.id === u.id ? " on" : ""}" data-name="${esc((s.name + " " + s.title).toLowerCase())}" data-act="${act(() => switchUser(s.id))}">${avatar(s)}<span><b>${esc(s.name)}</b><small>${esc(s.title)}</small></span>${s.id === u.id ? '<i class="upk-tick" aria-label="Current person">✓</i>' : ""}</button>`).join("")}` : "";
+    }).join("");
+    openModal("Switch person", `<p class="muted small">Demo only: choose a person to see the system as they see it.</p><input class="search upk-q" placeholder="Search name or title" aria-label="Search name or title"><div class="upk-list">${sections}</div>`, (m) => {
+      const q = m.querySelector(".upk-q");
+      q.addEventListener("input", () => { const t = q.value.trim().toLowerCase(); m.querySelectorAll(".upk").forEach((b) => { b.hidden = !!t && !b.dataset.name.includes(t); }); m.querySelectorAll(".upk-h").forEach((h) => { let n = h.nextElementSibling, any = false; while (n && n.classList.contains("upk")) { if (!n.hidden) any = true; n = n.nextElementSibling; } h.hidden = !any; }); });
+      const on = m.querySelector(".upk.on"); if (on) on.scrollIntoView({ block: "center" });
+    });
   }
 
   function globalSearch(q) {
@@ -2584,7 +2930,9 @@
     const u = me(), v = Object.assign(uiPref(u), patch), key = "ui:" + u.id;
     const row = { key, value: { theme: v.theme, lang: v.lang }, updated_by: u.id, updated_at: nowIso() };
     const sv = (db.app_settings || []).find((x) => x.key === key);
-    applyUI(v); closeModal(); render();
+    // Change the saved copy on this device first, so the screen uses the new choice straight away (one tap)
+    if (sv) sv.value = row.value; // (a new person has no saved row yet: the device copy written by applyUI is used)
+    applyUI(v); closeAllModals(); render();
     try { if (sv) await Store.update("app_settings", sv.id, row); else await Store.insert("app_settings", Object.assign({ id: "ui-" + u.id }, row)); } catch (e) { /* the choice still applies on this device */ }
   }
   function openDisplay() {
@@ -2596,7 +2944,10 @@
   }
 
   function render() {
-    ACTS = new Map(); AFTER.length = 0;
+    // keep the buttons of an open window or the alerts panel working when the page behind is redrawn
+    const keepActs = new Map(); document.querySelectorAll("#modal [data-act], #drawer [data-act]").forEach((el) => { const f = ACTS.get(el.dataset.act); if (f) keepActs.set(el.dataset.act, f); });
+    MSTACK.forEach((x) => x.acts.forEach((f, k) => keepActs.set(k, f)));
+    ACTS = keepActs; AFTER.length = 0;
     applyUI(uiPref(me()));
     const u = me();
     let route = routeFromHash();
@@ -2633,12 +2984,11 @@
             <div class="gsearch"><label>${svgI("search")}<input id="gq" placeholder="Search projects, POs, drawings, stock" aria-label="Search everything" autocomplete="off"></label><div class="gresults" id="gres" hidden></div></div>
             <button class="icon uibtn" id="uibtn" aria-label="Display: theme and language" title="Theme and language" data-act="${act(openDisplay)}">${svgI(document.documentElement.dataset.theme === "dark" ? "moon" : "sun")}</button>
             <button class="icon bell-ring" id="bell" data-badge="all" aria-label="${unread} unread notifications" data-act="${act(() => openDrawer("mine"))}">${svgI("bell")}${nb("all", unread)}</button>
-            <label class="who" title="Demo: switch person to test each role">${avatar(u)}<span class="who-t"><b>${esc(u.name)}</b><small>${esc(u.title)}</small></span><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>${userPicker(u)}</label>
+            <button type="button" class="who" id="who" title="Demo: switch person to test each role" aria-label="Acting as ${esc(u.name)}. Switch person" data-act="${act(openUserPicker)}">${avatar(u)}<span class="who-t"><b>${esc(u.name)}</b><small>${esc(u.title)}</small></span><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
           </div></header>
         <div class="banner"><b>Demo:</b> tap your name at the top to switch person and test each role</div>
         ${body}
       </main>${tabbar}</div>`;
-    $("#who").addEventListener("change", (e) => { state.user = e.target.value; try { localStorage.setItem(LS_KEY + "-user", state.user); } catch (x) { /* ignore */ } state.project = ""; state.search = ""; state.showAll = false; permDraft = null; closeDrawer(); render(); });
     const gq = $("#gq"), gres = $("#gres");
     gq.addEventListener("input", () => {
       const res = globalSearch(gq.value);
@@ -2660,7 +3010,7 @@
   }
   document.documentElement.dataset.skin = "glass";
 
-  window.addEventListener("hashchange", () => { state.search = ""; closeModal(); render(); });
+  window.addEventListener("hashchange", () => { state.search = ""; closeAllModals(); render(); });
 
   // The app and its data load in the background while the passkey screen is open; screens appear once it is unlocked
   const gateOpen = () => window.GID_GATE || Promise.resolve();

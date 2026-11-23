@@ -8,7 +8,7 @@
   const TABLES = {
     staff: { name: "text", title: "text", groups: "text", tags: "text", phone: "text", email: "text", telegram_chat_id: "text" },
     projects: { code: "text", name: "text", client: "text", location: "text", pm_id: "text", status: "text",
-      start_date: "date", end_date: "date", contract_value: "numeric", budget: "numeric", progress: "numeric", lat: "numeric", lng: "numeric" },
+      start_date: "date", end_date: "date", contract_value: "numeric", budget: "numeric", progress: "numeric", lat: "numeric", lng: "numeric", scopes: "jsonb" },
     project_members: { project_id: "text", staff_id: "text", role: "text" },
     tasks: { project_id: "text", title: "text", assignee_id: "text", due_date: "date", status: "text", priority: "text", created_by: "text" },
     daily_reports: { project_id: "text", report_date: "date", author_id: "text", weather: "text", manpower: "int",
@@ -28,9 +28,10 @@
     invoices: { inv_no: "text", direction: "text", project_id: "text", party: "text", source_type: "text", source_id: "text",
       amount: "numeric", due_date: "date", status: "text", paid_at: "timestamptz" },
     inspections: { project_id: "text", title: "text", area: "text", discipline: "text", inspector_id: "text",
-      insp_date: "date", result: "text", notes: "text" },
+      insp_date: "date", result: "text", notes: "text", evidence: "jsonb", result_evidence: "jsonb", result_note: "text", checked_at: "timestamptz" },
     defects: { project_id: "text", location: "text", description: "text", assigned_to: "text", due_date: "date",
-      status: "text", photo: "text", raised_by: "text" },
+      status: "text", photo: "text", raised_by: "text", discipline: "text", priority: "text", evidence: "jsonb", close_evidence: "jsonb", correction: "text",
+      fixed_by: "text", fixed_at: "timestamptz", closed_by: "text", closed_at: "timestamptz", verify_note: "text", inspection_id: "text" },
     safety: { project_id: "text", rec_type: "text", rec_date: "date", description: "text", severity: "text",
       reported_by: "text", status: "text", action: "text", area: "text", evidence: "jsonb", close_evidence: "jsonb", closed_by: "text", closed_at: "timestamptz", correction: "text",
       injury: "text", people_involved: "text", likelihood: "int", consequence: "int", root_cause: "text", preventive: "text", lessons: "text" },
@@ -122,20 +123,26 @@
 
     const projects = [
       { id: "p1", code: "DEMO-101", name: "Riverside Office Fit-out", client: "Demo Client A", location: "Phnom Penh",
-        pm_id: "s03", status: "Active", start_date: ago(120), end_date: ahead(90), contract_value: 420000, budget: 360000, progress: 45, lat: 11.556, lng: 104.928 },
+        pm_id: "s03", status: "Active", start_date: ago(120), end_date: ahead(90), contract_value: 420000, budget: 360000, progress: 45, lat: 11.556, lng: 104.928,
+        scopes: [{ scope: "Architecture", weight: 40, progress: 58 }, { scope: "Electrical", weight: 25, progress: 44 }, { scope: "Plumbing", weight: 10, progress: 30 }, { scope: "MVAC", weight: 10, progress: 40 }, { scope: "ELV", weight: 15, progress: 24 }] },
       { id: "p2", code: "DEMO-102", name: "Hotel MEP Upgrade", client: "Demo Client B", location: "Phnom Penh",
-        pm_id: "s04", status: "Active", start_date: ago(80), end_date: ahead(160), contract_value: 680000, budget: 590000, progress: 30, lat: 11.575, lng: 104.895 },
+        pm_id: "s04", status: "Active", start_date: ago(80), end_date: ahead(160), contract_value: 680000, budget: 590000, progress: 30, lat: 11.575, lng: 104.895,
+        scopes: [{ scope: "Electrical", weight: 40, progress: 35 }, { scope: "Plumbing", weight: 20, progress: 30 }, { scope: "HVAC", weight: 25, progress: 28 }, { scope: "ELV", weight: 15, progress: 20 }] },
       { id: "p3", code: "DEMO-103", name: "Bank Branch Renovation", client: "Demo Client C", location: "Siem Reap",
-        pm_id: "s05", status: "Active", start_date: ago(150), end_date: ahead(40), contract_value: 250000, budget: 215000, progress: 70, lat: 13.363, lng: 103.856 },
+        pm_id: "s05", status: "Active", start_date: ago(150), end_date: ahead(40), contract_value: 250000, budget: 215000, progress: 70, lat: 13.363, lng: 103.856,
+        scopes: [{ scope: "Structure", weight: 15, progress: 100 }, { scope: "Architecture", weight: 35, progress: 72 }, { scope: "Landscape", weight: 5, progress: 20 }, { scope: "Electrical", weight: 15, progress: 70 }, { scope: "Plumbing", weight: 10, progress: 75 }, { scope: "MVAC", weight: 5, progress: 60 }, { scope: "HVAC", weight: 10, progress: 55 }, { scope: "ELV", weight: 5, progress: 50 }] },
       { id: "p4", code: "DEMO-104", name: "Resort MEP Works", client: "Demo Client D", location: "Sihanoukville",
-        pm_id: "s03", status: "Active", start_date: ago(40), end_date: ahead(240), contract_value: 540000, budget: 470000, progress: 15, lat: 10.627, lng: 103.522 },
+        pm_id: "s03", status: "Active", start_date: ago(40), end_date: ahead(240), contract_value: 540000, budget: 470000, progress: 14, lat: 10.627, lng: 103.522,
+        scopes: [{ scope: "Electrical", weight: 35, progress: 18 }, { scope: "Plumbing", weight: 20, progress: 15 }, { scope: "MVAC", weight: 10, progress: 10 }, { scope: "HVAC", weight: 25, progress: 12 }, { scope: "ELV", weight: 10, progress: 10 }] },
       { id: "p5", code: "DEMO-105", name: "Warehouse ELV Installation", client: "Demo Client E", location: "Battambang",
-        pm_id: "s04", status: "Active", start_date: ago(100), end_date: ahead(30), contract_value: 160000, budget: 138000, progress: 55, lat: 13.095, lng: 103.202 }
+        pm_id: "s04", status: "Active", start_date: ago(100), end_date: ahead(30), contract_value: 160000, budget: 138000, progress: 55, lat: 13.095, lng: 103.202,
+        scopes: [{ scope: "ELV", weight: 100, progress: 55 }] }
     ];
 
     let m = 0;
     const M = (project_id, staff_id, role) => ({ id: "m" + (++m), project_id, staff_id, role });
     const project_members = [
+      M("p1", "s30", "Document Engineer"), M("p2", "s29", "MEP Inspector"), M("p3", "s28", "Structural Engineer"),
       M("p1", "s07", "Senior Site Engineer"), M("p1", "s11", "Site Engineer"), M("p1", "s12", "Site Engineer"), M("p1", "s13", "Site Engineer"),
       M("p2", "s08", "Senior Site Engineer"), M("p2", "s09", "Senior Site Engineer"), M("p2", "s14", "Site Engineer"), M("p2", "s15", "Site Engineer"),
       M("p3", "s10", "Senior Site Engineer"), M("p3", "s16", "Site Engineer"), M("p3", "s17", "Site Engineer"),
@@ -360,17 +367,24 @@
         amount: 470, due_date: ago(10), status: "Paid", paid_at: ts(12) }
     ];
 
+    const EV = (label, v) => [{ type: "image", name: label.replace(/\W+/g, "-").toLowerCase() + ".jpg", url: photo(label, v) }];
     const inspections = [
-      { id: "i1", project_id: "p1", title: "Fire alarm devices level 3", area: "Level 3", discipline: "Fire", inspector_id: "s29", insp_date: ago(4), result: "Failed", notes: "3 detectors missing bases." },
-      { id: "i2", project_id: "p2", title: "Riser tray supports floors 2-4", area: "Riser", discipline: "Electrical", inspector_id: "s32", insp_date: ago(2), result: "Passed", notes: "" },
-      { id: "i3", project_id: "p3", title: "Banking hall finishes", area: "Ground floor", discipline: "Architecture", inspector_id: "s29", insp_date: ahead(1), result: "Open", notes: "Pre-handover walk." }
+      { id: "i1", project_id: "p1", title: "Fire alarm devices level 3", area: "Level 3", discipline: "Fire", inspector_id: "s29", insp_date: ago(4), result: "Failed", notes: "Check detector bases, cabling and labels against drawing FA-301.",
+        evidence: EV("Inspection · fire alarm L3", 0), result_note: "3 detectors missing bases. Defect raised.", result_evidence: EV("Missing detector bases", 1), checked_at: ts(4) },
+      { id: "i2", project_id: "p2", title: "Riser tray supports floors 2-4", area: "Riser", discipline: "Electrical", inspector_id: "s32", insp_date: ago(2), result: "Passed", notes: "Support spacing 1.5 m max; earth bonding.",
+        evidence: EV("Inspection · riser trays", 2), result_note: "All supports at spacing; bonding complete.", result_evidence: EV("Riser trays passed", 3), checked_at: ts(2) },
+      { id: "i3", project_id: "p3", title: "Banking hall finishes", area: "Ground floor", discipline: "Architecture", inspector_id: "s31", insp_date: ahead(1), result: "Open", notes: "Pre-handover walk.", evidence: EV("Banking hall before walk", 0), result_evidence: [] }
     ];
 
     const defects = [
-      { id: "f1", project_id: "p1", location: "Level 3 corridor", description: "Smoke detector base missing (3 nos)", assigned_to: "s12", due_date: ahead(2), status: "Open", photo: "", raised_by: "s29" },
-      { id: "f2", project_id: "p3", location: "Banking hall", description: "Paint touch-up at column C4", assigned_to: "s16", due_date: ahead(1), status: "Fixed", photo: "", raised_by: "s29" },
-      { id: "f3", project_id: "p3", location: "ATM lobby", description: "Downlight flickering", assigned_to: "s17", due_date: ago(1), status: "Open", photo: "", raised_by: "s10" },
-      { id: "f4", project_id: "p2", location: "Floor 4 riser", description: "Tray cover not fixed", assigned_to: "s14", due_date: ahead(4), status: "Closed", photo: "", raised_by: "s32" }
+      { id: "f1", project_id: "p1", location: "Level 3 corridor", description: "Smoke detector base missing (3 nos)", discipline: "Fire", priority: "High", assigned_to: "s12", due_date: ahead(2), status: "Open", photo: "", raised_by: "s29", inspection_id: "i1",
+        evidence: EV("Detector base missing", 1), close_evidence: [] },
+      { id: "f2", project_id: "p3", location: "Banking hall", description: "Paint touch-up at column C4", discipline: "Architecture", priority: "Low", assigned_to: "s16", due_date: ahead(1), status: "Fixed", photo: "", raised_by: "s05",
+        evidence: EV("Paint damage column C4", 2), correction: "Sanded, primed and two coats applied to match.", close_evidence: EV("Column C4 repainted", 3), fixed_by: "s16", fixed_at: ts(0.5) },
+      { id: "f3", project_id: "p3", location: "ATM lobby", description: "Downlight flickering", discipline: "Electrical", priority: "Medium", assigned_to: "s17", due_date: ago(1), status: "Open", photo: "", raised_by: "s33",
+        evidence: EV("Downlight flickering ATM lobby", 0), close_evidence: [] },
+      { id: "f4", project_id: "p2", location: "Floor 4 riser", description: "Tray cover not fixed", discipline: "Electrical", priority: "Medium", assigned_to: "s14", due_date: ahead(4), status: "Closed", photo: "", raised_by: "s32",
+        evidence: EV("Tray cover missing", 3), correction: "Covers fixed with all screws.", close_evidence: EV("Tray covers fixed", 2), fixed_by: "s14", fixed_at: ts(3), closed_by: "s32", closed_at: ts(2), verify_note: "Checked on site, OK." }
     ];
 
     const safety = [

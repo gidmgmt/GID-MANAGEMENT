@@ -145,3 +145,12 @@ If your Supabase database was set up before version 12, do NOT run schema.sql ag
 Instead open Supabase → SQL Editor → New query, paste everything from `supabase/update-v12.sql`, and press Run.
 It adds the location, late-report and safety-form columns and keeps all data and Telegram links.
 Then open the demo, press **Reset demo** (keep Telegram links ticked) to load the new sample data.
+
+## Updating an existing database (version 13)
+
+Paste `supabase/update-v13.sql` into Supabase → SQL Editor and press Run. It adds the QA/QC photo, correction and PDF columns and keeps all data.
+(On the GID demo database this has already been done.)
+
+## Updating an existing database (version 14)
+
+Paste `supabase/update-v14.sql` into Supabase → SQL Editor and press Run (adds project scopes). Already done on the GID demo database.
