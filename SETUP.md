@@ -154,3 +154,12 @@ Paste `supabase/update-v13.sql` into Supabase → SQL Editor and press Run. It a
 ## Updating an existing database (version 14)
 
 Paste `supabase/update-v14.sql` into Supabase → SQL Editor and press Run (adds project scopes). Already done on the GID demo database.
+
+## Updating an existing database (version 15)
+
+Paste `supabase/update-v15.sql` into Supabase → SQL Editor and press Run (staff details and the Telegram welcome message). Already done on the GID demo database.
+
+## Updating an existing database (version 16)
+
+Paste `supabase/update-v16.sql` into Supabase → SQL Editor and press Run. It adds the Site Visit Reports table and keeps all data.
+Until it is run, the Site visits page opens empty and new site visits cannot be saved; everything else works.

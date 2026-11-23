@@ -1,0 +1,53 @@
+-- GID Management System - update for version 16: Site Visit Reports (SVR). Safe to run; keeps all data.
+create table if not exists public.site_visits (
+  id text primary key default gen_random_uuid()::text,
+  created_at timestamptz not null default now(),
+  svr_no text,
+  status text,
+  client text,
+  contact_name text,
+  contact_phone text,
+  contact_telegram text,
+  address text,
+  city text,
+  lat numeric,
+  lng numeric,
+  loc_acc numeric,
+  visit_date date,
+  time_from text,
+  time_to text,
+  visited_by text,
+  lead_source text,
+  work_type text,
+  requirements text,
+  budget_min numeric,
+  budget_max numeric,
+  timeline text,
+  scopes jsonb,
+  conditions jsonb,
+  constraints jsonb,
+  plot_size text,
+  floors text,
+  floor_height text,
+  floor_area text,
+  risks text,
+  opportunities text,
+  photos jsonb,
+  captions jsonb,
+  decision text,
+  est_value numeric,
+  proposed_team text,
+  actions jsonb,
+  quote_due date,
+  quote_value numeric,
+  lost_reason text,
+  project_id text,
+  author_id text,
+  approved_by text,
+  approved_at timestamptz
+);
+alter table public.site_visits enable row level security;
+drop policy if exists "demo open access" on public.site_visits;
+create policy "demo open access" on public.site_visits for all to anon, authenticated using (true) with check (true);
+grant select, insert, update, delete on public.site_visits to anon, authenticated;
+notify pgrst, 'reload schema';

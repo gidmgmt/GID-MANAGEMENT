@@ -6,7 +6,8 @@
 
   // ---------- Tables (column: type). Every table also has id (text) and created_at. ----------
   const TABLES = {
-    staff: { name: "text", title: "text", groups: "text", tags: "text", phone: "text", email: "text", telegram_chat_id: "text" },
+    staff: { name: "text", title: "text", groups: "text", tags: "text", phone: "text", email: "text", telegram_chat_id: "text",
+      short_name: "text", telegram_user: "text", start_date: "date", desk: "text", photo: "text", left_on: "date" },
     projects: { code: "text", name: "text", client: "text", location: "text", pm_id: "text", status: "text",
       start_date: "date", end_date: "date", contract_value: "numeric", budget: "numeric", progress: "numeric", lat: "numeric", lng: "numeric", scopes: "jsonb" },
     project_members: { project_id: "text", staff_id: "text", role: "text" },
@@ -42,6 +43,13 @@
       project_id: "text", ref: "text", by_id: "text", note: "text" },
     monthly_costs: { project_id: "text", month: "text", spent: "numeric", billed: "numeric" },
     app_settings: { key: "text", value: "jsonb", updated_by: "text", updated_at: "timestamptz" },
+    // Site Visit Reports (SVR): visits to a possible new job. Not part of a project until the job is won.
+    site_visits: { svr_no: "text", status: "text", client: "text", contact_name: "text", contact_phone: "text", contact_telegram: "text", address: "text", city: "text",
+      lat: "numeric", lng: "numeric", loc_acc: "numeric", visit_date: "date", time_from: "text", time_to: "text", visited_by: "text", lead_source: "text", work_type: "text",
+      requirements: "text", budget_min: "numeric", budget_max: "numeric", timeline: "text", scopes: "jsonb", conditions: "jsonb", constraints: "jsonb",
+      plot_size: "text", floors: "text", floor_height: "text", floor_area: "text", risks: "text", opportunities: "text", photos: "jsonb", captions: "jsonb",
+      decision: "text", est_value: "numeric", proposed_team: "text", actions: "jsonb", quote_due: "date", quote_value: "numeric", lost_reason: "text",
+      project_id: "text", author_id: "text", approved_by: "text", approved_at: "timestamptz" },
     notifications: { to_id: "text", actor_id: "text", title: "text", body: "text", tbl: "text", record_id: "text", read: "boolean", at: "timestamptz" }
   };
 
@@ -63,6 +71,7 @@
     finance:     { EXEC: "approve", PM: "none", SITE: "none", DESIGN: "none", ENG: "none", QS: "view", FIN: "admin", ADMIN: "admin" },
     qaqc:        { EXEC: "view", PM: "approve", SITE: "edit", DESIGN: "view", ENG: "admin", QS: "view", FIN: "none", ADMIN: "none" },
     safety:      { EXEC: "view", PM: "approve", SITE: "edit", DESIGN: "none", ENG: "view", QS: "none", FIN: "none", ADMIN: "view" },
+    svr:         { EXEC: "approve", PM: "approve", SITE: "edit", DESIGN: "edit", ENG: "edit", QS: "edit", FIN: "none", ADMIN: "view" },
     dashboard:   { EXEC: "admin", PM: "view", SITE: "none", DESIGN: "none", ENG: "none", QS: "admin", FIN: "view", ADMIN: "view" },
     stock:       { EXEC: "view", PM: "approve", SITE: "edit", DESIGN: "none", ENG: "view", QS: "view", FIN: "view", ADMIN: "admin" }
   };
@@ -77,7 +86,10 @@
   const ts = (n) => new Date(Date.now() - n * day).toISOString();
 
   function seed() {
-    const S = (id, name, title, groups, tags) => ({ id, name, title, groups, tags: tags || "", phone: "", email: "" });
+    // demo phone numbers only (012 555 xxx); HR replaces them with the real numbers
+    const DESK = { EXEC: "the Managing Director's office", PM: "the Project Management area at the head office", SITE: "the site office", DESIGN: "the Design studio at the head office", ENG: "the Engineering area at the head office", QS: "the QS area at the head office", FIN: "the Finance room at the head office", ADMIN: "the Admin desk at the head office" };
+    const S = (id, name, title, groups, tags) => ({ id, name, title, groups, tags: tags || "", phone: "012 555 " + String(100 + Number(id.slice(1))).padStart(3, "0"), email: "",
+      desk: DESK[String(groups).split(",")[0]] || "", start_date: "2024-0" + (1 + Number(id.slice(1)) % 9) + "-01" });
     const staff = [
       S("s01", "Phan Vibol", "Managing Director", "EXEC", "MD"),
       S("s02", "Suos Piseth", "Project Manager", "PM"),
@@ -393,12 +405,51 @@
       { id: "sf3", project_id: "p3", rec_type: "Inspection", rec_date: ago(6), description: "Weekly PPE and housekeeping check", severity: "Low", reported_by: "s10", status: "Closed", action: "", area: "Whole site", evidence: [{ type: "image", name: "ppe-check.jpg", url: photo("Weekly PPE check", 3) }] }
     ];
 
+    const SP = (label, v) => photo(label, v);
+    const site_visits = [
+      { id: "v1", svr_no: "SVR-2026-0001", status: "Lead", client: "Mr. Lim Chhay (owner)", contact_name: "Lim Chhay", contact_phone: "012 888 456", contact_telegram: "@limchhay",
+        address: "St. 271, Sangkat Tuol Tumpung, Phnom Penh", city: "Phnom Penh", lat: 11.54412, lng: 104.91388, loc_acc: 12, visit_date: ago(0), time_from: "09:40", time_to: "11:05",
+        visited_by: "s03,s33,s28", lead_source: "Referral from past client", work_type: "Renovation", requirements: "Café on ground floor (40 seats, kitchen), offices on levels 2-3, new façade, rooftop terrace later.",
+        budget_min: 120000, budget_max: 150000, timeline: "Start Jan 2027, open by May 2027", scopes: ["Structure", "Architecture", "Electrical", "Plumbing", "HVAC", "ELV"],
+        conditions: [{ scope: "Structure", cond: "Fair", note: "Hair-line crack L2 slab near stair; columns OK" }, { scope: "Architecture", cond: "Poor", note: "Old tiles, water stains on L3 ceiling, no fire exit" },
+          { scope: "Electrical", cond: "Poor", note: "Main DB unsafe, no earthing, cables undersized" }, { scope: "Plumbing", cond: "Fair", note: "Rear drain blocked; no grease trap for café" },
+          { scope: "HVAC", cond: "Poor", note: "Split units over 15 years old, to be replaced" }, { scope: "ELV", cond: "None", note: "Nothing existing; client wants CCTV, Wi-Fi, access door" }],
+        constraints: ["truck", "parking", "neighbours", "power", "water", "hours"], plot_size: "4.2 m x 18 m", floors: "3 + roof", floor_height: "3.6 m (GF 4.2 m)", floor_area: "about 230 m2",
+        risks: "Slab crack may need strengthening; single-phase power may not be enough for café kitchen and AC.", opportunities: "Owner plans 2 more shophouses on the same street.",
+        photos: [SP("Front of the shophouse", 0), SP("Ground floor, existing", 1), SP("Main DB, old wiring", 2), SP("Rear yard and drain", 3), SP("Level 2 slab, crack", 1), SP("Water meter", 2)],
+        captions: ["Front of the shophouse", "Ground floor, existing", "Main DB, old wiring", "Rear yard and blocked drain", "Level 2 slab, hair-line crack", "Water meter and incoming pipe"],
+        decision: "Go", est_value: 135000, proposed_team: "PM Kum Sophea · QS Hang Sokpanha · Design Seng Amatak · Site Se Sothavan",
+        actions: [{ action: "Structural check of L2 slab crack", who: "s28", by: ahead(3), done: false }, { action: "Ask EDC about 3-phase supply", who: "s03", by: ahead(4), done: false },
+          { action: "Concept layout café + office", who: "s20", by: ahead(5), done: false }, { action: "Quotation to client", who: "s33", by: ahead(7), done: false }],
+        quote_due: ahead(7), author_id: "s03" },
+      { id: "v2", svr_no: "SVR-2026-0002", status: "Quoted", client: "Sunrise Clinic Co., Ltd.", contact_name: "Dr. Chea Sopheap", contact_phone: "017 222 310", contact_telegram: "",
+        address: "Street 2004, Sen Sok, Phnom Penh", city: "Phnom Penh", lat: 11.58121, lng: 104.87310, loc_acc: 15, visit_date: ago(12), time_from: "14:00", time_to: "15:30",
+        visited_by: "s04,s31", lead_source: "Facebook page", work_type: "Fit-out", requirements: "Two-floor clinic fit-out: 6 rooms, X-ray room with lead lining, medical gas later.",
+        budget_min: 80000, budget_max: 100000, timeline: "Start Feb 2027", scopes: ["Architecture", "Electrical", "Plumbing", "MVAC", "ELV"],
+        conditions: [{ scope: "Architecture", cond: "Good", note: "New bare shell" }, { scope: "Electrical", cond: "Fair", note: "3-phase supply ready, no distribution" }, { scope: "Plumbing", cond: "Fair", note: "Risers ready" }],
+        constraints: ["truck", "power", "water"], plot_size: "10 m x 20 m", floors: "2", floor_height: "3.8 m", floor_area: "about 400 m2", risks: "X-ray room needs a licensed shielding design.",
+        opportunities: "Group plans a second clinic in Siem Reap.", photos: [SP("Clinic bare shell", 1), SP("Rear access", 3)], captions: ["Bare shell, level 1", "Rear access for deliveries"],
+        decision: "Go", est_value: 92000, proposed_team: "PM Khy Sokhim · QS Sovath Sopharith", actions: [{ action: "Quotation to client", who: "s31", by: ago(4), done: true }],
+        quote_due: ago(4), quote_value: 94500, author_id: "s04" },
+      { id: "v3", svr_no: "SVR-2026-0003", status: "Won", client: "Demo Client E", contact_name: "Mr. Heng", contact_phone: "012 400 900", address: "National Road 4, Kambol", city: "Phnom Penh",
+        lat: 11.5182, lng: 104.7731, loc_acc: 20, visit_date: ago(70), time_from: "10:00", time_to: "11:00", visited_by: "s04,s29", lead_source: "Past client", work_type: "MEP upgrade",
+        requirements: "CCTV, access control and data network for the warehouse.", budget_min: 25000, budget_max: 35000, timeline: "Start in one month", scopes: ["ELV"],
+        conditions: [{ scope: "ELV", cond: "Poor", note: "Old analogue cameras, no network" }], constraints: ["truck", "crane", "power"], plot_size: "60 m x 90 m", floors: "1", floor_height: "9 m", floor_area: "5,400 m2",
+        risks: "Work at height inside a working warehouse.", opportunities: "", photos: [SP("Warehouse inside", 0)], captions: ["Warehouse inside"], decision: "Go", est_value: 30000,
+        proposed_team: "PM Khy Sokhim", actions: [], quote_due: ago(60), quote_value: 31000, project_id: "p5", author_id: "s04", approved_by: "s01", approved_at: ts(65) },
+      { id: "v4", svr_no: "SVR-2026-0004", status: "Lost", client: "Golden Mart", contact_name: "Ms. Srey Leak", contact_phone: "010 555 777", address: "Kampot town centre", city: "Kampot",
+        lat: 10.6104, lng: 104.1815, visit_date: ago(30), time_from: "09:00", time_to: "10:00", visited_by: "s05", lead_source: "Tender invitation", work_type: "New construction",
+        requirements: "Single-storey mini-mart, 600 m2.", budget_min: 150000, budget_max: 180000, timeline: "Start Dec 2026", scopes: ["Structure", "Architecture", "Electrical", "Plumbing"], conditions: [],
+        constraints: ["truck", "crane"], photos: [SP("Empty plot Kampot", 3)], captions: ["Empty plot"], decision: "Go", est_value: 165000, quote_due: ago(20), quote_value: 171000,
+        lost_reason: "Client chose a cheaper local builder.", author_id: "s05", actions: [] }
+    ];
+
     const audit_log = [
       { id: "a1", at: ts(4), actor_id: "s33", action: "Permission change", tbl: "staff", record_id: "s32", summary: "Added QA/QC tag to Roeurn Rada" }
     ];
 
     const all = { staff, projects, project_members, tasks, daily_reports, requests, suppliers, purchase_orders, documents,
-      cost_lines, claims, invoices, inspections, defects, safety, audit_log, stores, stock_items, stock_moves, monthly_costs, app_settings: [], notifications: [] };
+      cost_lines, claims, invoices, inspections, defects, safety, site_visits, audit_log, stores, stock_items, stock_moves, monthly_costs, app_settings: [], notifications: [] };
     // A few starting notifications so the bell is not empty in the demo
     let nn = 0;
     const N = (to_id, actor_id, hrs, title, body, tbl, record_id, read) => all.notifications.push({ id: "n" + (++nn), to_id, actor_id, title, body, tbl, record_id, read: !!read, at: new Date(Date.now() - hrs * 3600000).toISOString() });

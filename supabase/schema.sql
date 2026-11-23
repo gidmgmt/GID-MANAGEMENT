@@ -6,6 +6,7 @@
 -- Use fake data only. The live Phase 1 system will use real staff logins and strict per-role rules.
 
 drop table if exists public.notifications cascade;
+drop table if exists public.site_visits cascade;
 drop table if exists public.app_settings cascade;
 drop table if exists public.monthly_costs cascade;
 drop table if exists public.stock_moves cascade;
@@ -37,7 +38,13 @@ create table public.staff (
   tags text,
   phone text,
   email text,
-  telegram_chat_id text
+  telegram_chat_id text,
+  short_name text,
+  telegram_user text,
+  start_date date,
+  desk text,
+  photo text,
+  left_on date
 );
 
 create table public.projects (
@@ -344,6 +351,54 @@ create table public.app_settings (
   updated_at timestamptz
 );
 
+create table public.site_visits (
+  id text primary key default gen_random_uuid()::text,
+  created_at timestamptz not null default now(),
+  svr_no text,
+  status text,
+  client text,
+  contact_name text,
+  contact_phone text,
+  contact_telegram text,
+  address text,
+  city text,
+  lat numeric,
+  lng numeric,
+  loc_acc numeric,
+  visit_date date,
+  time_from text,
+  time_to text,
+  visited_by text,
+  lead_source text,
+  work_type text,
+  requirements text,
+  budget_min numeric,
+  budget_max numeric,
+  timeline text,
+  scopes jsonb,
+  conditions jsonb,
+  constraints jsonb,
+  plot_size text,
+  floors text,
+  floor_height text,
+  floor_area text,
+  risks text,
+  opportunities text,
+  photos jsonb,
+  captions jsonb,
+  decision text,
+  est_value numeric,
+  proposed_team text,
+  actions jsonb,
+  quote_due date,
+  quote_value numeric,
+  lost_reason text,
+  project_id text,
+  author_id text,
+  approved_by text,
+  approved_at timestamptz
+);
+
 create table public.notifications (
   id text primary key default gen_random_uuid()::text,
   created_at timestamptz not null default now(),
@@ -413,6 +468,8 @@ alter table public.monthly_costs enable row level security;
 create policy "demo open access" on public.monthly_costs for all to anon, authenticated using (true) with check (true);
 alter table public.app_settings enable row level security;
 create policy "demo open access" on public.app_settings for all to anon, authenticated using (true) with check (true);
+alter table public.site_visits enable row level security;
+create policy "demo open access" on public.site_visits for all to anon, authenticated using (true) with check (true);
 alter table public.notifications enable row level security;
 create policy "demo open access" on public.notifications for all to anon, authenticated using (true) with check (true);
 
@@ -454,12 +511,19 @@ begin
   if coalesce(btrim(chat), '') = '' then return new; end if;
   select value into app from private.settings where key = 'app_url';
   select name into actor from public.staff where id = new.actor_id;
+  if new.tbl = 'welcome' then
+    -- welcome message for a new staff member: sent exactly as HR wrote it
+    msg := '🎉 <b>' || tg_esc(new.title) || E'</b>
+
+' || tg_esc(coalesce(new.body, ''));
+  else
   msg := '🔔 <b>' || tg_esc(new.title) || '</b>'
       || case when coalesce(new.body, '') <> '' then E'
 ' || tg_esc(new.body) else '' end
       || E'
 <i>' || tg_esc(coalesce(actor, 'GID system')) || ' · '
       || to_char(coalesce(new.at, now()) at time zone 'Asia/Phnom_Penh', 'DD Mon YYYY HH24:MI') || '</i>';
+  end if;
   body := jsonb_build_object('chat_id', btrim(chat), 'text', msg, 'parse_mode', 'HTML', 'disable_web_page_preview', true);
   if coalesce(btrim(app), '') like 'https://%' and new.tbl is not null and new.record_id is not null then
     body := body || jsonb_build_object('reply_markup', jsonb_build_object('inline_keyboard', jsonb_build_array(jsonb_build_array(

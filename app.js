@@ -16,6 +16,7 @@
   const money = (n) => (n == null || n === "" ? "" : "$" + Number(n).toLocaleString("en-US", { maximumFractionDigits: 0 }));
   const fmtDate = (d) => { if (!d) return ""; const x = new Date(String(d).length === 10 ? d + "T00:00:00" : d); return isNaN(x) ? esc(d) : x.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "2-digit" }); };
   const daysSince = (d) => (Date.now() - new Date(d).getTime()) / 86400000;
+  const daysUntil = (d) => -daysSince(d);
   const sum = (arr, f) => arr.reduce((a, x) => a + (Number(f(x)) || 0), 0);
   const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
   const split = (s) => String(s || "").split(",").map((x) => x.trim()).filter(Boolean);
@@ -47,7 +48,7 @@
   // Staff photos come from the 2026 org chart (img/staff/s01.jpg ... s40.jpg). New staff without a photo show initials.
   const hasPhoto = (s) => s && /^s(0[1-9]|[1-3][0-9]|40)$/.test(s.id);
   const initialsOf = (s) => String((s && s.name) || "?").split(" ").map((x) => x[0]).join("").slice(0, 2);
-  function avatar(s, cls) { cls = cls || "av"; return hasPhoto(s) ? `<img class="${cls} pic" src="img/staff/${s.id}.jpg" alt="" loading="lazy">` : `<span class="${cls}">${esc(initialsOf(s))}</span>`; }
+  function avatar(s, cls) { cls = cls || "av"; const src = s && s.photo ? s.photo : hasPhoto(s) ? `img/staff/${s.id}.jpg?v=16` : ""; return src ? `<img class="${cls} pic" src="${esc(src)}" alt="" loading="lazy">` : `<span class="${cls}">${esc(initialsOf(s))}</span>`; }
 
   // ================= data store =================
   const db = {};
@@ -81,6 +82,8 @@
       const names = Object.keys(TABLES);
       const res = await Promise.all(names.map((t) => this.client.from(t).select("*").limit(5000)));
       res.forEach(({ data, error }, i) => {
+        // a table added in a newer version (for example site_visits) may not exist yet: start it empty instead of stopping the app
+        if (error && names[i] === "site_visits") { console.warn("site_visits table missing: run supabase/update-v16.sql"); db[names[i]] = []; this.missing = (this.missing || []).concat(names[i]); return; }
         if (error) throw new Error("Could not read table '" + names[i] + "': " + error.message + ". Did you run schema.sql in Supabase?");
         db[names[i]] = data || [];
       });
@@ -147,8 +150,10 @@
   const timeOf = (iso) => { try { return new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Phnom_Penh" }); } catch (e) { return String(iso || "").slice(11, 16); } };
   const dateInPP = (iso) => { try { return new Date(iso).toLocaleDateString("en-CA", { timeZone: "Asia/Phnom_Penh" }); } catch (e) { return String(iso || "").slice(0, 10); } };
   const supplierName = (id) => (byId("suppliers", id) || {}).name || "";
-  const withTag = (tag) => db.staff.filter((s) => split(s.tags).includes(tag));
-  const inGroup = (g) => db.staff.filter((s) => split(s.groups).includes(g));
+  // Staff who have left (removed by HR) stay in the records' history but are hidden from lists, pickers and alerts
+  const staffNow = () => db.staff.filter((s) => !s.left_on);
+  const withTag = (tag) => staffNow().filter((s) => split(s.tags).includes(tag));
+  const inGroup = (g) => staffNow().filter((s) => split(s.groups).includes(g));
   const MD = () => (withTag("MD")[0] || {}).id;
   // The Project Director role was merged into Project Manager: every PM now has the former PD functions
   const PD = () => MD();
@@ -513,9 +518,9 @@
   // Every save is logged. The people concerned by it get one notification per action (several saves from one tap are merged).
   const NOTE_MODULE = { requests: "requests", purchase_orders: "procurement", suppliers: "procurement", stock_moves: "stock", stock_items: "stock", stores: "stock", daily_reports: "daily",
     documents: "docs", tasks: "projects", projects: "projects", project_members: "projects", claims: "cost", cost_lines: "cost", monthly_costs: "cost", invoices: "finance",
-    defects: "qaqc", inspections: "qaqc", safety: "safety", staff: "people", app_settings: "admin" };
+    defects: "qaqc", inspections: "qaqc", safety: "safety", site_visits: "svr", staff: "people", app_settings: "admin" };
   const NOTE_ICON = { requests: "requests", purchase_orders: "procurement", suppliers: "procurement", stock_moves: "stock", stock_items: "stock", stores: "stock", daily_reports: "daily", documents: "docs",
-    tasks: "projects", projects: "projects", project_members: "people", claims: "cost", cost_lines: "cost", monthly_costs: "cost", invoices: "finance", defects: "qaqc", inspections: "qaqc", safety: "safety", staff: "people", app_settings: "admin" };
+    tasks: "projects", projects: "projects", project_members: "people", claims: "cost", cost_lines: "cost", monthly_costs: "cost", invoices: "finance", defects: "qaqc", inspections: "qaqc", safety: "safety", site_visits: "svr", staff: "people", app_settings: "admin" };
   const PREF_LABEL = { mine: "Only things for me", projects: "Everything on my projects", all: "Everything in the company" };
   function notifyPref(u) {
     const s = (db.app_settings || []).find((x) => x.key === "notify:" + u.id);
@@ -558,6 +563,7 @@
       case "projects": return [r.pm_id].concat(grp("PM"), ids("MD"));
       case "cost_lines": case "monthly_costs": return [pm(pid)].concat(grp("QS"));
       case "staff": return [r.id].concat(ids("MD"), ids("SYSADMIN"));
+      case "site_visits": return ids("MD").concat(inGroup("PM").map((s) => s.id), split(r.visited_by), (r.actions || []).map((a) => a.who), [r.author_id]);
       case "app_settings": return ids("MD").concat(ids("SYSADMIN"), ids("BACKUPADMIN"));
       default: return [];
     }
@@ -565,7 +571,7 @@
   function recipientsFor(tbl, r, actor) {
     const out = new Set(directRecipients(tbl, r).filter(Boolean));
     const pid = recordProject(tbl, r), mod = NOTE_MODULE[tbl];
-    for (const s of db.staff) {
+    for (const s of staffNow()) {
       if (out.has(s.id)) continue;
       const pref = notifyPref(s);
       if (pref === "mine" || !mod || !navVisible(s, mod)) continue;
@@ -660,7 +666,8 @@
   function openRecord(tbl, id) {
     const r = byId(tbl, id);
     const map = { requests: openRequest, purchase_orders: openPO, daily_reports: openDaily, documents: openDoc, tasks: openTask, claims: openClaim, invoices: openInvoice, defects: openDefect, safety: openSafety,
-      inspections: openInspection, projects: openProject, staff: openPerson, stock_items: openItem };
+      inspections: openInspection, projects: openProject, staff: openPerson, stock_items: openItem, site_visits: openSvr };
+    if (tbl === "welcome") { const st = byId("staff", id); if (st) return openPerson(st); }
     if (tbl === "stock_moves" && r) return openItem(byId("stock_items", r.item_id));
     if (tbl === "project_members" && r) return openProject(byId("projects", r.project_id));
     if (tbl === "invoices" && r) return openInvoice(r);
@@ -955,7 +962,7 @@
     });
   }
 
-  const staffOptions = (list) => (list || db.staff).map((s) => [s.id, s.name + " · " + s.title]);
+  const staffOptions = (list) => (list || staffNow()).map((s) => [s.id, s.name + " · " + s.title]);
   const projectOptions = (u) => myProjects(u).map((p) => [p.id, p.code + " " + p.name]);
 
   function detail(title, rows, actionsHtml, extraHtml) {
@@ -969,10 +976,10 @@
   const SCREENS = {};
   const NAV = [
     ["dashboard", "Dashboard", "dashboard"], ["home", "My work", null], ["requests", "Requests", "requests"], ["projects", "Projects", "projects"],
-    ["daily", "Daily report", "daily"], ["docs", "Documents", "docs"], ["cost", "Cost & Claims", "cost"], ["procurement", "Procurement", "procurement"],
+    ["daily", "Daily report", "daily"], ["svr", "Site visits", "svr"], ["docs", "Documents", "docs"], ["cost", "Cost & Claims", "cost"], ["procurement", "Procurement", "procurement"],
     ["stock", "Stock", "stock"], ["finance", "Finance", "finance"], ["qaqc", "QA/QC", "qaqc"], ["safety", "Safety", "safety"], ["people", "People", "people"], ["admin", "Settings", "admin"]
   ];
-  const navVisible = (u, mod) => mod === null || (mod === "admin" ? isAdminPage(u) : can(u, mod, "view") || level(u, mod) === "own");
+  const navVisible = (u, mod) => mod === null || (mod === "admin" ? isAdminPage(u) : mod === "svr" ? svrAccess(u) : can(u, mod, "view") || level(u, mod) === "own");
 
   // ---------- HOME ----------
   SCREENS.home = (u) => {
@@ -989,6 +996,7 @@
     db.claims.filter((c) => claimActionsFor(u, c).length).forEach((c) => todo.push({ kind: "IPC claim", text: `${projLabel(c.project_id)} IPC ${c.ipc_no}`, sub: c.status + " · " + money(c.claimed), go: () => openClaim(c) }));
     if (can(u, "finance", "admin")) db.invoices.filter((i) => i.status === "Unpaid" && i.direction === "Payable").forEach((i) => todo.push({ kind: "Pay", text: `${i.inv_no} ${i.party}`, sub: money(i.amount) + " · due " + fmtDate(i.due_date), go: () => openInvoice(i) }));
     db.tasks.filter((t) => t.assignee_id === u.id && t.status !== "Done").forEach((t) => todo.push({ kind: "Task", text: t.title, sub: projLabel(t.project_id) + " · due " + fmtDate(t.due_date), go: () => openTask(t) }));
+    if (svrAccess(u)) db.site_visits.filter((v) => ["Lead", "Quoted"].includes(v.status)).forEach((v) => (v.actions || []).filter((a) => a.who === u.id && !a.done).forEach((a) => todo.push({ kind: "Site visit", text: a.action, sub: v.svr_no + " · " + v.client + (a.by ? " · by " + fmtDate(a.by) : ""), go: () => openSvr(v) })));
     db.defects.filter((f) => f.assigned_to === u.id && f.status === "Open").forEach((f) => todo.push({ kind: "Defect", text: f.description, sub: projLabel(f.project_id) + " · " + f.location, go: () => openDefect(f) }));
 
     const quick = [];
@@ -2178,21 +2186,317 @@
         { label: "Project", get: (s) => esc(projLabel(s.project_id)) }, { label: "Severity", get: (s) => badge(s.severity) }, { label: "Status", get: (s) => badge(s.status) }], rows, openSafety)}`;
   };
 
+  // ================= SITE VISIT REPORTS (SVR) =================
+  // A visit to a possible new job (new client, renovation or new construction). Not part of a project.
+  // When the job is won, one tap turns the SVR into a new project and the SVR stays linked as its first site report.
+  // Everyone can use it except the Finance and Procurement teams.
+  const SVR_STATUS = ["Lead", "Quoted", "Won", "Lost"];
+  const SVR_WORK = ["New construction", "Renovation", "Fit-out", "MEP upgrade", "Assessment only"];
+  const SVR_COND = ["Good", "Fair", "Poor", "None"];
+  const SVR_CONSTRAINTS = [["truck", "Truck access"], ["crane", "Crane possible"], ["parking", "Parking nearby"], ["neighbours", "Neighbours close: noise/dust control"],
+    ["power", "EDC power available"], ["power3", "3-phase power"], ["water", "City water"], ["sewer", "Sewer connection"], ["hours", "Work hours limited by Sangkat"]];
+  const SVR_DECISION = [["Go", "Go: prepare quotation"], ["More info", "Need more information"], ["No", "Not for GID"]];
+  const svrAccess = (u) => isSysAdmin(u) || (can(u, "svr", "view") && !hasTag(u, "PROC") && groupsOf(u)[0] !== "FIN");
+  const svrCanEdit = (u, v) => svrAccess(u) && can(u, "svr", "edit") && (!v || v.author_id === u.id || split(v.visited_by).includes(u.id) || can(u, "svr", "approve"));
+  const svrVisitors = (v) => split(v.visited_by).map((id) => byId("staff", id)).filter(Boolean);
+  function nextSvrNo() {
+    const y = today().slice(0, 4), re = new RegExp("^SVR-" + y + "-(\\d+)$");
+    const n = Math.max(0, ...db.site_visits.map((v) => { const m = String(v.svr_no || "").match(re); return m ? Number(m[1]) : 0; }));
+    return "SVR-" + y + "-" + String(n + 1).padStart(4, "0");
+  }
+  const svrValue = (v) => v.quote_value || v.est_value || 0;
+  function newSvr(u, v) {
+    const isNew = !v; v = v || {};
+    const f = {
+      client: v.client || "", contact_name: v.contact_name || "", contact_phone: v.contact_phone || "", contact_telegram: v.contact_telegram || "", address: v.address || "", city: v.city || "Phnom Penh",
+      visit_date: v.visit_date || today(), time_from: v.time_from || nowHM(), time_to: v.time_to || "", visited_by: split(v.visited_by || u.id), lead_source: v.lead_source || "", work_type: v.work_type || "Renovation",
+      requirements: v.requirements || "", budget_min: v.budget_min || "", budget_max: v.budget_max || "", timeline: v.timeline || "", scopes: (v.scopes || []).slice(),
+      conditions: (v.conditions || []).map((x) => Object.assign({}, x)), constraints: (v.constraints || []).slice(), plot_size: v.plot_size || "", floors: v.floors || "", floor_height: v.floor_height || "", floor_area: v.floor_area || "",
+      risks: v.risks || "", opportunities: v.opportunities || "", photos: (v.photos || []).slice(), captions: (v.captions || []).slice(), decision: v.decision || "Go", est_value: v.est_value || "", proposed_team: v.proposed_team || "",
+      actions: (v.actions && v.actions.length ? v.actions : [{ action: "Quotation to client", who: "", by: "" }]).map((x) => Object.assign({}, x)), quote_due: v.quote_due || ""
+    };
+    const inp = (k, label, opt) => { opt = opt || {}; return `<label class="field${opt.cls ? " " + opt.cls : ""}"><span>${label}${opt.req ? " *" : ""}</span><input data-k="${k}" ${opt.type ? `type="${opt.type}"` : ""} ${opt.ph ? `placeholder="${esc(opt.ph)}"` : ""} ${opt.mode ? `inputmode="${opt.mode}"` : ""} value="${esc(f[k])}"></label>`; };
+    const area = (k, label, ph) => `<label class="field"><span>${label}</span><textarea data-k="${k}" rows="3" ${ph ? `placeholder="${esc(ph)}"` : ""}>${esc(f[k])}</textarea></label>`;
+    const sel = (k, label, opts) => `<label class="field"><span>${label}</span><select data-k="${k}">${opts.map((o) => { const [val, t] = Array.isArray(o) ? o : [o, o]; return `<option value="${esc(val)}" ${f[k] === val ? "selected" : ""}>${esc(t)}</option>`; }).join("")}</select></label>`;
+    const people = staffNow().filter((s) => svrAccess(s)).sort(orgSort);
+    const condRows = () => f.scopes.length ? `<table class="scopet edit svrcond"><thead><tr><th>Scope</th><th>Condition</th><th>Notes</th></tr></thead><tbody>${f.scopes.map((k) => { const c = f.conditions.find((x) => x.scope === k) || { scope: k, cond: "", note: "" };
+        return `<tr data-scope="${esc(k)}"><td><b>${esc(k)}</b></td><td><select class="c-cond"><option value="">–</option>${SVR_COND.map((o) => `<option ${c.cond === o ? "selected" : ""}>${o}</option>`).join("")}</select></td><td><input class="c-note" value="${esc(c.note || "")}" placeholder="What did you see?"></td></tr>`; }).join("")}</tbody></table>` : '<p class="muted small">Choose the scope above first.</p>';
+    const actRows = () => f.actions.map((a, i) => `<div class="svract" data-i="${i}"><input class="a-act" placeholder="Action" value="${esc(a.action || "")}"><select class="a-who"><option value="">Who</option>${people.map((s) => `<option value="${s.id}" ${a.who === s.id ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select><input class="a-by" type="date" value="${esc(a.by || "")}"><button type="button" class="rm" data-arm="${i}" aria-label="Remove action">×</button></div>`).join("");
+    const photosHtml = () => `<div class="capgrid">${f.photos.map((p, i) => `<div class="cap"><span class="ph"><img src="${p}" alt="Photo ${i + 1}"><button type="button" class="rm" data-prm="${i}" aria-label="Remove photo">×</button></span><input data-cap="${i}" placeholder="Caption for photo ${i + 1}" value="${esc(f.captions[i] || "")}"></div>`).join("")}</div>`;
+    const sec = (n, t) => `<h4 class="svrh"><i>${n}</i>${t}</h4>`;
+    const html = `<form id="svform" novalidate>
+      <p class="muted small">${isNew ? "Report number is given when you save: " + esc(nextSvrNo()) : esc(v.svr_no)} · Option B: Site Visit &amp; Survey Report</p>
+      ${sec(1, "Visit details")}<div class="grid2f">${inp("client", "Client / prospect", { req: 1, ph: "Company or owner name" })}${inp("contact_name", "Contact person")}${inp("contact_phone", "Contact phone", { req: 1, mode: "tel", ph: "012 345 678" })}${inp("contact_telegram", "Telegram", { ph: "@username" })}</div>
+      ${inp("address", "Site address", { req: 1, ph: "Street, Sangkat, Khan, city" })}<div class="grid2f">${inp("city", "City / province")}${sel("work_type", "Type of work", SVR_WORK)}</div>
+      ${locationField({ lat: v.lat, lng: v.lng })}
+      <div class="grid3f">${inp("visit_date", "Visit date", { type: "date", req: 1 })}${inp("time_from", "From", { type: "time" })}${inp("time_to", "To", { type: "time" })}</div>
+      <fieldset class="pickset"><legend>Visited by *</legend><div class="pickgrid">${people.map((s) => `<label class="pick"><input type="checkbox" name="vby" value="${s.id}" ${f.visited_by.includes(s.id) ? "checked" : ""}>${avatar(s)}<span><b>${esc(s.name)}</b><small>${esc(s.title)}</small></span></label>`).join("")}</div></fieldset>
+      ${inp("lead_source", "Lead source", { ph: "Referral, Facebook, tender, past client…" })}
+      ${sec(2, "Client requirements")}${area("requirements", "What the client wants *", "Use of the building, size, special needs")}
+      <div class="grid3f">${inp("budget_min", "Budget from (USD)", { type: "number", mode: "numeric" })}${inp("budget_max", "Budget to (USD)", { type: "number", mode: "numeric" })}${inp("timeline", "Wanted timeline", { ph: "Start / finish" })}</div>
+      ${scopePicker(f.scopes)}
+      ${sec(3, "Existing condition by scope")}<div id="sv-cond">${condRows()}</div>
+      ${sec(4, "Site constraints")}<div class="pickgrid svrcons">${SVR_CONSTRAINTS.map(([k, t]) => `<label class="pick"><input type="checkbox" name="cons" value="${k}" ${f.constraints.includes(k) ? "checked" : ""}><span><b>${t}</b></span></label>`).join("")}</div>
+      ${sec(5, "Rough measurements")}<div class="grid2f">${inp("plot_size", "Plot", { ph: "4.2 m x 18 m" })}${inp("floors", "Floors", { ph: "3 + roof" })}${inp("floor_height", "Floor-to-floor height", { ph: "3.6 m" })}${inp("floor_area", "Total floor area", { ph: "about 230 m2" })}</div>
+      ${sec(6, "Risks and opportunities")}${area("risks", "Risks")}${area("opportunities", "Opportunities")}
+      ${sec(7, "Photo log *")}<div class="field"><label class="btn"><input type="file" accept="image/*" capture="environment" id="sv-cam" hidden>${svgI("camera")} Take photo</label> <label class="btn"><input type="file" accept="image/*" multiple id="sv-ph" hidden>Choose photos</label><div id="sv-photos">${photosHtml()}</div><small class="help">At least one photo. Write a short caption under each; captions go into the PDF.</small></div>
+      ${sec(8, "Recommendation")}${sel("decision", "Go / no-go", SVR_DECISION)}<div class="grid2f">${inp("est_value", "Estimated value (USD)", { type: "number", mode: "numeric" })}${inp("quote_due", "Quotation due", { type: "date" })}</div>${inp("proposed_team", "Proposed team if awarded", { ph: "PM, QS, design, site" })}
+      ${sec(9, "Follow-up actions")}<div id="sv-acts">${actRows()}</div><button type="button" class="btn small" id="sv-addact">+ Add action</button>
+      <div class="form-actions"><button type="button" class="btn" data-act="${act(modalBack)}">Cancel</button><button type="submit" class="btn primary">${isNew ? "Save site visit" : "Save changes"}</button></div></form>`;
+    openModal(isNew ? "New site visit" : "Edit · " + v.svr_no, html, (m) => {
+      const form = m.querySelector("#svform");
+      wireLocation(m); wireScopePicker(m);
+      const readCond = () => m.querySelectorAll(".svrcond tr[data-scope]").forEach((tr) => { const k = tr.dataset.scope; let c = f.conditions.find((x) => x.scope === k); if (!c) { c = { scope: k }; f.conditions.push(c); } c.cond = tr.querySelector(".c-cond").value; c.note = tr.querySelector(".c-note").value; });
+      const readActs = () => m.querySelectorAll(".svract").forEach((d) => { const a = f.actions[d.dataset.i]; a.action = d.querySelector(".a-act").value; a.who = d.querySelector(".a-who").value; a.by = d.querySelector(".a-by").value; });
+      const paintCond = () => { readCond(); f.scopes = pickedScopes(form); m.querySelector("#sv-cond").innerHTML = condRows(); translateNow(m.querySelector("#sv-cond")); };
+      const paintActs = () => { m.querySelector("#sv-acts").innerHTML = actRows(); m.querySelectorAll("[data-arm]").forEach((b) => b.onclick = () => { readActs(); f.actions.splice(Number(b.dataset.arm), 1); paintActs(); }); translateNow(m.querySelector("#sv-acts")); };
+      const paintPh = () => { m.querySelector("#sv-photos").innerHTML = photosHtml();
+        m.querySelectorAll("[data-prm]").forEach((b) => b.onclick = () => { const i = Number(b.dataset.prm); f.photos.splice(i, 1); f.captions.splice(i, 1); paintPh(); });
+        m.querySelectorAll("[data-cap]").forEach((x) => x.oninput = () => { f.captions[Number(x.dataset.cap)] = x.value; }); translateNow(m.querySelector("#sv-photos")); };
+      const addPh = async (e) => { for (const file of e.target.files) { try { f.photos.push(await compressImage(file)); f.captions.push(""); } catch (x) { toast("Could not read a photo", true); } } e.target.value = ""; paintPh(); };
+      m.querySelector("#sv-cam").onchange = addPh; m.querySelector("#sv-ph").onchange = addPh; paintPh(); paintActs();
+      form.addEventListener("input", (e) => { const k = e.target.dataset && e.target.dataset.k; if (k) f[k] = e.target.value; });
+      form.addEventListener("change", (e) => { const k = e.target.dataset && e.target.dataset.k; if (k) f[k] = e.target.value; if (e.target.name === "scope" || e.target.classList.contains("sc-full")) paintCond(); });
+      m.querySelector("#sv-addact").onclick = () => { readActs(); f.actions.push({ action: "", who: "", by: "" }); paintActs(); };
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault(); readCond(); readActs();
+        f.scopes = pickedScopes(form); f.visited_by = [...form.querySelectorAll('input[name="vby"]:checked')].map((x) => x.value); f.constraints = [...form.querySelectorAll('input[name="cons"]:checked')].map((x) => x.value);
+        const miss = [!f.client.trim() && "client", !f.contact_phone.trim() && "contact phone", !f.address.trim() && "site address", !f.visit_date && "visit date", !f.visited_by.length && "who visited", !f.requirements.trim() && "what the client wants", !f.scopes.length && "scope", !f.photos.length && "at least one photo"].filter(Boolean);
+        if (miss.length) { toast("Please fill in: " + miss.join(", ") + ".", true); return; }
+        const ll = parseLatLng(form.querySelector("#site_loc").value);
+        const b = form.querySelector("button[type=submit]"); b.disabled = true; b.textContent = "Saving…";
+        try {
+          const photos = await storeFiles(f.photos, "svr");
+          const row = Object.assign({}, f, { visited_by: f.visited_by.join(","), photos, captions: f.photos.map((_, i) => (f.captions[i] || "").trim()), conditions: f.conditions.filter((c) => f.scopes.includes(c.scope) && (c.cond || c.note)),
+            actions: f.actions.filter((a) => (a.action || "").trim()).map((a) => Object.assign({ done: false }, a)), budget_min: Number(f.budget_min) || null, budget_max: Number(f.budget_max) || null, est_value: Number(f.est_value) || null,
+            quote_due: f.quote_due || null, lat: ll ? ll.lat : null, lng: ll ? ll.lng : null });
+          if (isNew) { row.svr_no = nextSvrNo(); row.status = "Lead"; row.author_id = u.id; await save("site_visits", row, (r) => r.svr_no + " site visit: " + r.client); toast(row.svr_no + " saved"); }
+          else { await patch("site_visits", v.id, row, v.svr_no + " updated"); toast(v.svr_no + " updated"); }
+          closeModal(); render();
+        } catch (err) { b.disabled = false; b.textContent = "Save"; toast(err.message || String(err), true); }
+      });
+    });
+  }
+  function svrSetStatus(v, status) {
+    const u = me();
+    if (status === "Quoted") return formModal("Quotation sent · " + v.svr_no, [{ name: "quote_value", label: "Quotation value (USD)", type: "number", required: true, value: v.quote_value || v.est_value || "" }],
+      async (x) => { await patch("site_visits", v.id, { status: "Quoted", quote_value: Number(x.quote_value) || null }, v.svr_no + " quotation sent: " + money(x.quote_value)); }, "Save");
+    if (status === "Lost") return formModal("Lost · " + v.svr_no, [{ name: "lost_reason", label: "Why did we lose it?", type: "textarea", required: true }],
+      async (x) => { await patch("site_visits", v.id, { status: "Lost", lost_reason: x.lost_reason }, v.svr_no + " lost: " + x.lost_reason); }, "Save");
+    if (status === "Lead") return patch("site_visits", v.id, { status: "Lead" }, v.svr_no + " back to lead").then(() => { closeModal(); render(); });
+    if (status === "Won") {
+      const pms = inGroup("PM");
+      return formModal("Won · make project from " + v.svr_no, [
+        { name: "code", label: "Project code", required: true, value: "DEMO-1" + String(db.projects.length + 1).padStart(2, "0") },
+        { name: "name", label: "Project name", required: true, value: (v.work_type || "Project") + " · " + String(v.client).replace(/\s*\(.*\)$/, "") },
+        { name: "pm_id", label: "Project Manager", type: "select", options: staffOptions(pms), required: true },
+        { name: "start_date", label: "Start", type: "date" }, { name: "end_date", label: "Finish", type: "date" },
+        { name: "contract_value", label: "Contract value (USD)", type: "number", value: v.quote_value || v.est_value || "" }
+      ], async (x) => {
+        if (!hasSitePin(v)) throw new Error("This site visit has no GPS pin. Edit the SVR and set the site location first.");
+        const p = await save("projects", Object.assign(x, { client: v.client, location: v.city || "", lat: v.lat, lng: v.lng, status: "Active", progress: 0, budget: null, scopes: defaultShares(v.scopes && v.scopes.length ? v.scopes : ["Architecture"]) }), "New project " + x.code + " from " + v.svr_no);
+        await patch("site_visits", v.id, { status: "Won", project_id: p.id }, v.svr_no + " won: project " + x.code);
+        toast(x.code + " created from " + v.svr_no);
+      }, "Create project");
+    }
+  }
+  function openSvr(v) {
+    const u = me(), acts = [];
+    if (svrCanEdit(u, v) && v.status !== "Won") acts.push(btn("Edit", () => newSvr(u, v)));
+    if (can(u, "svr", "edit")) {
+      if (v.status === "Lead") acts.push(btn("Quotation sent", () => svrSetStatus(v, "Quoted")));
+      if (["Lead", "Quoted"].includes(v.status)) { acts.push(btn("Lost", () => svrSetStatus(v, "Lost"), "danger")); if (canManageProject(u)) acts.push(btn("Won: make project", () => svrSetStatus(v, "Won"), "primary")); }
+      if (v.status === "Lost") acts.push(btn("Reopen", () => svrSetStatus(v, "Lead")));
+    }
+    if (hasTag(u, "MD") && !v.approved_by) acts.push(btn("Approve report", async () => { await patch("site_visits", v.id, { approved_by: u.id, approved_at: nowIso() }, v.svr_no + " approved by " + u.name); closeModal(); render(); }, "primary"));
+    acts.push(btn("PDF English", () => svrPdf(v, "en")) + btn("PDF ខ្មែរ", () => svrPdf(v, "km")));
+    const p = v.project_id ? byId("projects", v.project_id) : null;
+    const cons = (v.constraints || []).map((k) => (SVR_CONSTRAINTS.find((c) => c[0] === k) || [k, k])[1]);
+    const condT = (v.conditions || []).length ? `<table class="scopet"><thead><tr><th>Scope</th><th>Condition</th><th>Notes</th></tr></thead><tbody>${v.conditions.map((c) => `<tr><td><b>${esc(c.scope)}</b></td><td>${c.cond ? badge(c.cond) : ""}</td><td>${esc(c.note || "")}</td></tr>`).join("")}</tbody></table>` : '<p class="muted small">Not recorded.</p>';
+    const actT = (v.actions || []).length ? `<ul class="hist svracts">${v.actions.map((a, i) => `<li><label class="check"><input type="checkbox" data-done="${i}" ${a.done ? "checked" : ""} ${can(u, "svr", "edit") ? "" : "disabled"}> <span><b>${esc(a.action)}</b> <small>${esc(staffName(a.who))}${a.by ? " · by " + esc(fmtDate(a.by)) : ""}</small></span></label></li>`).join("")}</ul>` : '<p class="muted small">None.</p>';
+    detail(v.svr_no + " · " + v.client, [["Status", badge(v.status) + (p ? ` → <a href="#" data-act="${act(() => openProject(p))}">${esc(p.code)}</a>` : "") + (v.approved_by ? ` <span class="tag ok">Approved by ${esc(staffName(v.approved_by))}</span>` : "")],
+      ["Contact", esc([v.contact_name, v.contact_phone, v.contact_telegram].filter(Boolean).join(" · "))], ["Site", esc(v.address) + (hasSitePin(v) ? ` · <a href="https://maps.google.com/?q=${v.lat},${v.lng}" target="_blank" rel="noopener">open map</a>` : "")],
+      ["Visit", fmtDate(v.visit_date) + " · " + esc([v.time_from, v.time_to].filter(Boolean).join("–"))], ["Visited by", esc(svrVisitors(v).map((s) => s.name).join(", "))], ["Type of work", esc(v.work_type)], ["Lead source", esc(v.lead_source)],
+      ["Client wants", esc(v.requirements)], ["Budget", v.budget_min || v.budget_max ? esc(money(v.budget_min || 0) + " – " + money(v.budget_max || 0)) : ""], ["Timeline", esc(v.timeline)], ["Scope", esc((v.scopes || []).join(", "))],
+      ["Site constraints", esc(cons.join(", "))], ["Measurements", esc([v.plot_size && "Plot " + v.plot_size, v.floors && v.floors + " floors", v.floor_height && "height " + v.floor_height, v.floor_area].filter(Boolean).join(" · "))],
+      ["Risks", esc(v.risks)], ["Opportunities", esc(v.opportunities)], ["Recommendation", esc((SVR_DECISION.find((d) => d[0] === v.decision) || ["", v.decision || ""])[1]) + (v.est_value ? " · est. " + money(v.est_value) : "")],
+      v.quote_value ? ["Quotation", money(v.quote_value) + (v.quote_due ? " · due " + fmtDate(v.quote_due) : "")] : v.quote_due ? ["Quotation due", fmtDate(v.quote_due)] : null, v.lost_reason ? ["Lost because", esc(v.lost_reason)] : null, ["Proposed team", esc(v.proposed_team)]],
+      acts.join(""), `<h4>Existing condition by scope</h4>${condT}<h4>Follow-up actions</h4>${actT}<h4>Photo log</h4>${gallery(v.photos || [], "", v.captions || [])}`);
+    const md = $("#modal"); if (md) { md.querySelector(".modal").classList.add("wide");
+      md.querySelectorAll("[data-done]").forEach((cb) => cb.onchange = async () => { const list = (v.actions || []).map((a) => Object.assign({}, a)); list[cb.dataset.done].done = cb.checked; await patch("site_visits", v.id, { actions: list }, v.svr_no + ": " + list[cb.dataset.done].action + (cb.checked ? " done" : " reopened")); }); }
+  }
+  SCREENS.svr = (u) => {
+    if (!svrAccess(u)) return `<h1>Site visits</h1>${empty("You do not have access to site visit reports.")}`;
+    const all = db.site_visits.slice().sort((a, b) => String(b.visit_date).localeCompare(String(a.visit_date)) || String(b.svr_no).localeCompare(String(a.svr_no)));
+    const T = tabs("svr", [["open", "Open leads"], ["all", "All"], ["Won", "Won"], ["Lost", "Lost"]]);
+    const rows = all.filter((v) => T.cur === "all" ? true : T.cur === "open" ? ["Lead", "Quoted"].includes(v.status) : v.status === T.cur).filter((v) => matchSearch(v, ["svr_no", "client", "address", "contact_name"]));
+    const y = today().slice(0, 4), done = all.filter((v) => ["Won", "Lost"].includes(v.status) && String(v.visit_date).startsWith(y));
+    const due = all.filter((v) => v.status === "Lead" && v.quote_due && daysUntil(v.quote_due) <= 7);
+    return `<h1>Site visits</h1><p class="muted">Site Visit Reports (SVR) for possible new jobs. When a job is won, make it a project in one tap.</p>
+      <div class="tiles"><div class="tile"><small>Open leads</small><b>${all.filter((v) => v.status === "Lead").length}</b></div><div class="tile ${due.length ? "warn" : ""}"><small>Quotations due in 7 days</small><b>${due.length}</b></div>
+      <div class="tile"><small>Quoted, waiting</small><b>${all.filter((v) => v.status === "Quoted").length}</b></div><div class="tile"><small>Won ${y} (win rate)</small><b>${done.filter((v) => v.status === "Won").length} <small>${done.length ? Math.round(done.filter((v) => v.status === "Won").length * 100 / done.length) + "%" : ""}</small></b></div></div>
+      ${T.html}${toolbar(u, { project: false, buttons: can(u, "svr", "edit") ? btn("New site visit", () => newSvr(u), "primary") : "" })}
+      ${table([{ label: "No.", get: (v) => `<small>${esc(v.svr_no)}</small>` }, { label: "Client", get: (v) => `<b>${esc(v.client)}</b><br><small>${esc(v.address)}</small>` }, { label: "Visit", get: (v) => fmtDate(v.visit_date) },
+        { label: "Type", get: (v) => esc(v.work_type) }, { label: "Scope", get: (v) => `<small>${esc((v.scopes || []).join(", "))}</small>` }, { label: "Value", get: (v) => svrValue(v) ? money(svrValue(v)) : "" },
+        { label: "Status", get: (v) => badge(v.status) + (v.project_id ? ` <small>${esc(projLabel(v.project_id))}</small>` : "") }], rows, openSvr)}`;
+  };
+  function svrDashCard() {
+    const all = db.site_visits, open = all.filter((v) => ["Lead", "Quoted"].includes(v.status)), y = today().slice(0, 4);
+    const won = all.filter((v) => v.status === "Won" && String(v.visit_date).startsWith(y)), lost = all.filter((v) => v.status === "Lost" && String(v.visit_date).startsWith(y));
+    const recent = all.slice().sort((a, b) => String(b.visit_date).localeCompare(String(a.visit_date))).slice(0, 4);
+    return `<section class="card c4 svrcard"><div class="card-head"><h2>Site visits</h2><a class="link" href="#svr">View all</a></div>
+      <div class="svrstats"><div><b>${open.length}</b><small>Open leads</small></div><div><b>${money(open.reduce((a, v) => a + svrValue(v), 0))}</b><small>Pipeline value</small></div><div><b>${won.length}/${won.length + lost.length}</b><small>Won ${y}</small></div></div>
+      <ul class="hist">${recent.map((v) => `<li data-act="${act(() => openSvr(v))}" class="click"><b>${esc(v.svr_no)}</b> ${esc(v.client)} ${badge(v.status)}<small>${esc(fmtDate(v.visit_date))} · ${esc(v.work_type)}</small></li>`).join("") || "<li>No site visits yet.</li>"}</ul></section>`;
+  }
+  // ---------- SVR PDF (Option B: Site Visit & Survey Report) ----------
+  const SVT = {
+    en: { title: "Site Visit & Survey Report", form: "Form GID-SVR-B", details: "Visit details", client: "Client / prospect", contact: "Contact", address: "Site address", gps: "GPS pin", visit: "Visit date / time", by: "Visited by",
+      source: "Lead source", work: "Type of work", req: "Client requirements", wants: "What the client wants", budget: "Budget range", timeline: "Wanted timeline", scope: "Scope asked", cond: "Existing condition by scope",
+      cScope: "Scope", cCond: "Condition", cNote: "Notes", cons: "Site constraints", meas: "Rough measurements", plot: "Plot", floors: "Floors", height: "Floor-to-floor", area: "Total floor area", risks: "Risks and opportunities",
+      risk: "Risks", opp: "Opportunity", photos: "Photo log", rec: "Recommendation", go: "Go / no-go", est: "Estimated value", team: "Proposed team if awarded", acts: "Follow-up actions", aAct: "Action", aWho: "Who", aBy: "By", aSt: "Status",
+      open: "Open", done: "Done", conv: "When the job is awarded: the system turns this SVR into a new project (client, site pin, scope and photos copied), and the SVR stays linked as the first site report.",
+      convDone: (c) => "Awarded: this SVR became project " + c + ".", sign: "Sign-off", sVisit: "Visited by", sQs: "QS / estimator", sAppr: "Approved by", sClient: "Client (optional)", sig: "Signature / date", md: "Managing Director",
+      recorded: "recorded on site", none: "—", status: { Lead: "LEAD", Quoted: "QUOTED", Won: "WON", Lost: "LOST" }, due: "QUOTE DUE",
+      condMap: {}, workMap: {}, decMap: { Go: "Go: prepare quotation", "More info": "Need more information", No: "Not for GID" }, consMap: Object.fromEntries(SVR_CONSTRAINTS),
+      generated: "GID Management System · generated", page: (a, b) => "Page " + a + " of " + b, cont: "continued", lost: "Lost because" },
+    km: { title: "របាយការណ៍ចុះពិនិត្យ និងស្ទង់ទីតាំង", form: "ទម្រង់ GID-SVR-B", details: "ព័ត៌មានការចុះពិនិត្យ", client: "អតិថិជន", contact: "ទំនាក់ទំនង", address: "អាសយដ្ឋានទីតាំង", gps: "ចំណុច GPS", visit: "កាលបរិច្ឆេទ / ម៉ោង", by: "ចុះពិនិត្យដោយ",
+      source: "ប្រភពអតិថិជន", work: "ប្រភេទការងារ", req: "តម្រូវការអតិថិជន", wants: "អ្វីដែលអតិថិជនចង់បាន", budget: "ថវិកាប្រហាក់ប្រហែល", timeline: "ពេលវេលាដែលចង់បាន", scope: "វិសាលភាពដែលស្នើ", cond: "ស្ថានភាពបច្ចុប្បន្នតាមផ្នែក",
+      cScope: "ផ្នែក", cCond: "ស្ថានភាព", cNote: "កំណត់ចំណាំ", cons: "លក្ខខណ្ឌទីតាំង", meas: "ការវាស់វែងប្រហាក់ប្រហែល", plot: "ដី", floors: "ជាន់", height: "កម្ពស់ជាន់", area: "ផ្ទៃក្រឡាសរុប", risks: "ហានិភ័យ និងឱកាស",
+      risk: "ហានិភ័យ", opp: "ឱកាស", photos: "រូបថត", rec: "អនុសាសន៍", go: "សម្រេចចិត្ត", est: "តម្លៃប៉ាន់ស្មាន", team: "ក្រុមដែលស្នើ បើទទួលបានការងារ", acts: "សកម្មភាពបន្ត", aAct: "សកម្មភាព", aWho: "អ្នកទទួលខុសត្រូវ", aBy: "ត្រឹម", aSt: "ស្ថានភាព",
+      open: "មិនទាន់", done: "រួចរាល់", conv: "ពេលទទួលបានការងារ៖ ប្រព័ន្ធបង្កើតគម្រោងថ្មីពី SVR នេះ (អតិថិជន ទីតាំង វិសាលភាព និងរូបថត) ហើយ SVR ក្លាយជារបាយការណ៍ទីតាំងដំបូងរបស់គម្រោង។",
+      convDone: (c) => "ទទួលបានការងារ៖ SVR នេះបានក្លាយជាគម្រោង " + c + "។", sign: "ហត្ថលេខា", sVisit: "ចុះពិនិត្យដោយ", sQs: "QS / អ្នកប៉ាន់ស្មាន", sAppr: "អនុម័តដោយ", sClient: "អតិថិជន (មិនចាំបាច់)", sig: "ហត្ថលេខា / កាលបរិច្ឆេទ", md: "នាយកគ្រប់គ្រង",
+      recorded: "កត់ត្រានៅទីតាំង", none: "—", status: { Lead: "អតិថិជនសក្តានុពល", Quoted: "បានផ្ញើតារាងតម្លៃ", Won: "ទទួលបានការងារ", Lost: "មិនបានការងារ" }, due: "ផុតកំណត់តារាងតម្លៃ",
+      condMap: { Good: "ល្អ", Fair: "មធ្យម", Poor: "ខ្សោយ", None: "គ្មាន" }, workMap: { "New construction": "សាងសង់ថ្មី", Renovation: "ជួសជុលកែលម្អ", "Fit-out": "តុបតែងខាងក្នុង", "MEP upgrade": "កែលម្អប្រព័ន្ធ MEP", "Assessment only": "វាយតម្លៃតែប៉ុណ្ណោះ" },
+      decMap: { Go: "យល់ព្រម៖ រៀបចំតារាងតម្លៃ", "More info": "ត្រូវការព័ត៌មានបន្ថែម", No: "មិនសមស្របសម្រាប់ GID" },
+      consMap: { truck: "ឡានធំចូលបាន", crane: "អាចប្រើស្ទូច", parking: "មានចំណតក្បែរ", neighbours: "ផ្ទះជិតខាង៖ គ្រប់គ្រងសំឡេង/ធូលី", power: "មានភ្លើង EDC", power3: "ភ្លើង 3 ហ្វាស", water: "ទឹករដ្ឋ", sewer: "ភ្ជាប់លូក្រុង", hours: "ម៉ោងការងារកំណត់ដោយសង្កាត់" },
+      generated: "បង្កើតដោយប្រព័ន្ធគ្រប់គ្រង GID ·", page: (a, b) => "ទំព័រ " + a + "/" + b, cont: "បន្ត", lost: "មូលហេតុមិនបាន" }
+  };
+  async function svrPdf(v, lang) {
+    const L = SVT[lang], T = (m, x) => esc((m && m[x]) || x || ""), vis = svrVisitors(v), qs = vis.find((s) => groupsOf(s).includes("QS")), md = withTag("MD")[0] || {};
+    const tick = (on, t) => `<span class="sf-chk"><i class="${on ? "on" : ""}">${on ? "✓" : ""}</i>${t}</span>`;
+    const proj = v.project_id ? byId("projects", v.project_id) : null;
+    const blocks = [
+      `<h2><i>1</i>${L.details}</h2><table class="sf-t"><tr><th>${L.client}</th><td>${esc(v.client)}</td><th>${L.contact}</th><td>${esc([v.contact_name, v.contact_phone, v.contact_telegram].filter(Boolean).join(" · "))}</td></tr>
+        <tr><th>${L.address}</th><td>${esc(v.address)}</td><th>${L.gps}</th><td>${hasSitePin(v) ? esc(Number(v.lat).toFixed(5) + ", " + Number(v.lng).toFixed(5)) + " · " + L.recorded : L.none}</td></tr>
+        <tr><th>${L.visit}</th><td>${esc(rDate(v.visit_date, lang))} · ${esc([v.time_from, v.time_to].filter(Boolean).join("–"))}</td><th>${L.by}</th><td>${esc(vis.map((s) => s.name).join(", "))}</td></tr>
+        <tr><th>${L.source}</th><td>${esc(v.lead_source || L.none)}</td><th>${L.work}</th><td>${T(L.workMap, v.work_type)}</td></tr></table>`,
+      `<h2><i>2</i>${L.req}</h2><table class="sf-t"><tr><th>${L.wants}</th><td colspan="3">${esc(v.requirements || "")}</td></tr>
+        <tr><th>${L.budget}</th><td>${v.budget_min || v.budget_max ? esc(money(v.budget_min || 0) + " – " + money(v.budget_max || 0)) : L.none}</td><th>${L.timeline}</th><td>${esc(v.timeline || L.none)}</td></tr>
+        <tr><th>${L.scope}</th><td colspan="3">${SCOPES.map((k) => tick((v.scopes || []).includes(k), lang === "km" ? esc(I18N.t(k) || k) : k)).join("")}</td></tr></table>`,
+      `<h2><i>3</i>${L.cond}</h2><table class="sf-t"><tr><th>${L.cScope}</th><th>${L.cCond}</th><th style="width:auto">${L.cNote}</th></tr>${(v.conditions || []).map((c) => `<tr><td><b>${lang === "km" ? esc(I18N.t(c.scope) || c.scope) : esc(c.scope)}</b></td><td><span class="svc ${esc(String(c.cond).toLowerCase())}">${T(L.condMap, c.cond)}</span></td><td>${esc(c.note || "")}</td></tr>`).join("") || `<tr><td colspan="3">${L.none}</td></tr>`}</table>`,
+      `<h2><i>4</i>${L.cons}</h2><div class="sf-box">${SVR_CONSTRAINTS.map(([k]) => tick((v.constraints || []).includes(k), esc(L.consMap[k]))).join("")}</div>`,
+      `<h2><i>5</i>${L.meas}</h2><table class="sf-t"><tr><th>${L.plot}</th><td>${esc(v.plot_size || L.none)}</td><th>${L.floors}</th><td>${esc(v.floors || L.none)}</td></tr><tr><th>${L.height}</th><td>${esc(v.floor_height || L.none)}</td><th>${L.area}</th><td>${esc(v.floor_area || L.none)}</td></tr></table>`,
+      `<h2><i>6</i>${L.risks}</h2><div class="sf-box"><b>${L.risk}:</b> ${esc(v.risks || L.none)}<br><b>${L.opp}:</b> ${esc(v.opportunities || L.none)}</div>`,
+      `<h2><i>7</i>${L.rec}</h2><table class="sf-t"><tr><th>${L.go}</th><td>${SVR_DECISION.map(([k]) => tick(v.decision === k, esc(L.decMap[k]))).join("")}</td></tr><tr><th>${L.est}</th><td>${v.est_value ? esc(money(v.est_value)) : L.none}${v.quote_value ? " · " + esc(money(v.quote_value)) : ""}</td></tr>
+        <tr><th>${L.team}</th><td>${esc(v.proposed_team || L.none)}</td></tr>${v.lost_reason ? `<tr><th>${L.lost}</th><td>${esc(v.lost_reason)}</td></tr>` : ""}</table>`,
+      `<h2><i>8</i>${L.acts}</h2><table class="sf-t"><tr><th style="width:auto">${L.aAct}</th><th>${L.aWho}</th><th>${L.aBy}</th><th>${L.aSt}</th></tr>${(v.actions || []).map((a) => `<tr><td>${esc(a.action)}</td><td>${esc(staffName(a.who))}</td><td>${esc(a.by ? rDate(a.by, lang) : "")}</td><td>${a.done ? L.done : L.open}</td></tr>`).join("") || `<tr><td colspan="4">${L.none}</td></tr>`}</table>
+        <div class="svconv">${proj ? L.convDone(esc(proj.code + " " + proj.name)) : L.conv}</div>`,
+      `<h2><i>9</i>${L.sign}</h2><div class="sf-sign"><div><small>${L.sVisit}</small><b>${esc((byId("staff", v.author_id) || vis[0] || {}).name || "")}</b><em>${L.sig}</em></div><div><small>${L.sQs}</small><b>${esc(qs ? qs.name : "")}</b><em>${L.sig}</em></div>
+        <div><small>${L.sAppr}</small><b>${esc(v.approved_by ? staffName(v.approved_by) : md.name || "")}</b><em>${v.approved_at ? esc(fmtDate(v.approved_at)) : L.md}</em></div><div><small>${L.sClient}</small><b>${esc(v.contact_name || "")}</b><em>${L.sig}</em></div></div>`];
+    if (!document.getElementById("sf-css")) { const st = document.createElement("style"); st.id = "sf-css"; st.textContent = SF_CSS; document.head.appendChild(st); }
+    if (!document.getElementById("svr-css")) { const st = document.createElement("style"); st.id = "svr-css"; st.textContent = ".svc{font-weight:700;padding:1px 7px;border-radius:4px;font-size:11px}.svc.good{background:#e3f4e8;color:#1a7f42}.svc.fair{background:#fff4d6;color:#8a5a00}.svc.poor{background:#fdeceb;color:#c0362c}.svc.none{background:#eef1ef;color:#5b6b61}.svconv{border:1.5px dashed #2e8540;border-radius:8px;padding:7px 10px;margin-top:8px;background:#f4f8f2;font-size:12px}"; document.head.appendChild(st); }
+    const stamp = (L.status[v.status] || v.status) + (v.status === "Lead" && v.quote_due ? " · " + L.due + " " + esc(fmtDate(v.quote_due)) : "");
+    await makePdf({ lang, no: v.svr_no, fileName: v.svr_no + "-" + (lang === "km" ? "KH" : "EN") + ".pdf",
+      head: `<div class="rp-top">${pdfLogo()}<div class="rp-title"><h1 class="sf-h1">${L.title}</h1><small>${esc(v.svr_no)} · ${L.form}</small><span class="rp-sess ${v.status === "Lost" ? "sf-open" : ""}">${stamp}</span></div></div>`,
+      mini: (t) => `<div class="rp-mini"><span><b>${t}</b> · ${esc(v.svr_no)} · ${esc(v.client)}</span><span>${L.form}</span></div>`,
+      contTitle: L.title + " (" + L.cont + ")", photoTitle: L.photos, blocks,
+      photos: (v.photos || []).map((src, i) => ({ src, cap: (i + 1) + " · " + ((v.captions || [])[i] || "") })),
+      footLeft: L.generated + " " + esc(pdfGenerated()), pageLabel: L.page });
+  }
+
   // ---------- PEOPLE ----------
   const leaveTaken = (id) => sum(db.requests.filter((r) => r.requester_id === id && r.type === "Leave" && r.status === "Approved"), (r) => r.leave_days);
+  // ---------- staff: add, edit, remove (HR, MD and the system administrator) ----------
+  const COMPANY = "Green In Design (GID)";
+  const canManageStaff = (u) => hasTag(u, "HR") || hasTag(u, "MD") || isSysAdmin(u);
+  const DEPT_NAME = { EXEC: "Executive", PM: "Project Management", SITE: "Site", DESIGN: "Architecture & Design", ENG: "Engineering & Technical", QS: "Quantity Surveying", FIN: "Finance", ADMIN: "Administration" };
+  const DEPT_DESK = { EXEC: "the Managing Director's office", PM: "the Project Management area at the head office", SITE: "the site office", DESIGN: "the Design studio at the head office",
+    ENG: "the Engineering area at the head office", QS: "the QS area at the head office", FIN: "the Finance room at the head office", ADMIN: "the Admin desk at the head office" };
+  // Khmer names put the family name first, so people are usually called by the last part of the name
+  const calledName = (name) => { const w = String(name || "").trim().split(/\s+/); return w[w.length - 1] || ""; };
+  function welcomeText(v, by) {
+    const nm = v.name, called = v.short_name || calledName(nm), dept = DEPT_NAME[v.dept] || v.dept;
+    const contact = [v.phone, v.telegram_user ? "Telegram " + (String(v.telegram_user).startsWith("@") ? v.telegram_user : "@" + v.telegram_user) : ""].filter(Boolean).join(" / ") || "the office";
+    return { title: "Welcome " + nm + " to " + COMPANY + "!",
+      body: "Hi team,\nI'm excited to share that " + nm + " is joining " + COMPANY + " as our new " + v.title + " in the " + dept + " team starting " + (v.start_date ? fmtLong(v.start_date) : "today") + ".\n"
+        + "Please join me in giving " + called + " a warm welcome! You can reach them at " + contact + " or stop by " + (v.desk || DEPT_DESK[v.dept] || "the office") + " to say hello.\n\nBest,\n" + by.name + "\n" + by.title };
+  }
+  const fmtLong = (d) => { try { return new Date(String(d).slice(0, 10) + "T00:00:00").toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" }); } catch (e) { return d; } };
+  function staffForm(s) {
+    const u = me(), isNew = !s; s = s || {};
+    const g = groupsOf(s), dept = g[0] || "SITE", also = g.slice(1), admin = isSysAdmin(u) || hasTag(u, "MD");
+    const fields = [
+      { name: "name", label: "Full name", required: true, value: s.name || "", help: "Family name first, as on the ID card. Example: Sok Dara" },
+      { name: "short_name", label: "Called (short name)", value: s.short_name || "", help: "How the team calls this person. Empty = the last part of the name." },
+      { name: "title", label: "Job title", required: true, value: s.title || "", help: "Example: Site Engineer" },
+      { name: "dept", label: "Department", type: "select", required: true, options: Object.keys(DEPT_NAME).map((k) => [k, DEPT_NAME[k]]), value: dept },
+      { name: "phone", label: "Phone number", required: true, value: s.phone || "", help: "Example: 012 345 678" },
+      { name: "telegram_user", label: "Telegram username", value: s.telegram_user || "", help: "Example: @sokdara (optional)" },
+      { name: "email", label: "Email", value: s.email || "" },
+      { name: "start_date", label: "Start date", type: "date", value: s.start_date || today() },
+      { name: "desk", label: "Desk / work location", value: s.desk || DEPT_DESK[dept], help: "Where the team can find this person" },
+      { name: "photo", label: "Profile photo", type: "evidence", value: s.photo ? JSON.stringify([{ type: "image", name: "photo.jpg", url: s.photo }]) : "", help: "Optional. Take a photo or choose one." }
+    ];
+    if (admin) fields.push({ name: "tags", label: "Special roles (system admin)", value: s.tags || "", help: "MD, HEAD, SITEMGR, QAQC, DOC, HR, PROC, FINMGR, SYSADMIN, BACKUPADMIN" });
+    const alsoHtml = `<fieldset class="pickset"><legend>Also works in (optional)</legend><div class="pickgrid alsogrid">${Object.keys(DEPT_NAME).map((k) => `<label class="pick"><input type="checkbox" name="also" value="${k}" ${also.includes(k) ? "checked" : ""}><span><b>${DEPT_NAME[k]}</b></span></label>`).join("")}</div></fieldset>`;
+    const welcomeHtml = isNew ? `<label class="check wl-on"><input type="checkbox" id="wl-send" checked> <span>Send the welcome message to the whole team (in the app and on Telegram)</span></label><div class="wl-prev" id="wl-prev" aria-live="polite"></div>` : "";
+    formModal(isNew ? "Add staff" : "Edit · " + s.name, fields, async (v) => {
+      const f = document.getElementById("mform");
+      const extra = [...f.querySelectorAll('input[name="also"]:checked')].map((x) => x.value).filter((k) => k !== v.dept);
+      const ph = (v.photo || []).filter((x) => x.type !== "pdf");
+      const photo = ph.length ? (await storeEvidence(ph.slice(0, 1), "staff-photo"))[0].url : (s.photo || "");
+      const row = { name: v.name.trim(), short_name: v.short_name || "", title: v.title.trim(), groups: [v.dept].concat(extra).join(","), phone: v.phone, telegram_user: v.telegram_user || "", email: v.email || "",
+        start_date: v.start_date || null, desk: v.desk || "", photo };
+      if (admin) row.tags = v.tags || ""; else if (isNew) row.tags = "";
+      if (!isNew) { await patch("staff", s.id, row, "Staff details updated: " + row.name + " · " + row.title); return; }
+      if (db.staff.some((x) => !x.left_on && x.name.toLowerCase() === row.name.toLowerCase())) throw new Error(row.name + " is already in the staff list.");
+      const r = await Store.insert("staff", row);
+      try { await Store.insert("audit_log", { at: nowIso(), actor_id: u.id, action: "Created", tbl: "staff", record_id: r.id, summary: "New staff: " + row.name + " · " + row.title }); } catch (e) { /* ignore */ }
+      if (document.getElementById("wl-send") ? document.getElementById("wl-send").checked : true) {
+        const w = welcomeText(Object.assign({}, row, { dept: v.dept }), u); let n = 0; const at = nowIso();
+        for (const t of staffNow()) { try { await Store.insert("notifications", { to_id: t.id, actor_id: u.id, title: w.title, body: w.body, tbl: "welcome", record_id: r.id, read: t.id === u.id, at }); n++; } catch (e) { /* never block */ } }
+        toast("Added " + row.name + ". Welcome message sent to " + n + " people.");
+      } else toast("Added " + row.name + ".");
+    }, isNew ? "Add staff" : "Save", { extraHtml: alsoHtml + welcomeHtml, onReady: (m) => {
+      const f = m.querySelector("#mform"), dsel = f.querySelector('[name="dept"]'), desk = f.querySelector('[name="desk"]');
+      let deskTouched = !isNew && !!s.desk; desk.addEventListener("input", () => { deskTouched = true; });
+      const prev = () => {
+        const box = m.querySelector("#wl-prev"); if (!box) return;
+        const vals = Object.fromEntries(new FormData(f).entries());
+        const w = welcomeText({ name: vals.name || "[New Hire's Name]", short_name: vals.short_name, title: vals.title || "[Job Title]", dept: vals.dept, phone: vals.phone, telegram_user: vals.telegram_user, start_date: vals.start_date, desk: vals.desk }, me());
+        box.innerHTML = `<small class="muted">Preview of the message</small><b>${esc(w.title)}</b><p>${esc(w.body).replace(/\n/g, "<br>")}</p>`;
+      };
+      dsel.addEventListener("change", () => { if (!deskTouched) desk.value = DEPT_DESK[dsel.value] || ""; prev(); });
+      f.addEventListener("input", prev); prev();
+    } });
+  }
+  function removeStaff(s) {
+    formModal("Remove · " + s.name, [
+      { name: "left_on", label: "Last working day", type: "date", value: today(), required: true },
+      { name: "note", label: "Note (optional)", type: "textarea" }
+    ], async (v) => {
+      if (s.id === me().id) throw new Error("You cannot remove yourself.");
+      await patch("staff", s.id, { left_on: v.left_on, telegram_chat_id: "" }, "Staff removed: " + s.name + " (last day " + v.left_on + ")" + (v.note ? " · " + v.note : ""));
+      db.project_members.filter((m) => m.staff_id === s.id).forEach((m) => { Store.remove ? Store.remove("project_members", m.id).catch(() => {}) : 0; });
+      toast(s.name + " removed. Their past records stay in the history.");
+    }, "Remove staff");
+  }
+  async function restoreStaff(s) { await patch("staff", s.id, { left_on: null }, "Staff restored: " + s.name); closeModal(); render(); toast(s.name + " is back in the staff list."); }
+
   function openPerson(s) {
     const u = me(); const full = seesAll(u, "people") || s.id === u.id;
     const projects = db.projects.filter((p) => p.pm_id === s.id || db.project_members.some((m) => m.project_id === p.id && m.staff_id === s.id)).map((p) => p.code).join(", ");
     const lates = db.daily_reports.filter((d) => d.author_id === s.id && d.late);
-    detail(s.name, [["Title", esc(s.title)], ["Groups", esc(groupsOf(s).map((g) => GROUPS[g]).join(", "))], ["Projects", esc(projects)],
+    const tel = String(s.phone || "").replace(/[^\d+]/g, ""), tg = String(s.telegram_user || "").replace(/^@/, "");
+    detail(s.name, [["Title", esc(s.title)], ["Department", esc(groupsOf(s).map((g) => DEPT_NAME[g] || GROUPS[g]).join(", "))],
+      ["Phone", s.phone ? `<a href="tel:${esc(tel)}">${esc(s.phone)}</a>` : '<span class="muted">Not set</span>'],
+      tg ? ["Telegram", `<a href="https://t.me/${esc(tg)}" target="_blank" rel="noopener">@${esc(tg)}</a>`] : null, s.email ? ["Email", `<a href="mailto:${esc(s.email)}">${esc(s.email)}</a>`] : null,
+      s.start_date ? ["Start date", fmtDate(s.start_date)] : null, s.desk ? ["Desk / location", esc(s.desk)] : null, s.left_on ? ["Left on", '<span class="tag bad">' + esc(fmtDate(s.left_on)) + "</span>"] : null,
+      ["Projects", esc(projects)],
       groupsOf(s).includes("SITE") ? ["Late morning reports", lates.length ? `<b class="late">${lates.length}</b> <small>(${lates.filter((d) => String(d.report_date).slice(0, 7) === today().slice(0, 7)).length} this month)</small>` : "0"] : null,
       full ? ["Leave taken (approved days)", esc(leaveTaken(s.id))] : null, full ? ["System tags", esc(s.tags)] : null, full ? ["Telegram alerts", String(s.telegram_chat_id || "").trim() ? '<span class="tag ok">Linked</span>' : '<span class="muted">Not linked</span>'] : null],
-      can(u, "people", "admin") ? btn("Edit", () => formModal("Edit " + s.name, [
-        { name: "title", label: "Title", value: s.title, required: true },
-        { name: "groups", label: "User groups (comma separated)", value: s.groups, required: true, help: "Codes: " + Object.keys(GROUPS).join(", ") },
-        { name: "tags", label: "Special roles (comma separated)", value: s.tags, help: "MD, PD, HEAD, SITEMGR, QAQC, DOC, HR, PROC, FINMGR, SYSADMIN, BACKUPADMIN" },
-        { name: "telegram_chat_id", label: "Telegram ID (for alerts)", value: s.telegram_chat_id || "", help: "Each person can also link this themselves: bell > Settings > Telegram alerts." }
-      ], async (v) => { await patch("staff", s.id, v, "Permission change for " + s.name + ": groups " + v.groups + "; tags " + v.tags); }), "primary") : "");
+      canManageStaff(u) ? (s.left_on ? btn("Restore", () => restoreStaff(s), "primary") : btn("Remove", () => removeStaff(s), "danger") + btn("Edit", () => staffForm(s), "primary"))
+        : s.id === u.id ? btn("Edit my phone and Telegram", () => formModal("My contact details", [{ name: "phone", label: "Phone number", value: s.phone || "", required: true }, { name: "telegram_user", label: "Telegram username", value: s.telegram_user || "" }], async (v) => { await patch("staff", s.id, v, "Contact details updated: " + s.name); }), "primary") : "");
   }
   // ================= organization charts (same look as the GID company org chart) =================
   // Departments in the order of the company chart: Administration, Finance, Quantity Surveyor, Engineering & Technical, Architect, Project
@@ -2219,7 +2523,7 @@
       ${o.branches.length ? `<div class="oc-v"></div><div class="oc-br${o.grid ? " " + o.grid : ""}${o.branches.length <= 2 ? " few" : ""}"${o.grid ? "" : ` style="--occols:${o.branches.length}"`}>${o.branches.map((b, i, all) => `<section class="oc-d ${b.cls || ((i === 0 ? "rs " : "") + (i === all.length - 1 ? "re" : ""))}">${/trunk/.test(b.cls || "") ? '<i class="oc-trunk"></i>' : ""}<span class="oc-l">${esc(b.label)}</span>${b.rows.length ? b.rows.map((r) => `<div class="oc-r">${r.map((s) => ocNode(s)).join("")}</div>`).join("") : `<p class="muted small oc-none">${esc(b.empty || "Not assigned yet")}</p>`}</section>`).join("")}</div>` : ""}</div>`;
   }
   function companyOrg(filter) {
-    const list = db.staff.filter(filter || (() => true));
+    const list = staffNow().filter(filter || (() => true));
     const top = list.filter((s) => orgDeptOf(s) === "EXEC").sort(orgSort);
     // Same layout as the company chart: Administration and Finance; then QS, Engineering and Architect; then Project across the full width
     // Row 1: Administration, Finance, Quantity Surveyor, Engineering & Technical. Row 2: Architect and Project.
@@ -2232,7 +2536,7 @@
   // A project's own org chart: Managing Director, the Project Manager, then the teams assigned to the project
   function projectOrgData(p) {
     const md = withTag("MD")[0], pm = byId("staff", p.pm_id);
-    const mem = (g) => teamOf(p.id, g).map((m) => byId("staff", m.staff_id)).filter(Boolean).filter((s, i, a) => a.indexOf(s) === i && s.id !== p.pm_id);
+    const mem = (g) => teamOf(p.id, g).map((m) => byId("staff", m.staff_id)).filter((x) => x && !x.left_on).filter((s, i, a) => a.indexOf(s) === i && s.id !== p.pm_id);
     const site = mem("SITE").sort(orgSort);
     const branches = [
       { label: "Site team", rows: [site.filter((s) => orgTier(s) <= 1), site.filter((s) => orgTier(s) === 2), site.filter((s) => orgTier(s) >= 3)].filter((r) => r.length), empty: "No site team assigned yet" },
@@ -2247,7 +2551,7 @@
     const T = (t) => km ? (I18N.t(t) || t) : t;
     host.className = "oc-print" + (km ? " km" : "");
     host.innerHTML = `<div class="ocp-head">${pdfLogo()}<div class="ocp-title"><h1>${km ? "តារាងរចនាសម្ព័ន្ធគម្រោង" : "Project Organization Chart"}</h1><p><b>${esc(p.code)} · ${esc(p.name)}</b> · ${esc(p.client || "")} · ${esc(p.location || "")}</p></div></div>`
-      + orgChartHtml(data).replace(/data-act="[^"]*"/g, "") + `<div class="ocp-foot"><span>GID Management System · ${km ? "បង្កើតនៅ" : "generated"} ${esc(pdfGenerated())}</span><span>${esc(p.code)}</span></div>`;
+      + orgChartHtml(data).replace(/data-act="[^"]*"/g, "").replace(/ loading="lazy"/g, ' loading="eager"') + `<div class="ocp-foot"><span>GID Management System · ${km ? "បង្កើតនៅ" : "generated"} ${esc(pdfGenerated())}</span><span>${esc(p.code)}</span></div>`;
     if (km) host.querySelectorAll(".oc-l, .oc-none").forEach((el) => { el.textContent = T(el.textContent); });
     host.querySelectorAll(".oc-l.top").forEach((el) => el.remove());
     toast(km ? "កំពុងបង្កើត PDF…" : "Making the PDF…");
@@ -2255,7 +2559,8 @@
     try {
       await Promise.all(PDF_LIBS.map(loadScript));
       await Promise.race([document.fonts.ready, new Promise((r) => setTimeout(r, 4000))]);
-      await Promise.all([...host.querySelectorAll("img")].map((im) => im.complete ? 0 : new Promise((r) => { im.onload = im.onerror = r; })));
+      // photos in the hidden copy must load now (lazy photos off screen never load), and never wait more than 8 seconds
+      await Promise.race([Promise.all([...host.querySelectorAll("img")].map((im) => im.complete && im.naturalWidth ? 0 : new Promise((r) => { im.onload = im.onerror = r; }))), new Promise((r) => setTimeout(r, 8000))]);
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
       const canvas = await window.html2canvas(host, { scale: 2, useCORS: true, backgroundColor: "#ffffff", logging: false });
       const pdf = new window.jspdf.jsPDF({ unit: "mm", format: "a4", orientation: "landscape", compress: true });
@@ -2273,7 +2578,7 @@
   }
 
   SCREENS.people = (u) => {
-    const rows = db.staff.filter((s) => matchSearch(s, ["name", "title"]));
+    const rows = staffNow().filter((s) => matchSearch(s, ["name", "title", "phone"]));
     const t = tabs("people", [["chart", "Org chart"], ["list", "List"]]);
     let content;
     if (t.cur === "chart") content = rows.length ? `<section class="card occard">${companyOrg((s) => rows.includes(s))}</section>` : '<div class="empty">No one matches.</div>';
@@ -2283,12 +2588,15 @@
         return ordered.length ? `<section class="card"><h2>${esc(label)} <span class="count">${ordered.length}</span></h2><ul class="people">${ordered.map((s) => `<li data-act="${act(() => openPerson(s))}">${avatar(s)}<b>${esc(s.name)}</b><small>${esc(s.title)}${groupsOf(s).length > 1 ? " · also " + esc(groupsOf(s).slice(1).map((x) => GROUPS[x]).join(", ")) : ""}</small></li>`).join("")}</ul></section>` : ""; }).join("");
       content = `<div class="grid2">${depts}</div>`;
     }
-    return `<h1>People</h1><p class="muted">${db.staff.length} staff. HR owner: ${esc(withTag("HR").map((s) => s.name).join(", "))}.</p>${t.html}${toolbar(u, { project: false })}${content}`;
+    const former = db.staff.filter((s) => s.left_on);
+    if (t.cur === "list" && former.length && canManageStaff(u)) content += `<section class="card"><h2>Former staff <span class="count">${former.length}</span></h2><ul class="people">${former.map((s) => `<li data-act="${act(() => openPerson(s))}">${avatar(s)}<b>${esc(s.name)}</b><small>${esc(s.title)} · left ${esc(fmtDate(s.left_on))}</small></li>`).join("")}</ul></section>`;
+    return `<h1>People</h1><p class="muted">${staffNow().length} staff. HR owner: ${esc(withTag("HR").map((s) => s.name).join(", "))}.</p>${t.html}${toolbar(u, { project: false, buttons: canManageStaff(u) ? btn("Add staff", () => staffForm(null), "primary") : "" })}${content}`;
   };
 
   // ---------- DASHBOARD ----------
   const SVGI = {
     back: '<path d="M15 18l-6-6 6-6"/>',
+    svr: '<path d="M12 21s-6-5.3-6-10a6 6 0 0 1 12 0c0 4.7-6 10-6 10z"/><path d="M9.5 10.5l1.8 1.8 3.4-3.6"/>',
     dashboard: '<path d="M4 13h6V4H4zM14 20h6v-9h-6zM4 20h6v-4H4zM14 4v4h6V4z"/>',
     home: '<path d="M3 11.5 12 4l9 7.5"/><path d="M5 10v10h14V10"/><path d="M10 20v-5h4v5"/>',
     requests: '<path d="M9 11l3 3 8-8"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/>',
@@ -2677,6 +2985,7 @@
         <section class="card c9">${head("This week", "projects")}${week}</section>
         <section class="card c3">${head("Approvals waiting", "requests")}${approvals}</section>
         <section class="card c8">${head("Projects", "projects")}${pcards}</section>
+        ${svrAccess(u) ? svrDashCard() : ""}
         <section class="card c4">${head("Checks for the MD", null)}${checks}</section>
       </div>`;
   };
@@ -2853,13 +3162,13 @@
   function healthCard() {
     const db_ = Store.mode === "supabase";
     if (db_ && !tgStatus.checked) AFTER.push(() => loadTelegramStatus().then(() => { if (state.route === "admin" && !$("#modal")) render(); }));
-    const linkedN = db.staff.filter((s) => String(s.telegram_chat_id || "").trim()).length;
-    const notLinked = db.staff.filter((s) => !String(s.telegram_chat_id || "").trim()).map((s) => s.name);
+    const linkedN = staffNow().filter((s) => String(s.telegram_chat_id || "").trim()).length;
+    const notLinked = staffNow().filter((s) => !String(s.telegram_chat_id || "").trim()).map((s) => s.name);
     const row = (ok, t, sub) => `<li class="${ok === true ? "ok" : ok === false ? "no" : "wait"}"><i>${ok === true ? "✓" : ok === false ? "✕" : "…"}</i><span><b>${t}</b>${sub ? `<small>${sub}</small>` : ""}</span></li>`;
     return `<section class="card"><div class="card-head"><h2>System health</h2>${db_ ? btn("Check again", async () => { tgStatus.checked = false; await loadTelegramStatus(); render(); }) : ""}</div><ul class="tg-check">
       ${row(db_, db_ ? "Shared database connected" : "Shared database not connected", db_ ? "Everyone using this link sees the same data." : "config.js has no Supabase details, so data stays on each device and Telegram cannot send. SETUP.md, Steps 1 to 4.")}
       ${!db_ ? row(null, "Telegram bot", "Checked after the database is connected") : !tgStatus.checked ? row(null, "Telegram bot", "Checking…") : tgStatus.missing ? row(false, "Telegram part missing in the database", "Run the new supabase/schema.sql, then telegram-setup.sql.") : tgStatus.ready ? row(true, "Telegram bot ready", "@" + esc(String(tgStatus.bot || "").replace(/^@/, ""))) : row(false, "Telegram bot not set up", "Run supabase/telegram-setup.sql with the token from @BotFather (SETUP.md, Step 5).")}
-      ${row(linkedN ? (linkedN === db.staff.length ? true : null) : false, linkedN + " of " + db.staff.length + " staff linked to Telegram", notLinked.length ? "Not linked yet: " + esc(notLinked.slice(0, 12).join(", ")) + (notLinked.length > 12 ? " and " + (notLinked.length - 12) + " more" : "") : "Everyone is linked.")}
+      ${row(linkedN ? (linkedN === staffNow().length ? true : null) : false, linkedN + " of " + staffNow().length + " staff linked to Telegram", notLinked.length ? "Not linked yet: " + esc(notLinked.slice(0, 12).join(", ")) + (notLinked.length > 12 ? " and " + (notLinked.length - 12) + " more" : "") : "Everyone is linked.")}
     </ul></section>`;
   }
   SCREENS.admin = (u) => {
@@ -2884,7 +3193,7 @@
   function openUserPicker() {
     const u = me();
     const sections = [["EXEC", "Executive"]].concat(ORG_DEPTS).map(([k, label]) => {
-      const list = db.staff.filter((s) => orgDeptOf(s) === k); const ordered = k === "EXEC" ? list.sort(orgSort) : [].concat(...orgRows(list, k));
+      const list = staffNow().filter((s) => orgDeptOf(s) === k); const ordered = k === "EXEC" ? list.sort(orgSort) : [].concat(...orgRows(list, k));
       return ordered.length ? `<h5 class="upk-h">${esc(label)}</h5>${ordered.map((s) => `<button type="button" class="upk${s.id === u.id ? " on" : ""}" data-name="${esc((s.name + " " + s.title).toLowerCase())}" data-act="${act(() => switchUser(s.id))}">${avatar(s)}<span><b>${esc(s.name)}</b><small>${esc(s.title)}</small></span>${s.id === u.id ? '<i class="upk-tick" aria-label="Current person">✓</i>' : ""}</button>`).join("")}` : "";
     }).join("");
     openModal("Switch person", `<p class="muted small">Demo only: choose a person to see the system as they see it.</p><input class="search upk-q" placeholder="Search name or title" aria-label="Search name or title"><div class="upk-list">${sections}</div>`, (m) => {
@@ -2902,7 +3211,7 @@
     if (navVisible(u, "procurement")) db.purchase_orders.filter((p) => inScope(u, p.project_id) && hit(p, ["po_no", "description"])).forEach((p) => out.push(["PO", p.po_no + " " + p.description, () => openPO(p)]));
     if (navVisible(u, "docs")) db.documents.filter((d) => inScope(u, d.project_id) && hit(d, ["doc_no", "title"])).forEach((d) => out.push(["Document", d.doc_no + " rev " + d.revision + " " + d.title, () => openDoc(d)]));
     if (navVisible(u, "stock")) db.stock_items.filter((i) => hit(i, ["code", "name", "category"])).forEach((i) => out.push(["Stock", i.code + " " + i.name, () => openItem(i)]));
-    db.staff.filter((s) => hit(s, ["name", "title"])).forEach((s) => out.push(["Person", s.name + " · " + s.title, () => openPerson(s)]));
+    staffNow().filter((s) => hit(s, ["name", "title"])).forEach((s) => out.push(["Person", s.name + " · " + s.title, () => openPerson(s)]));
     return out.slice(0, 12);
   }
 
