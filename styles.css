@@ -1668,9 +1668,9 @@ html[data-theme="dark"] .t-other { --c: #b2c3b7; } html[data-theme="dark"] .m-do
   .cal-n { font-size: 13px; padding: 3px 5px; align-self: center; }
   .cal-h { display: none; }
   .cal-chips { flex-direction: row; flex-wrap: wrap; justify-content: center; gap: 2px; }
-  .chip { font-size: 0; width: 7px; height: 7px; padding: 0; border-radius: 50%; border: 0; background: var(--c); }
-  .chip.lnk { border: 1.5px solid var(--c); background: transparent; width: 7px; height: 7px; }
-  .chip.more { width: auto; height: auto; font-size: 9px; background: none; }
+  .cal-chips .chip { font-size: 0; width: 7px; height: 7px; padding: 0; border-radius: 50%; border: 0; background: var(--c); }
+  .cal-chips .chip.lnk { border: 1.5px solid var(--c); background: transparent; width: 7px; height: 7px; }
+  .cal-chips .chip.more { width: auto; height: auto; font-size: 9px; background: none; }
   .cal-key { font-size: 11px; gap: 4px 10px; }
   .sch-it { grid-template-columns: minmax(0, 1fr); gap: 2px; }
   .sch-tools .seg { width: 100%; } .sch-tools .seg button { flex: 1; }
@@ -1718,3 +1718,4 @@ html[data-theme="dark"] .dayend { background: #2b2414; }
 /* v23: alert list: "Action needed" tag and the project / amount / date line */
 .nk { display: inline-block; font-style: normal; font-size: 11px; font-weight: 800; letter-spacing: .02em; text-transform: uppercase; color: var(--bad); background: var(--bad-l); border-radius: 6px; padding: 1px 6px; margin-bottom: 2px; }
 small.nx { color: var(--ink-2); }
+.annc-h .chip, .card.ann td .chip, .dl .chip { flex: none; overflow: visible; max-width: none; }
