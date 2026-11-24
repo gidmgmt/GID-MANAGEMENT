@@ -149,6 +149,6 @@ end $$;
 drop trigger if exists daily_reports_server_time on public.daily_reports;
 create trigger daily_reports_server_time before insert on public.daily_reports for each row execute function public.daily_report_server_time();
 `;
-for (const extra of ["update-v18.sql", "update-v20.sql", "update-v22.sql"]) sql += "\n" + fs.readFileSync(path.join(__dirname, "../supabase", extra), "utf8");
+for (const extra of ["update-v18.sql", "update-v20.sql", "update-v22.sql", "update-v23.sql"]) sql += "\n" + fs.readFileSync(path.join(__dirname, "../supabase", extra), "utf8");
 fs.writeFileSync(path.join(__dirname, "../supabase/schema.sql"), sql);
 console.log("schema.sql written:", names.length, "tables");
