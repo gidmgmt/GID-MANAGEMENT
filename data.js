@@ -65,7 +65,11 @@
       rows: "jsonb", result: "text", tested_by: "text", witness: "text", test_date: "date", photos: "jsonb", defect_ids: "jsonb", note: "text" },
     handover_items: { project_id: "text", category: "text", title: "text", status: "text", due_date: "date", evidence: "jsonb", note: "text", updated_by: "text" },
     warranties: { project_id: "text", item: "text", supplier: "text", start_date: "date", end_date: "date", evidence: "jsonb", note: "text" },
-    notifications: { to_id: "text", actor_id: "text", title: "text", body: "text", tbl: "text", record_id: "text", read: "boolean", at: "timestamptz" }
+    notifications: { to_id: "text", actor_id: "text", title: "text", body: "text", tbl: "text", record_id: "text", read: "boolean", at: "timestamptz" },
+    // v22 Schedule & Meetings: staff events (meetings, inspections, site visits, claim dates…) and Cambodia's official public holidays
+    events: { no: "text", title: "text", type: "text", date: "date", start_time: "text", end_time: "text", all_day: "boolean", project_id: "text", location: "text",
+      organiser_id: "text", attendees: "jsonb", notes: "text", minutes: "text", status: "text", link_module: "text", link_id: "text", created_by: "text", updated_at: "timestamptz" },
+    holidays: { date: "date", name: "text", name_km: "text", year: "int" }
   };
 
   // ---------- User groups (from the 2026 org chart) ----------
@@ -91,8 +95,50 @@
     handover:    { EXEC: "approve", PM: "approve", SITE: "edit", DESIGN: "edit", ENG: "edit", QS: "view", FIN: "none", ADMIN: "view" },
     svr:         { EXEC: "approve", PM: "approve", SITE: "edit", DESIGN: "edit", ENG: "edit", QS: "edit", FIN: "none", ADMIN: "view" },
     dashboard:   { EXEC: "admin", PM: "view", SITE: "none", DESIGN: "none", ENG: "none", QS: "admin", FIN: "view", ADMIN: "view" },
-    stock:       { EXEC: "view", PM: "approve", SITE: "edit", DESIGN: "none", ENG: "view", QS: "view", FIN: "view", ADMIN: "admin" }
+    stock:       { EXEC: "view", PM: "approve", SITE: "edit", DESIGN: "none", ENG: "view", QS: "view", FIN: "view", ADMIN: "admin" },
+    // Schedule: everyone plans their own events; PMs manage events on their projects; MD (and HR, System Admin, backup admin by tag) manage all
+    schedule:    { EXEC: "admin", PM: "edit", SITE: "own", DESIGN: "own", ENG: "own", QS: "own", FIN: "own", ADMIN: "own" }
   };
+
+
+  // ---------- Cambodia official public holidays (HR and the System Admin can add or change them in Schedule → Public holidays) ----------
+  // 2026: Sub-Decree 167. 2027: sub-decree of 16 Sep 2026 (22 days); lunar dates marked "to be confirmed" may move.
+  const HOL_KM = {
+    "International New Year Day": "ទិវាចូលឆ្នាំសកល",
+    "Victory over Genocide Day": "ទិវាជ័យជម្នះលើរបបប្រល័យពូជសាសន៍",
+    "International Women's Day": "ទិវាសិទ្ធិនារីអន្តរជាតិ",
+    "Khmer New Year": "ពិធីបុណ្យចូលឆ្នាំខ្មែរ",
+    "International Labour Day": "ទិវាពលកម្មអន្តរជាតិ",
+    "International Labour Day and Visak Bochea Day": "ទិវាពលកម្មអន្តរជាតិ និងពិធីបុណ្យវិសាខបូជា",
+    "Visak Bochea Day": "ពិធីបុណ្យវិសាខបូជា",
+    "Royal Ploughing Ceremony": "ព្រះរាជពិធីច្រត់ព្រះនង្គ័ល",
+    "King Norodom Sihamoni's Birthday": "ព្រះរាជពិធីបុណ្យចម្រើនព្រះជន្ម ព្រះករុណា ព្រះបាទ នរោត្តម សីហមុនី",
+    "Queen Mother Norodom Monineath Sihanouk's Birthday": "ព្រះរាជពិធីបុណ្យចម្រើនព្រះជន្ម សម្តេចព្រះមហាក្សត្រី នរោត្តម មុនិនាថ សីហនុ",
+    "Constitution Day": "ទិវារដ្ឋធម្មនុញ្ញ",
+    "Pchum Ben": "ពិធីបុណ្យភ្ជុំបិណ្ឌ",
+    "Commemoration Day of the late King Father Norodom Sihanouk": "ទិវាប្រារព្ធពិធីគោរពព្រះវិញ្ញាណក្ខន្ធ ព្រះករុណា ព្រះបាទសម្តេចព្រះ នរោត្តម សីហនុ ព្រះវររាជបិតា",
+    "King Norodom Sihamoni's Coronation Day": "ព្រះរាជពិធីគ្រងព្រះបរមរាជសម្បត្តិ ព្រះករុណា ព្រះបាទ នរោត្តម សីហមុនី",
+    "Independence Day": "ទិវាឯករាជ្យជាតិ",
+    "Water Festival": "បុណ្យអុំទូក បណ្តែតប្រទីប និងសំពះព្រះខែ អកអំបុក",
+    "Peace Day in Cambodia": "ទិវាសន្តិភាពនៅកម្ពុជា"
+  };
+  const HOL_LIST = {
+    2026: [["01-01", "International New Year Day"], ["01-07", "Victory over Genocide Day"], ["03-08", "International Women's Day"],
+      ["04-14", "Khmer New Year"], ["04-15", "Khmer New Year"], ["04-16", "Khmer New Year"], ["05-01", "International Labour Day and Visak Bochea Day"],
+      ["05-05", "Royal Ploughing Ceremony"], ["05-14", "King Norodom Sihamoni's Birthday"], ["06-18", "Queen Mother Norodom Monineath Sihanouk's Birthday"],
+      ["09-24", "Constitution Day"], ["10-10", "Pchum Ben"], ["10-11", "Pchum Ben"], ["10-12", "Pchum Ben"], ["10-15", "Commemoration Day of the late King Father Norodom Sihanouk"],
+      ["10-29", "King Norodom Sihamoni's Coronation Day"], ["11-09", "Independence Day"], ["11-23", "Water Festival"], ["11-24", "Water Festival"], ["11-25", "Water Festival"],
+      ["12-29", "Peace Day in Cambodia"]],
+    2027: [["01-01", "International New Year Day"], ["01-07", "Victory over Genocide Day"], ["03-08", "International Women's Day"],
+      ["04-14", "Khmer New Year"], ["04-15", "Khmer New Year"], ["04-16", "Khmer New Year"], ["05-01", "International Labour Day"],
+      ["05-14", "King Norodom Sihamoni's Birthday"], ["05-20", "Visak Bochea Day", 1], ["05-24", "Royal Ploughing Ceremony", 1], ["06-18", "Queen Mother Norodom Monineath Sihanouk's Birthday"],
+      ["09-24", "Constitution Day"], ["09-29", "Pchum Ben", 1], ["09-30", "Pchum Ben", 1], ["10-01", "Pchum Ben", 1], ["10-15", "Commemoration Day of the late King Father Norodom Sihanouk"],
+      ["10-29", "King Norodom Sihamoni's Coronation Day"], ["11-09", "Independence Day"], ["11-12", "Water Festival", 1], ["11-13", "Water Festival", 1], ["11-14", "Water Festival", 1],
+      ["12-29", "Peace Day in Cambodia"]]
+  };
+  const HOLIDAYS = [];
+  Object.keys(HOL_LIST).forEach((y) => HOL_LIST[y].forEach(([md, name, tbc]) => HOLIDAYS.push({ id: "hol-" + y + "-" + md, date: y + "-" + md,
+    name: name + (tbc ? " (to be confirmed)" : ""), name_km: HOL_KM[name] + (tbc ? " (រង់ចាំបញ្ជាក់)" : ""), year: Number(y) })));
 
   const APPROVAL_LIMIT = 500; // USD per order: at or above this, the MD must also approve
 
@@ -536,12 +582,26 @@
       { id: "w4", project_id: "p5", item: "Access door controllers", supplier: "Angkor MEP Works", start_date: ago(300), end_date: ahead(12), evidence: [], note: "" }
     ];
 
+    // Schedule: a few planned events around today (meetings, inspection, site visit, claim submission)
+    const EVT = (n, title, type, d, st, en, project_id, location, organiser_id, attendees, notes, link_module, link_id) =>
+      ({ id: "ev" + n, no: "EV-" + String(n).padStart(4, "0"), title, type, date: d, start_time: st, end_time: en, all_day: !st, project_id, location, organiser_id, attendees,
+        notes: notes || "", minutes: "", status: "Planned", link_module: link_module || "", link_id: link_id || "", created_by: organiser_id });
+    const events = [
+      EVT(1, "Weekly site coordination meeting", "Meeting", ahead(1), "08:30", "09:30", "p1", "DEMO-101 site office", "s03", ["s07", "s11", "s12", "s13", "s20", "s30"], "MEP and ceiling programme, gypsum board delivery."),
+      EVT(2, "Fire alarm re-inspection level 3", "Inspection", ahead(2), "10:00", "11:00", "p1", "Level 3 corridor", "s29", ["s12", "s03"], "Check the detector bases fixed after the failed inspection.", "inspections", "i1"),
+      EVT(3, "Site visit with client: chiller plinth", "Site visit", ahead(1), "14:00", "15:30", "p2", "DEMO-102 plant room", "s04", ["s08", "s09", "s24", "s28"], ""),
+      EVT(4, "Submit IPC 2 to the client", "Progress claim", ahead(3), "", "", "p1", "", "s32", ["s03", "s31"], "Include VO-101-001.", "claims", "ipc2"),
+      EVT(5, "Management meeting", "Meeting", ahead(6), "09:00", "10:30", "", "Head office meeting room", "s01", ["s02", "s03", "s04", "s05", "s31", "s34"], "Monthly cash flow and new tenders."),
+      EVT(6, "Working at height refresher", "Training", ahead(8), "07:30", "08:30", "p3", "DEMO-103 site", "s06", ["s10", "s16", "s17"], "")
+    ];
+
     const audit_log = [
       { id: "a1", at: ts(4), actor_id: "s33", action: "Permission change", tbl: "staff", record_id: "s32", summary: "Added QA/QC tag to Roeurn Rada" }
     ];
 
     const all = { staff, projects, project_members, tasks, daily_reports, requests, suppliers, purchase_orders, documents,
-      cost_lines, claims, invoices, inspections, defects, safety, site_visits, variations, subcontractors, sub_contracts, sub_payments, tests, handover_items, warranties, audit_log, stores, stock_items, stock_moves, monthly_costs, app_settings: [], notifications: [] };
+      cost_lines, claims, invoices, inspections, defects, safety, site_visits, variations, subcontractors, sub_contracts, sub_payments, tests, handover_items, warranties, audit_log, stores, stock_items, stock_moves, monthly_costs, app_settings: [], notifications: [],
+      events, holidays: HOLIDAYS.map((h) => Object.assign({}, h)) };
     // A few starting notifications so the bell is not empty in the demo
     let nn = 0;
     const N = (to_id, actor_id, hrs, title, body, tbl, record_id, read) => all.notifications.push({ id: "n" + (++nn), to_id, actor_id, title, body, tbl, record_id, read: !!read, at: new Date(Date.now() - hrs * 3600000).toISOString() });
@@ -561,5 +621,5 @@
     return all;
   }
 
-  root.GID = { TABLES, GROUPS, PERMS, APPROVAL_LIMIT, seed };
+  root.GID = { TABLES, GROUPS, PERMS, APPROVAL_LIMIT, HOLIDAYS, seed };
 })(typeof window !== "undefined" ? window : globalThis);
