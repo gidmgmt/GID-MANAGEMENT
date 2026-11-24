@@ -300,7 +300,7 @@ window.GID_KM = {
   "Pass": "ជាប់", "Fail": "មិនជាប់", "Photos of readings (optional)": "រូបថតលេខវាស់ (មិនចាំបាច់)", "Location / board / system": "ទីតាំង / តាប្លូ / ប្រព័ន្ធ", "Test date": "ថ្ងៃធ្វើតេស្ត", "Test": "តេស្ត",
   "A failed line creates a defect automatically when you save, so the correction is tracked in QA/QC.": "ជួរដែលមិនជាប់ នឹងបង្កើតចំណុចខ្វះខាតដោយស្វ័យប្រវត្តិពេលរក្សាទុក ដើម្បីតាមដានការកែតម្រូវក្នុង QA/QC។",
   "Test sheets with pass/fail, the handover pack for the client, and warranties with alerts 60 and 14 days before they end.": "សន្លឹកតេស្តជាប់/មិនជាប់ ឯកសារប្រគល់ជូនម្ចាស់គម្រោង និងការធានាដែលជូនដំណឹងមុនផុត 60 និង 14 ថ្ងៃ។",
-  "Insulation resistance": "តេស្តតម្លៃធន់អ៊ីសូឡង់ (Megger)", "Earth electrode resistance": "តេស្តតម្លៃធន់ខ្សែដី (Earth)", "RCD trip test": "តេស្ត RCD", "Pipe pressure test": "តេស្តសម្ពាធបំពង់", "CCTV commissioning": "ការសាកល្បងដំណើរការកាមេរ៉ា CCTV", "Data point test (Cat6)": "តេស្តចំណុចបណ្តាញ (Cat6)",
+  "Insulation resistance": "តេស្តតម្លៃធន់អ៊ីសូឡង់ (Megger)", "Earth electrode resistance": "តេស្តតម្លៃធន់ខ្សែដី (Earth)", "RCD trip test": "តេស្តផ្តាច់ RCD", "Pipe pressure test": "តេស្តសម្ពាធបំពង់", "CCTV commissioning": "ការសាកល្បងដំណើរការកាមេរ៉ា CCTV", "Data point test (Cat6)": "តេស្តចំណុចបណ្តាញ (Cat6)",
   "Received": "បានទទួល", "Handed over": "បានប្រគល់", "As-built drawings": "ប្លង់សាងសង់ជាក់ស្តែង (As-built)", "O&M manuals": "សៀវភៅណែនាំប្រើប្រាស់ និងថែទាំ", "Keys & access cards": "កូនសោ និងកាតចូល", "Training": "បណ្តុះបណ្តាល",
   "No internet on site": "គ្មានអ៊ីនធឺណិតនៅការដ្ឋាន", "Copy last report": "ចម្លងរបាយការណ៍ចុងក្រោយ", "Save · send when online": "រក្សាទុក · ផ្ញើពេលមានអ៊ីនធឺណិត", "Waiting to send": "រង់ចាំផ្ញើ", "Send now": "ផ្ញើឥឡូវ",
   "You can still fill in and save this report. It will send by itself when the signal comes back. The time and place are recorded now.": "អ្នកនៅតែអាចបំពេញ និងរក្សាទុករបាយការណ៍នេះ។ វានឹងផ្ញើដោយខ្លួនឯងពេលមានសេវាវិញ។ ម៉ោង និងទីតាំងត្រូវបានកត់ត្រាឥឡូវនេះ។",
@@ -380,7 +380,7 @@ window.GID_KM = {
   "Created": "បានបង្កើត", "Updated": "បានធ្វើបច្ចុប្បន្នភាព", "Return": "ប្រគល់វិញ",
   "Mark": "សម្គាល់", "Record": "កំណត់ត្រា", "Notification": "ការជូនដំណឹង",
   "Document": "ឯកសារ", "Results": "លទ្ធផល", "Test failed": "តេស្តមិនជាប់",
-  "Retention release": "ការដោះប្រាក់កាត់ទុក", "RCD trip": "តេស្តកាត់ RCD", "Subcontractor bill": "វិក្កយបត្រអ្នកម៉ៅការបន្ត", "Main store restock": "បំពេញស្តុកឃ្លាំងកណ្តាល",
+  "Retention release": "ការដោះប្រាក់កាត់ទុក", "RCD trip": "តេស្តផ្តាច់ RCD", "Subcontractor bill": "វិក្កយបត្រអ្នកម៉ៅការបន្ត", "Main store restock": "បំពេញស្តុកឃ្លាំងកណ្តាល",
   "Approvals": "ការអនុម័ត", "Event": "ព្រឹត្តិការណ៍", "Reported": "បានរាយការណ៍",
   "Line": "ជួរ", "Remove line": "លុបជួរ", "Remove action": "លុបសកម្មភាព",
   "Remove photo": "លុបរូបថត", "Photo preview": "មើលរូបថត", "Email to client": "អ៊ីមែលទៅម្ចាស់គម្រោង",
@@ -455,11 +455,11 @@ window.GID_KM = {
   "Earth tester": "ឧបករណ៍វាស់ខ្សែដី", "Multifunction tester": "ឧបករណ៍វាស់ពហុមុខងារ", "Pressure gauge": "នាឡិកាវាស់សម្ពាធ",
   "Cable certifier": "ឧបករណ៍តេស្តខ្សែបណ្តាញ", "Circuit": "សៀគ្វី", "Electrode / location": "បង្គោលដី / ទីតាំង",
   "Reading (Ω)": "តម្លៃវាស់ (Ω)", "Circuit / RCD": "សៀគ្វី / RCD", "Rating (mA)": "កម្រិត (mA)",
-  "Trip time (ms)": "រយៈពេលកាត់ (ms)", "Pipe section": "ផ្នែកបំពង់", "Test pressure (bar)": "សម្ពាធតេស្ត (bar)",
+  "Trip time (ms)": "រយៈពេលផ្តាច់ (ms)", "Pipe section": "ផ្នែកបំពង់", "Test pressure (bar)": "សម្ពាធតេស្ត (bar)",
   "Start (bar)": "ចាប់ផ្តើម (bar)", "End (bar)": "បញ្ចប់ (bar)", "Time (min)": "រយៈពេល (នាទី)",
   "Camera": "កាមេរ៉ា", "Point ID": "លេខចំណុច", "Length (m)": "ប្រវែង (m)",
   "Tester result": "លទ្ធផលឧបករណ៍តេស្ត", "Pass if every reading is at least (MΩ)": "ជាប់ ប្រសិនបើតម្លៃវាស់នីមួយៗយ៉ាងតិច (MΩ)", "Pass if the reading is at most (Ω)": "ជាប់ ប្រសិនបើតម្លៃវាស់មិនលើស (Ω)",
-  "Pass if trip time is at most (ms)": "ជាប់ ប្រសិនបើរយៈពេលកាត់មិនលើស (ms)", "Allowed pressure drop (bar)": "សម្ពាធធ្លាក់អនុញ្ញាត (bar)", "Maximum length (m)": "ប្រវែងអតិបរមា (m)",
+  "Pass if trip time is at most (ms)": "ជាប់ ប្រសិនបើរយៈពេលផ្តាច់មិនលើស (ms)", "Allowed pressure drop (bar)": "ការធ្លាក់សម្ពាធអនុញ្ញាត (bar)", "Maximum length (m)": "ប្រវែងអតិបរមា (m)",
   "Yes / Yes / Yes": "បាទ / បាទ / បាទ", "PASS": "ជាប់", "FAIL": "មិនជាប់",
   "OPEN": "មិនទាន់បញ្ចប់", "yes": "បាទ/ចាស", "no": "គ្រឿង",
   "nos": "គ្រឿង",
@@ -468,7 +468,10 @@ window.GID_KM = {
   "Run supabase/telegram-setup.sql with the token from @BotFather (SETUP.md, Step 5).": "ដំណើរការ supabase/telegram-setup.sql ជាមួយសោពី @BotFather (SETUP.md ជំហាន 5)។",
   "Everyone is linked.": "បុគ្គលិកទាំងអស់បានភ្ជាប់។",
   "Wrong passkey 5 times. Wait 30 seconds and try again.": "កូដសម្ងាត់ខុស 5 ដង។ សូមរង់ចាំ 30 វិនាទី ហើយព្យាយាមម្តងទៀត។",
-  "GID Management System · Demo": "ប្រព័ន្ធគ្រប់គ្រង GID · សាកល្បង"
+  "GID Management System · Demo": "ប្រព័ន្ធគ្រប់គ្រង GID · សាកល្បង",
+  "PDF saved to your downloads.": "បានរក្សាទុក PDF ក្នុងថតទាញយក (Downloads)។",
+  "Share PDF": "ចែករំលែក PDF",
+  "Share %": "ចំណែក %"
 };
 
 // Texts that contain numbers, names or dates

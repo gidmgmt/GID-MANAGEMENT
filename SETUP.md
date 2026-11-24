@@ -208,3 +208,10 @@ Database: `supabase/update-v20.sql` (already installed on the GID database and t
 - 5 wrong passwords lock the account for 15 minutes. Forgotten password: an approver presses **Reset password** and gives the temporary password in person; the person must change it at the next sign-in.
 - Passwords are stored only in scrambled form, in a part of the database the public website key cannot read.
 - Still a demo: the other tables are open to the public key until the next step (per-role database security). Use sample data only.
+
+## Version 21: screen, PDF and Khmer fixes
+
+No database change. Fixes from the full visual check (computer, 3 phone sizes, every PDF, Khmer review):
+- Screens: dashboard legend, Settings permissions table (no overlap, keeps your place, no more redraw every minute), page no longer scrolls behind windows, long windows keep the title and Save button visible, photo viewer / Alerts / menu close correctly with Escape and the phone Back button, dark-mode badges readable, solid dark menu on phones, all phone buttons at least 40 px, readable step names instead of codes.
+- PDFs: Khmer text no longer breaks apart in English PDFs, sign-off boxes fit, long reports continue on the next page instead of losing text, English removed from Khmer PDFs (test sheets, VO, site visits, org chart), one date format, org chart correct in dark mode, phones download the PDF with an "Open PDF" button.
+- Khmer: about 480 corrections and additions with one standard word list (for example Variation = ការងារកែប្រែ (VO), Quotation = សម្រង់តម្លៃ, Pay = ទូទាត់, Retention = ប្រាក់កាត់ទុក, Passkey = កូដសម្ងាត់).

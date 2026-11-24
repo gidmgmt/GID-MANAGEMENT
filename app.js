@@ -656,7 +656,7 @@
     }
     const file = typeof File === "function" ? new File([blob], fileName, { type: "application/pdf" }) : null;
     const canShare = !!(file && navigator.canShare && navigator.share && navigator.canShare({ files: [file] }));
-    openModal(fileName, `<p>PDF saved to your downloads.</p><p class="muted small">${esc(fileName)}</p><div class="form-actions"><a class="btn primary" href="${url}" target="_blank" rel="noopener">Open PDF</a>${canShare ? btn("Share", () => navigator.share({ files: [file], title: fileName }).catch(() => {})) : ""}${close}</div>`);
+    openModal(fileName, `<p>PDF saved to your downloads.</p><p class="muted small">${esc(fileName)}</p><div class="form-actions"><a class="btn primary" href="${url}" target="_blank" rel="noopener">Open PDF</a>${canShare ? btn("Share PDF", () => navigator.share({ files: [file], title: fileName }).catch(() => {})) : ""}${close}</div>`);
   }
 
   // Shared PDF maker: lays out A4 pages from HTML blocks, then draws each page with html2canvas and saves it with jsPDF.
