@@ -55,15 +55,21 @@
   const db = {};
   const Store = {
     mode: "local", client: null, memory: null,
+    // Make the Supabase connection (no network yet). Sign-in calls need it before the data is read.
+    connect() {
+      if (this.client || !(CFG.SUPABASE_URL && CFG.SUPABASE_ANON_KEY)) return this.client;
+      if (!window.supabase) throw new Error("The Supabase library did not load. Check your internet connection.");
+      this.mode = "supabase";
+      // Clean up common copy-paste mistakes: spaces, a trailing slash, or "/rest/v1" copied with the address
+      const url = String(CFG.SUPABASE_URL).trim().replace(/\/+$/, "").replace(/\/rest\/v1$/i, "").replace(/\/+$/, "");
+      const key = String(CFG.SUPABASE_ANON_KEY).trim().replace(/^["']|["']$/g, "");
+      if (!/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(url)) throw new Error("The Supabase address in config.js looks wrong: \"" + CFG.SUPABASE_URL + "\". It should look like https://abcdefghijk.supabase.co with nothing after .co");
+      this.client = window.supabase.createClient(url, key);
+      return this.client;
+    },
     async init() {
       if (CFG.SUPABASE_URL && CFG.SUPABASE_ANON_KEY) {
-        if (!window.supabase) throw new Error("The Supabase library did not load. Check your internet connection.");
-        this.mode = "supabase";
-        // Clean up common copy-paste mistakes: spaces, a trailing slash, or "/rest/v1" copied with the address
-        const url = String(CFG.SUPABASE_URL).trim().replace(/\/+$/, "").replace(/\/rest\/v1$/i, "").replace(/\/+$/, "");
-        const key = String(CFG.SUPABASE_ANON_KEY).trim().replace(/^["']|["']$/g, "");
-        if (!/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(url)) throw new Error("The Supabase address in config.js looks wrong: \"" + CFG.SUPABASE_URL + "\". It should look like https://abcdefghijk.supabase.co with nothing after .co");
-        this.client = window.supabase.createClient(url, key);
+        this.connect();
         await this.loadAllRemote();
       } else {
         this.mode = "local";
@@ -569,9 +575,9 @@
   // Every save is logged. The people concerned by it get one notification per action (several saves from one tap are merged).
   const NOTE_MODULE = { requests: "requests", purchase_orders: "procurement", suppliers: "procurement", stock_moves: "stock", stock_items: "stock", stores: "stock", daily_reports: "daily",
     documents: "docs", tasks: "projects", projects: "projects", project_members: "projects", claims: "cost", cost_lines: "cost", monthly_costs: "cost", invoices: "finance",
-    defects: "qaqc", inspections: "qaqc", safety: "safety", site_visits: "svr", variations: "vo", subcontractors: "subs", sub_contracts: "subs", sub_payments: "subs", tests: "handover", handover_items: "handover", warranties: "handover", staff: "people", app_settings: "admin" };
+    defects: "qaqc", inspections: "qaqc", safety: "safety", site_visits: "svr", variations: "vo", subcontractors: "subs", sub_contracts: "subs", sub_payments: "subs", tests: "handover", handover_items: "handover", warranties: "handover", staff: "people", accounts: "people", app_settings: "admin" };
   const NOTE_ICON = { requests: "requests", purchase_orders: "procurement", suppliers: "procurement", stock_moves: "stock", stock_items: "stock", stores: "stock", daily_reports: "daily", documents: "docs",
-    tasks: "projects", projects: "projects", project_members: "people", claims: "cost", cost_lines: "cost", monthly_costs: "cost", invoices: "finance", defects: "qaqc", inspections: "qaqc", safety: "safety", site_visits: "svr", variations: "vo", subcontractors: "subs", sub_contracts: "subs", sub_payments: "subs", tests: "handover", handover_items: "handover", warranties: "handover", staff: "people", app_settings: "admin" };
+    tasks: "projects", projects: "projects", project_members: "people", claims: "cost", cost_lines: "cost", monthly_costs: "cost", invoices: "finance", defects: "qaqc", inspections: "qaqc", safety: "safety", site_visits: "svr", variations: "vo", subcontractors: "subs", sub_contracts: "subs", sub_payments: "subs", tests: "handover", handover_items: "handover", warranties: "handover", staff: "people", accounts: "people", app_settings: "admin" };
   const PREF_LABEL = { mine: "Only things for me", projects: "Everything on my projects", all: "Everything in the company" };
   function notifyPref(u) {
     const s = (db.app_settings || []).find((x) => x.key === "notify:" + u.id);
@@ -724,6 +730,7 @@
       inspections: openInspection, projects: openProject, staff: openPerson, stock_items: openItem, site_visits: openSvr,
       variations: openVO, subcontractors: openSub, sub_payments: openPayment, tests: openTest, sub_contracts: (k) => openSub(byId("subcontractors", k.sub_id)) };
     if (tbl === "welcome") { const st = byId("staff", id); if (st) return openPerson(st); }
+    if (tbl === "accounts") { state.tab.people = "accounts"; ACC.loaded = false; if (state.route === "people" && (location.hash || "").replace(/^#\/?/, "") === "people") render(); else go("people"); return; }
     if (tbl === "stock_moves" && r) return openItem(byId("stock_items", r.item_id));
     if (tbl === "project_members" && r) return openProject(byId("projects", r.project_id));
     if (tbl === "invoices" && r) return openInvoice(r);
@@ -810,7 +817,7 @@
     closeDrawer();
     const u = me(); tab = tab || "mine";
     const notes = myNotes(u).slice(0, 80), unread = notes.filter((n) => !n.read).length;
-    const feed = db.audit_log.filter((a) => { const mod = NOTE_MODULE[a.tbl]; if (!mod || !navVisible(u, mod)) return false; const r = byId(a.tbl, a.record_id); return inScope(u, recordProject(a.tbl, r)); })
+    const feed = db.audit_log.filter((a) => { const mod = NOTE_MODULE[a.tbl]; if (!mod || !navVisible(u, mod)) return false; if (a.tbl === "accounts" && !canAccounts(u)) return false; const r = byId(a.tbl, a.record_id); return inScope(u, recordProject(a.tbl, r)); })
       .sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 80)
       .map((a) => ({ id: a.id, title: a.summary || a.action, body: a.action + " · " + (MODULE_NAMES[NOTE_MODULE[a.tbl]] || "Settings"), actor_id: a.actor_id, at: a.at, tbl: a.tbl, record_id: a.record_id, read: true }));
     const d = document.createElement("div"); d.id = "drawer"; d.className = "drawer-wrap";
@@ -3243,9 +3250,11 @@
 
   SCREENS.people = (u) => {
     const rows = staffNow().filter((s) => matchSearch(s, ["name", "title", "phone"]));
-    const t = tabs("people", [["chart", "Org chart"], ["list", "List"]]);
+    if (state.tab.people === "accounts" && !canAccounts(u)) state.tab.people = "chart";
+    const t = tabs("people", [["chart", "Org chart"], ["list", "List"]].concat(canAccounts(u) ? [["accounts", "Accounts"]] : []));
     let content;
-    if (t.cur === "chart") content = rows.length ? `<section class="card occard">${companyOrg((s) => rows.includes(s))}</section>` : '<div class="empty">No one matches.</div>';
+    if (t.cur === "accounts") content = accountsTab(u);
+    else if (t.cur === "chart") content = rows.length ? `<section class="card occard">${companyOrg((s) => rows.includes(s))}</section>` : '<div class="empty">No one matches.</div>';
     else {
       const top = rows.filter((s) => orgDeptOf(s) === "EXEC");
       const depts = [["EXEC", "Managing Director"]].concat(ORG_DEPTS).map(([k, label]) => { const list = (k === "EXEC" ? top : rows.filter((s) => orgDeptOf(s) === k)); const ordered = k === "EXEC" ? list : [].concat(...orgRows(list, k));
@@ -3254,7 +3263,7 @@
     }
     const former = db.staff.filter((s) => s.left_on);
     if (t.cur === "list" && former.length && canManageStaff(u)) content += `<section class="card"><h2>Former staff <span class="count">${former.length}</span></h2><ul class="people">${former.map((s) => `<li data-act="${act(() => openPerson(s))}">${avatar(s)}<b>${esc(s.name)}</b><small>${esc(s.title)} · left ${esc(fmtDate(s.left_on))}</small></li>`).join("")}</ul></section>`;
-    return `<h1>People</h1><p class="muted">${staffNow().length} staff. HR owner: ${esc(withTag("HR").map((s) => s.name).join(", "))}.</p>${t.html}${toolbar(u, { project: false, buttons: canManageStaff(u) ? btn("Add staff", () => staffForm(null), "primary") : "" })}${content}`;
+    return `<h1>People</h1><p class="muted">${staffNow().length} staff. HR owner: ${esc(withTag("HR").map((s) => s.name).join(", "))}.</p>${t.html}${toolbar(u, { project: false, buttons: canManageStaff(u) && t.cur !== "accounts" ? btn("Add staff", () => staffForm(null), "primary") : "" })}${content}`;
   };
 
   // ---------- DASHBOARD ----------
@@ -3895,12 +3904,15 @@
     const r = DEV.list.find((x) => x.id === id); if (r) Object.assign(r, p);
   }
   // This device was signed out: forget it, lock the app and tell the person why on the passkey screen
-  function devKick(status) {
+  async function devKick(status) {
     if (devKick.done) return; devKick.done = true;
+    const acc = accountMode();
     try {
       localStorage.removeItem(DEV_ID_KEY);
-      sessionStorage.setItem("gid-kicked", status === "terminated" ? "This device was signed out by the System Admin. Enter the passkey to sign in again." : "This device was signed out. Enter the passkey to sign in again.");
+      sessionStorage.setItem("gid-kicked", acc ? (status === "terminated" ? "This device was signed out by the System Admin. Sign in again." : "This device was signed out. Sign in again.")
+        : status === "terminated" ? "This device was signed out by the System Admin. Enter the passkey to sign in again." : "This device was signed out. Enter the passkey to sign in again.");
     } catch (e) { /* ignore */ }
+    await endAccountSession(); // also end the account sign-in on this device
     if (window.GID_LOCK) window.GID_LOCK(); else location.reload();
   }
   async function devCheck() {
@@ -3911,6 +3923,7 @@
   async function lockThisDevice() {
     try { await devUpdate(deviceId(), { status: "signed out", ended_at: nowIso(), ended_by: state.user }); } catch (e) { /* ignore */ }
     try { localStorage.removeItem(DEV_ID_KEY); } catch (e) { /* ignore */ }
+    await endAccountSession();
     if (window.GID_LOCK) window.GID_LOCK();
   }
   const canEndDevices = (u) => hasTag(u, "SYSADMIN") || hasTag(u, "BACKUPADMIN");
@@ -4010,10 +4023,226 @@
     return SCREENS[r] ? r : def;
   }
 
+  // ================= accounts: sign in with phone/email + password (v20) =================
+  // window.GID_AUTH (set by index.html) says how this person came in: "account" (own sign-in, fixed to one staff profile)
+  // or "passkey" (demo: switch person works). Every call to the database sign-in functions goes through authRpc,
+  // so tests can answer the requests to /rest/v1/rpc/gid_* without a real database.
+  const AUTH = () => window.GID_AUTH || { mode: "passkey" };
+  const accountMode = () => AUTH().mode === "account";
+  const NET_MSG = "Can't reach the server. Check the internet and try again.", SERVER_MSG = "The server could not do this right now. Try again later.";
+  const SIGNED_OUT_MSG = "You were signed out. Please sign in again.";
+  const strongPw = (p) => String(p || "").length >= 8 && /[A-Za-z]/.test(p) && /[0-9]/.test(p);
+  const PW_RULE = "At least 8 characters, with a letter and a number.";
+  function authErr(code, detail) { const e = new Error(code === "server" ? SERVER_MSG : NET_MSG); e.code = code; e.detail = detail; return e; }
+  async function authRpc(name, args) {
+    if (!Store.client) { try { Store.connect(); } catch (e) { /* no library: treated as no internet */ } }
+    if (!Store.client) throw authErr("network");
+    let res;
+    try { res = await Promise.race([Store.client.rpc(name, args || {}), new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 15000))]); }
+    catch (e) { throw authErr("network", e && e.message); }
+    if (res.error) throw authErr(res.status ? "server" : "network", res.error.message);
+    let d = res.data; if (typeof d === "string") { try { d = JSON.parse(d); } catch (e) { /* keep */ } }
+    return d && typeof d === "object" ? d : { ok: false, error: "server" };
+  }
+  window.GID_AUTH_API = { rpc: authRpc };
+  try { window.dispatchEvent(new CustomEvent("gid:auth-ready")); } catch (e) { /* ignore */ }
+
+  function dropSession() { if (window.GID_DROP_SESSION) window.GID_DROP_SESSION(); else { try { localStorage.removeItem("gid-session"); sessionStorage.removeItem("gid-session"); } catch (e) { /* ignore */ } } }
+  // End the account session on the server (best effort) and go back to the sign-in screen
+  async function endAccountSession() {
+    const A = AUTH();
+    if (A.mode === "account" && A.token) { try { await authRpc("gid_sign_out", { p_token: A.token }); } catch (e) { /* no internet: the token is dropped on this device anyway */ } }
+    dropSession();
+  }
+  async function signOut(msg) {
+    if (signOut.busy) return; signOut.busy = true;
+    try { if (msg) sessionStorage.setItem("gid-kicked", msg); } catch (e) { /* ignore */ }
+    try { await devUpdate(deviceId(), { status: "signed out", ended_at: nowIso(), ended_by: state.user }); } catch (e) { /* ignore */ }
+    await endAccountSession();
+    if (window.GID_LOCK) window.GID_LOCK(); else location.reload();
+  }
+  // Full-page message with a Retry button (used before the app opens)
+  function netScreen(msg) {
+    return new Promise((res) => {
+      $("#app").innerHTML = `<main class="gate"><div class="gate-card"><img class="gate-logo" src="img/logo-square.png" alt="Green In Design · Interior &amp; Exterior"><h1>Management System</h1>
+        <p class="gate-err" role="alert">${esc(msg || NET_MSG)}</p><button class="btn primary gate-go" id="retry" type="button">Retry</button>
+        ${accountMode() ? '<button class="btn gate-go gate-alt" id="outbtn" type="button">Sign out</button>' : ""}</div></main>`;
+      $("#retry").onclick = () => { $("#app").innerHTML = '<div class="setup card"><p>Loading…</p></div>'; res(true); };
+      const o = $("#outbtn"); if (o) o.onclick = () => { dropSession(); if (window.GID_LOCK) window.GID_LOCK(); else location.reload(); };
+      translateNow();
+    });
+  }
+  // The new-password form. temp=true: shown before the app opens (after a password reset)
+  function pwFormHtml(temp) {
+    const f = (id, label, ac, help) => `<label class="gate-field"><span>${label}</span><span class="gate-in"><input id="${id}" type="password" autocomplete="${ac}" required><button type="button" class="gate-eye" data-eye="${id}" aria-label="Show password">Show</button></span>${help ? `<small class="gate-help">${help}</small>` : ""}</label>`;
+    return f("cp0", temp ? "Temporary password" : "Current password", "current-password") + f("cp1", "New password", "new-password", PW_RULE) + f("cp2", "Confirm new password", "new-password") + '<div class="gate-err" id="cperr" role="alert"></div>';
+  }
+  function wirePwForm(root, onDone) {
+    root.addEventListener("click", (e) => { const eye = e.target.closest("[data-eye]"); if (!eye) return; const inp = root.querySelector("#" + eye.dataset.eye), show = inp.type === "password"; inp.type = show ? "text" : "password"; eye.textContent = show ? "Hide" : "Show"; eye.setAttribute("aria-label", show ? "Hide password" : "Show password"); translateNow(eye); });
+    const form = root.querySelector("form"), err = root.querySelector("#cperr"), go = form.querySelector("button[type=submit]");
+    const say = (t) => { err.textContent = t; translateNow(err); };
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const o = root.querySelector("#cp0").value, n1 = root.querySelector("#cp1").value, n2 = root.querySelector("#cp2").value;
+      if (!o || !n1) return say("Fill in every box.");
+      if (!strongPw(n1)) return say(PW_RULE);
+      if (n1 !== n2) return say("The two passwords are not the same.");
+      if (n1 === o) return say("Choose a new password that is different from the old one.");
+      const label = go.textContent; go.disabled = true; go.textContent = "Saving…";
+      let r;
+      try { r = await authRpc("gid_change_password", { p_token: AUTH().token, p_old: o, p_new: n1 }); }
+      catch (x) { go.disabled = false; go.textContent = label; return say(x.message); }
+      go.disabled = false; go.textContent = label;
+      if (r.ok) return onDone();
+      if (r.error === "no_session") return signOut(SIGNED_OUT_MSG);
+      say(r.error === "wrong" ? "The current password is wrong." : r.error === "weak_password" ? PW_RULE : SERVER_MSG);
+    });
+  }
+  function mustChangeScreen() {
+    return new Promise((res) => {
+      const A = AUTH();
+      $("#app").innerHTML = `<main class="gate"><div class="gate-card" id="cpcard"><img class="gate-logo" src="img/logo-square.png" alt="Green In Design · Interior &amp; Exterior">
+        <h1>Choose a new password</h1><p class="gate-sub">${esc(A.name || "")}${A.name ? " · " : ""}Your password was reset. Choose your own new password to continue.</p>
+        <form id="cpform" novalidate>${pwFormHtml(true)}<button class="btn primary gate-go" type="submit">Save new password</button></form>
+        <button class="btn gate-go gate-alt" id="cpout" type="button">Sign out</button></div></main>`;
+      const card = $("#cpcard");
+      wirePwForm(card, () => { A.must_change_password = false; $("#app").innerHTML = '<div class="setup card"><p>Loading…</p></div>'; res(true); });
+      $("#cpout").onclick = () => signOut();
+      translateNow(); const f = $("#cp0"); if (f) f.focus();
+    });
+  }
+  function openChangePassword() {
+    openModal("Change password", `<form id="cpm" class="cpm" novalidate>${pwFormHtml(false)}<p class="muted small">Your other phones and computers will be signed out.</p><div class="form-actions"><button type="button" class="btn" data-act="${act(modalBack)}">Cancel</button><button type="submit" class="btn primary">Save new password</button></div></form>`, (m) => {
+      wirePwForm(m, () => { closeAllModals(); toast("Password changed. Your other devices were signed out."); });
+    });
+  }
+  // The header name button in account mode: own profile, change password, sign out
+  function openAccountMenu() {
+    const u = me(), A = AUTH();
+    openModal("My account", `<div class="acct-me">${avatar(u, "av lg")}<span><b>${esc(u.name)}</b><small>${esc(u.title)}</small>${A.login ? `<small class="notr">${esc(A.login)}</small>` : ""}</span></div>
+      <div class="acct-menu">${btn("My profile", () => { closeAllModals(); openPerson(u); })}${btn("Change password", openChangePassword)}${btn("Sign out", () => signOut(), "danger")}</div>`);
+  }
+  // Before the app opens: check a saved sign-in, and ask for a new password when needed.
+  async function authGate() {
+    for (;;) {
+      await gateOpen();
+      const A = AUTH();
+      if (A.mode !== "account") return;
+      if (!A.verified) {
+        let r;
+        try { r = await authRpc("gid_session", { p_token: A.token }); }
+        catch (e) { await netScreen(e.message); continue; }
+        if (!r.ok) { if (window.GID_SHOW_GATE) { window.GID_SHOW_GATE(r.error === "no_session" ? SIGNED_OUT_MSG : r.error === "disabled" || r.error === "rejected" ? "This account cannot sign in. Ask HR." : SIGNED_OUT_MSG); continue; } dropSession(); location.reload(); return new Promise(() => {}); }
+        Object.assign(A, { staff_id: r.staff_id, name: r.name, account_id: r.account_id, login: r.login, must_change_password: !!r.must_change_password, verified: true });
+      }
+      if (A.must_change_password) await mustChangeScreen();
+      return;
+    }
+  }
+  // While the app is open: check the sign-in every 5 minutes and when the app comes back to the screen
+  function sessionWatch() {
+    if (!accountMode()) return;
+    let last = Date.now();
+    const check = async () => {
+      if (!accountMode() || offlineNow()) return; last = Date.now();
+      let r; try { r = await authRpc("gid_session", { p_token: AUTH().token }); } catch (e) { return; /* no internet: try again later */ }
+      if (!r.ok || (r.staff_id && r.staff_id !== state.user)) signOut(SIGNED_OUT_MSG);
+      else if (r.must_change_password) { AUTH().must_change_password = true; closeAllModals(); await mustChangeScreen(); render(); }
+    };
+    setInterval(check, 5 * 60000);
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && Date.now() - last > 30000) check(); });
+  }
+
+  // ---------- People → Accounts (HR, System Admin, backup admin, MD) ----------
+  const canAccounts = (u) => ["HR", "SYSADMIN", "BACKUPADMIN", "MD"].some((t) => hasTag(u, t));
+  const ACC = { list: [], loaded: false, loading: false, err: "" };
+  async function accLoad() {
+    if (ACC.loading) return; ACC.loading = true;
+    try {
+      const r = await authRpc("gid_accounts", { p_token: AUTH().token });
+      if (r.ok) { ACC.list = r.accounts || []; ACC.err = ""; }
+      else if (r.error === "no_session") { ACC.loading = false; return signOut(SIGNED_OUT_MSG); }
+      else ACC.err = r.error === "not_allowed" ? "Only HR, the System Admin and the MD can manage accounts." : SERVER_MSG;
+    } catch (e) { ACC.err = e.message; }
+    ACC.loaded = true; ACC.loading = false;
+    if (state.route === "people" && state.tab.people === "accounts" && !$("#modal")) render();
+  }
+  function accReload() { ACC.loaded = false; accLoad(); }
+  const accLogin = (a) => [a.login_phone, a.login_email].filter(Boolean).join(" · ");
+  const accWhen = (iso) => iso ? fmtDate(iso) + " " + timeOf(iso) : "";
+  async function accDecide(a, action, staffId) {
+    const r = await authRpc("gid_decide_account", { p_token: AUTH().token, p_account_id: a.id, p_action: action, p_staff_id: staffId || null });
+    if (r.ok) return true;
+    if (r.error === "no_session") { signOut(SIGNED_OUT_MSG); return false; }
+    throw new Error(r.error === "exists" ? "This staff profile is already used by another active account." : r.error === "not_found" ? "This account or staff profile was not found. Press Refresh." : r.error === "not_allowed" ? "Only HR, the System Admin and the MD can manage accounts." : SERVER_MSG);
+  }
+  function accApprove(a) {
+    const used = new Set(ACC.list.filter((x) => x.status === "active" && x.id !== a.id && x.staff_id).map((x) => x.staff_id));
+    const opts = staffOptions(staffNow().filter((s) => !used.has(s.id)));
+    const sug = a.suggested_staff_id && !used.has(a.suggested_staff_id) && byId("staff", a.suggested_staff_id) ? a.suggested_staff_id : "";
+    formModal("Approve account", [{ name: "staff_id", label: "Staff profile", type: "select", options: opts, blank: "Choose a person", value: sug, required: true, help: "The staff profile sets what this person can see and do." }], async (v) => {
+      if (!v.staff_id) throw new Error("Choose the staff profile for this person.");
+      if (await accDecide(a, "approve", v.staff_id)) { toast("Account approved. " + a.full_name + " can sign in now."); accReload(); }
+    }, "Approve", { extraHtml: `<p class="muted small"><b class="notr">${esc(a.full_name)}</b> · <span class="notr">${esc(accLogin(a))}</span>${a.note ? `<br>${esc(a.note)}` : ""}</p>` });
+  }
+  function accSimple(a, action, title, label, text, done, danger) {
+    formModal(title, [], async () => { if (await accDecide(a, action, a.staff_id)) { toast(done); accReload(); } }, label, { extraHtml: `<p><b class="notr">${esc(a.full_name)}</b> · <span class="notr">${esc(accLogin(a))}</span></p><p class="muted small">${text}</p>`, onReady: danger ? (m) => { const b = m.querySelector("button[type=submit]"); if (b) b.classList.add("danger"); } : null });
+  }
+  function accReset(a) {
+    let temp = "";
+    formModal("Reset password", [], async () => {
+      const r = await authRpc("gid_reset_password", { p_token: AUTH().token, p_account_id: a.id });
+      if (r.error === "no_session") { signOut(SIGNED_OUT_MSG); return false; }
+      if (!r.ok || !r.temp_password) throw new Error(r.error === "not_allowed" ? "Only HR, the System Admin and the MD can manage accounts." : r.error === "not_found" ? "This account or staff profile was not found. Press Refresh." : SERVER_MSG);
+      temp = r.temp_password; setTimeout(() => accShowTemp(a, temp), 0);
+    }, "Reset password", { extraHtml: `<p><b class="notr">${esc(a.full_name)}</b> · <span class="notr">${esc(accLogin(a))}</span></p><p class="muted small">This makes a new temporary password and signs the person out on every device.</p>` });
+  }
+  function accShowTemp(a, temp) {
+    openModal("Temporary password", `<p><b class="notr">${esc(a.full_name)}</b></p><div class="temppw"><code class="notr" id="tpw">${esc(temp)}</code><button type="button" class="btn primary" id="tpcopy">Copy</button></div>
+      <p class="muted small">Give this to the person in person. They must change it when they sign in.</p><div class="form-actions"><button type="button" class="btn" data-act="${act(closeAllModals)}">Done</button></div>`, (m) => {
+      m.querySelector("#tpcopy").onclick = async () => {
+        try { await navigator.clipboard.writeText(temp); toast("Copied"); }
+        catch (e) { const r = document.createRange(); r.selectNodeContents(m.querySelector("#tpw")); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); toast("Select and copy the password by hand.", true); }
+      };
+    });
+    accReload();
+  }
+  function accountsTab(u) {
+    if (Store.mode !== "supabase") return `<section class="card"><h2>Accounts</h2><p class="muted">Accounts need the shared database.</p></section>`;
+    if (!accountMode()) return `<section class="card"><h2>Accounts</h2><p class="muted">Sign in with your own account (not the demo passkey) to approve and manage accounts.</p></section>`;
+    if (!ACC.loaded) { AFTER.push(accLoad); return `<section class="card"><h2>Accounts</h2><p class="muted">Loading accounts…</p></section>`; }
+    const head = `<div class="card-head"><h2>Accounts</h2><div class="quick">${btn("Refresh", accReload)}</div></div>`;
+    if (ACC.err) return `<section class="card accounts">${head}<p class="warnline">${esc(ACC.err)}</p>${btn("Retry", accReload, "primary")}</section>`;
+    const q = String(state.search || "").toLowerCase();
+    const list = ACC.list.filter((a) => !q || [a.full_name, a.login_phone, a.login_email, a.note, staffName(a.staff_id)].join(" ").toLowerCase().includes(q));
+    const pend = list.filter((a) => a.status === "pending").sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+    const active = list.filter((a) => a.status === "active").sort((a, b) => String(a.full_name).localeCompare(String(b.full_name)));
+    const off = list.filter((a) => a.status === "disabled" || a.status === "rejected");
+    const isMe = (a) => a.id === AUTH().account_id || (!!a.staff_id && a.staff_id === state.user); // nobody decides on their own account
+    const who = (a) => `<b class="notr">${esc(a.full_name)}</b>`;
+    const prof = (id) => { const s = byId("staff", id); return s ? `<span class="notr">${esc(s.name)}</span><br><small class="muted">${esc(s.title)}</small>` : ""; };
+    const actions = (h) => `<div class="acc-acts">${h}</div>`;
+    const sec = (title, rows, cols, emptyMsg) => `<h3 class="acc-h">${esc(title)} <span class="count">${rows.length}</span></h3>${rows.length ? `<div class="tscroll">${table(cols, rows)}</div>` : empty(emptyMsg)}`;
+    return `<section class="card accounts">${head}<p class="muted small">People who created an account wait here until you link them to their staff profile. The profile sets what they can see and do.</p>
+      ${sec("Waiting for approval", pend, [{ label: "Name", get: who }, { label: "Login", get: (a) => `<span class="notr">${esc(accLogin(a))}</span>` }, { label: "Job / team", get: (a) => `<span class="notr">${esc(a.note || "")}</span>` },
+        { label: "Signed up", get: (a) => esc(accWhen(a.created_at)) }, { label: "Suggested profile", get: (a) => prof(a.suggested_staff_id) || '<span class="muted">No match</span>' },
+        { label: "", get: (a) => isMe(a) ? '<span class="chip g">You</span>' : actions(btn("Approve", () => accApprove(a), "primary small") + btn("Reject", () => accSimple(a, "reject", "Reject account", "Reject", "This person will not be able to sign in.", "Account rejected.", true), "small")) }], "No one is waiting.")}
+      ${sec("Active accounts", active, [{ label: "Name", get: who }, { label: "Login", get: (a) => `<span class="notr">${esc(accLogin(a))}</span>` }, { label: "Staff profile", get: (a) => prof(a.staff_id) },
+        { label: "Last sign-in", get: (a) => a.last_sign_in ? esc(accWhen(a.last_sign_in)) : '<span class="muted">Never</span>' },
+        { label: "", get: (a) => isMe(a) ? '<span class="chip g">You</span>' : actions(btn("Reset password", () => accReset(a), "small") + btn("Disable", () => accSimple(a, "disable", "Disable account", "Disable", "This person is signed out everywhere and cannot sign in until the account is enabled again.", "Account disabled.", true), "danger small")) }], "No active accounts yet.")}
+      ${sec("Disabled / rejected", off, [{ label: "Name", get: who }, { label: "Login", get: (a) => `<span class="notr">${esc(accLogin(a))}</span>` }, { label: "Status", get: (a) => badge(a.status === "rejected" ? "Rejected" : "Disabled") },
+        { label: "Decided", get: (a) => esc([accWhen(a.decided_at), staffName(a.decided_by) || ""].filter(Boolean).join(" · ")) },
+        { label: "", get: (a) => isMe(a) ? '<span class="chip g">You</span>' : actions(a.staff_id ? btn("Enable", () => accSimple(a, "enable", "Enable account", "Enable", "This person can sign in again with the same staff profile.", "Account enabled.")) : btn("Enable", () => accSimple(a, "enable", "Enable account", "Enable", "The request goes back to Waiting for approval, so you can link it to a staff profile.", "Request moved back to Waiting for approval."), "small")) }], "None.")}
+    </section>`;
+  }
+
   // Switch person (demo): a window with everyone in org chart order, photos and a search box.
   // (The phone's own drop-down list cannot be coloured reliably, so it is not used.)
-  function switchUser(id) { state.user = id; setTimeout(devCheck, 50); try { localStorage.setItem(LS_KEY + "-user", state.user); } catch (x) { /* ignore */ } state.project = ""; state.search = ""; state.showAll = false; permDraft = null; closeDrawer(); closeAllModals(); render(); }
+  function switchUser(id) {
+    if (accountMode()) { toast("You are signed in with your own account. Switching person only works with the demo passkey.", true); return; }
+    state.user = id; setTimeout(devCheck, 50); try { localStorage.setItem(LS_KEY + "-user", state.user); } catch (x) { /* ignore */ } state.project = ""; state.search = ""; state.showAll = false; permDraft = null; closeDrawer(); closeAllModals(); render(); }
   function openUserPicker() {
+    if (accountMode()) return openAccountMenu();
     const u = me();
     const sections = [["EXEC", "Executive"]].concat(ORG_DEPTS).map(([k, label]) => {
       const list = staffNow().filter((s) => orgDeptOf(s) === k); const ordered = k === "EXEC" ? list.sort(orgSort) : [].concat(...orgRows(list, k));
@@ -4081,7 +4310,7 @@
     MSTACK.forEach((x) => x.acts.forEach((f, k) => keepActs.set(k, f)));
     ACTS = keepActs; AFTER.length = 0;
     applyUI(uiPref(me()));
-    const u = me();
+    const u = me(), acc = accountMode();
     let route = routeFromHash();
     const mod = (NAV.find((n) => n[0] === route) || [])[2];
     if (route !== "home" && !navVisible(u, mod === undefined ? null : mod)) route = "home";
@@ -4104,7 +4333,7 @@
       <button data-act="${act(() => document.body.classList.toggle("nav-open"))}" aria-label="Open full menu">${svgI("menu")}<span>Menu</span></button></nav>`;
     $("#app").innerHTML = `<div class="app">
       <aside class="rail" aria-label="Main menu"><a class="logo" href="#" aria-label="GID home"><img src="img/logo-landscape.png" alt="Green In Design · Interior &amp; Exterior"></a>
-        <div class="rail-sub"><span class="demo">DEMO</span>${isAdminPage(u) ? `<button class="resetbtn" title="Put the demo back to its starting data" data-act="${act(resetDemo)}">${svgI("reset")}<span>Reset demo</span></button>` : `<span class="rs-name">Management system</span>`}<button class="lockbtn" title="Lock the demo on this device" aria-label="Lock the demo on this device" data-act="${act(lockThisDevice)}">${svgI("lock")}</button></div>
+        <div class="rail-sub"><span class="demo">DEMO</span>${isAdminPage(u) ? `<button class="resetbtn" title="Put the demo back to its starting data" data-act="${act(resetDemo)}">${svgI("reset")}<span>Reset demo</span></button>` : `<span class="rs-name">Management system</span>`}${accountMode() ? `<button class="lockbtn" title="Sign out" aria-label="Sign out" data-act="${act(() => signOut())}">${svgI("lock")}</button>` : `<button class="lockbtn" title="Lock the demo on this device" aria-label="Lock the demo on this device" data-act="${act(lockThisDevice)}">${svgI("lock")}</button>`}</div>
         <div class="rail-label">Menu</div>
         <nav class="nav">${nav}</nav>
         <button class="me-card" data-act="${act(() => openPerson(u))}" aria-label="My profile">${avatar(u, "av lg")}<span><b>${esc(u.name)}</b><small>${esc(u.title)}</small></span></button></aside>
@@ -4117,9 +4346,10 @@
             <div class="gsearch"><label>${svgI("search")}<input id="gq" placeholder="Search projects, POs, drawings, stock" aria-label="Search everything" autocomplete="off"></label><div class="gresults" id="gres" hidden></div></div>
             <button class="icon uibtn" id="uibtn" aria-label="Display: theme and language" title="Theme and language" data-act="${act(openDisplay)}">${svgI(document.documentElement.dataset.theme === "dark" ? "moon" : "sun")}</button>
             <button class="icon bell-ring" id="bell" data-badge="all" aria-label="${unread} unread notifications" data-act="${act(() => openDrawer("mine"))}">${svgI("bell")}${nb("all", unread)}</button>
-            <button type="button" class="who" id="who" title="Demo: switch person to test each role" aria-label="Acting as ${esc(u.name)}. Switch person" data-act="${act(openUserPicker)}">${avatar(u)}<span class="who-t"><b>${esc(u.name)}</b><small>${esc(u.title)}</small></span><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+            ${acc ? "" : '<span class="modechip" title="Signed in with the demo passkey: you can switch between sample people">Demo mode</span>'}
+            <button type="button" class="who${acc ? " acct" : ""}" id="who" ${acc ? `title="My account" aria-label="${esc(u.name)}. My account"` : `title="Demo: switch person to test each role" aria-label="Acting as ${esc(u.name)}. Switch person"`} data-act="${act(acc ? openAccountMenu : openUserPicker)}">${avatar(u)}<span class="who-t"><b>${esc(u.name)}</b><small>${esc(u.title)}</small></span><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
           </div></header>
-        <div class="banner"><b>Demo:</b> tap your name at the top to switch person and test each role</div>
+        ${acc ? "" : '<div class="banner"><b>Demo:</b> tap your name at the top to switch person and test each role</div>'}
         ${body}
       </main>${tabbar}${outboxBar()}</div>`;
     const gq = $("#gq"), gres = $("#gres");
@@ -4145,25 +4375,41 @@
 
   window.addEventListener("hashchange", () => { state.search = ""; closeAllModals(); render(); });
 
-  // The app and its data load in the background while the passkey screen is open; screens appear once it is unlocked
+  // The app and its data load in the background while the sign-in screen is open; screens appear once the person is in
   const gateOpen = () => window.GID_GATE || Promise.resolve();
   async function start() {
+    // Start reading the data now (in the background) while the sign-in screen is open
+    let loadErr = null, loaded = false;
+    const loading = Store.init().then(() => { loaded = true; }, (e) => { loadErr = e; });
     try {
-      await Store.init();
-      await gateOpen();
+      await authGate();
+      await Promise.race([loading, new Promise((res) => setTimeout(() => { if (!loaded && Store.mode === "supabase") loadErr = loadErr || authErr("network"); res(); }, 45000))]);
+      if (loadErr) throw loadErr;
       if (Store.mode === "supabase" && !db.staff.length) {
         $("#app").innerHTML = `<div class="setup card"><h1>Database is ready</h1><p>Your Supabase tables are empty. Load the demo data (40 staff, 3 demo projects and sample records) to start testing.</p><button class="btn primary" id="load">Load demo data</button></div>`;
         $("#load").onclick = async () => { $("#load").disabled = true; try { await Store.reset(); start(); } catch (e) { toast(e.message, true); $("#load").disabled = false; } };
         return;
       }
-      let saved = null; try { saved = localStorage.getItem(LS_KEY + "-user"); } catch (e) { /* ignore */ }
-      state.user = byId("staff", saved) ? saved : "s01";
+      if (accountMode()) {
+        // Signed in with an account: always this person, never switched
+        const A = AUTH(), st = byId("staff", A.staff_id);
+        if (!st || st.left_on) {
+          $("#app").innerHTML = `<main class="gate"><div class="gate-card"><img class="gate-logo" src="img/logo-square.png" alt="Green In Design · Interior &amp; Exterior"><h1>Management System</h1><p class="gate-err" role="alert">Your account is not linked to a current staff profile. Ask HR.</p><button class="btn gate-go" id="outbtn" type="button">Sign out</button></div></main>`;
+          $("#outbtn").onclick = () => signOut(); translateNow(); return;
+        }
+        state.user = st.id;
+      } else {
+        let saved = null; try { saved = localStorage.getItem(LS_KEY + "-user"); } catch (e) { /* ignore */ }
+        state.user = byId("staff", saved) ? saved : "s01";
+      }
+      sessionWatch();
       const deep = /^#open=([a-z_]+):(.+)$/.exec(location.hash || "");
       if (deep) { history.replaceState(null, "", location.pathname + location.search); render(); devStart(); openRecord(deep[1], decodeURIComponent(deep[2])); return; }
       render();
       devStart();
     } catch (e) {
       await gateOpen();
+      if (e.code === "network" || /fetch|network|load failed|timeout/i.test(e.message || "")) { await netScreen(NET_MSG); location.reload(); return; }
       $("#app").innerHTML = `<div class="setup card"><h1>Could not start</h1><p>${esc(e.message)}</p><p class="muted">Check config.js and SETUP.md step 3.</p></div>`;
     }
   }

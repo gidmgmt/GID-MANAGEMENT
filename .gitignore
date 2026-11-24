@@ -1,3 +1,4 @@
 tests/.libs/
 *.png
 __pycache__/
+v[0-9]*-*.png

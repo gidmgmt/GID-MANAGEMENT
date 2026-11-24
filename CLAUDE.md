@@ -30,7 +30,7 @@ Give each agent a precise brief: the files, the business rule, the roles involve
 
 ## How the app is built
 Plain HTML/JS, no build step. Files:
-- `index.html`: passkey gate (hash only), particle intro, loads the scripts.
+- `index.html`: start screen with three tabs (Sign in · Create account · Demo passkey), particle intro, loads the scripts. Accounts: see `docs/AUTH-SPEC.md` (private.accounts / private.sessions, `gid_*` functions, `authRpc()` in app.js, `window.GID_AUTH`).
 - `config.js`: `window.GID_CONFIG = { SUPABASE_URL, SUPABASE_ANON_KEY }`. Empty values = **local mode** (localStorage `gid-demo-v6`, used by all tests).
 - `data.js`: `GID.TABLES` (every table and column → also drives `tools/gen-sql.js`), `GID.PERMS` (module × user group → none/view/own/edit/approve/admin), seed data (`seed()`), staff list with groups and tags (MD, PM, SITEMGR, HEAD, QAQC, DOC, HR, PROC, SYSADMIN, BACKUPADMIN…).
 - `app.js` (~6k lines, one IIFE):

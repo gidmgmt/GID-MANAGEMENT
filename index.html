@@ -23,7 +23,7 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <!-- Animated start-up intro (plays first, then the passkey screen shows) -->
+  <!-- Animated start-up intro (plays first, then the sign-in screen shows) -->
   <script src="splash-particles.js"></script>
   <div id="app"><div class="setup card"><p>Loading…</p></div></div>
   <script src="config.js"></script>
@@ -32,7 +32,7 @@
   <script src="i18n.js"></script>
   <script src="map.js"></script>
   <script>
-    // ---- Passkey screen (DEMO) ----
+    // ---- Sign-in screen: account sign in, create account, or the demo passkey ----
     // Only a fingerprint (SHA-256) of the passkey is stored here, never the passkey itself.
     // To change the passkey, put the new fingerprint in PASS_HASH (see SETUP.md, "Change the passkey").
     var PASS_HASH = "718084f8bbdaf9f9059effd6f1adb66dd8f6021238c4777793a5424833900b9b";
@@ -62,15 +62,27 @@
       }
       return Promise.resolve(H.map(function (x) { return (x >>> 0).toString(16).padStart(8, "0"); }).join(""));
     }
-    function savedPass() { try { return localStorage.getItem(PASS_KEY) || sessionStorage.getItem(PASS_KEY); } catch (e) { return null; } }
-    var openGate; window.GID_GATE = new Promise(function (res) { openGate = res; });
-    window.GID_LOCK = function () { try { localStorage.removeItem(PASS_KEY); sessionStorage.removeItem(PASS_KEY); } catch (e) { /* ignore */ } location.reload(); };
+    var SESSION_KEY = "gid-session";
+    var CFG = window.GID_CONFIG || {};
+    var SHARED = !!(CFG.SUPABASE_URL && CFG.SUPABASE_ANON_KEY); // false = local mode (browser demo): only the passkey works
+    function store(k) { try { return localStorage.getItem(k) || sessionStorage.getItem(k); } catch (e) { return null; } }
+    function drop(k) { try { localStorage.removeItem(k); sessionStorage.removeItem(k); } catch (e) { /* ignore */ } }
+    function keep(k, v, remember) { try { drop(k); (remember ? localStorage : sessionStorage).setItem(k, v); } catch (e) { /* ignore */ } }
+    function savedPass() { return store(PASS_KEY); }
+    // The app waits for GID_GATE. GID_AUTH says how the person came in: { mode: "account", token, staff_id, ... } or { mode: "passkey" }.
+    var openGate;
+    function newGate() { window.GID_GATE = new Promise(function (res) { openGate = res; }); return window.GID_GATE; }
+    newGate();
+    window.GID_AUTH = null;
+    window.GID_LOCK = function () { drop(PASS_KEY); drop(SESSION_KEY); location.reload(); };
+    window.GID_DROP_SESSION = function () { drop(SESSION_KEY); };
+    // app.js calls this when a saved sign-in is no longer valid: show the sign-in screen again and wait
+    window.GID_SHOW_GATE = function (msg) { drop(SESSION_KEY); window.GID_AUTH = null; var g = newGate(); showGate(msg); return g; };
 
     // Load the Supabase library only when config.js has a Supabase address; otherwise run the browser demo.
     function bootApp() {
-      var c = window.GID_CONFIG || {};
       function startApp() { var s = document.createElement("script"); s.src = "app.js"; document.body.appendChild(s); }
-      if (c.SUPABASE_URL && c.SUPABASE_ANON_KEY) {
+      if (SHARED) {
         var s = document.createElement("script");
         s.src = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2";
         s.onload = startApp; s.onerror = startApp;
@@ -78,40 +90,173 @@
       } else { startApp(); }
     }
 
-    function showGate() {
+    // Sign-in calls go to app.js (it owns the Supabase connection): window.GID_AUTH_API.rpc(name, args)
+    var NET_MSG = "Can't reach the server. Check the internet and try again.";
+    var SERVER_MSG = "The server could not do this right now. Try again later.";
+    function callRpc(name, args) {
+      return new Promise(function (res, rej) {
+        if (window.GID_AUTH_API) return res(window.GID_AUTH_API);
+        var t = setTimeout(function () { var e = new Error("network"); e.code = "network"; rej(e); }, 20000);
+        window.addEventListener("gid:auth-ready", function () { clearTimeout(t); res(window.GID_AUTH_API); }, { once: true });
+      }).then(function (api) { return api.rpc(name, args); });
+    }
+    function esc(x) { return String(x == null ? "" : x).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+    var strongPw = function (p) { return p.length >= 8 && /[A-Za-z]/.test(p) && /[0-9]/.test(p); };
+    function eyeBtn(id, what) { return '<button type="button" class="gate-eye" data-eye="' + id + '" aria-label="Show ' + what + '">Show</button>'; }
+    function field(label, input, help) { return '<label class="gate-field"><span>' + label + '</span>' + input + (help ? '<small class="gate-help">' + help + '</small>' : "") + '</label>'; }
+    function pwIn(id, ac, what) { return '<span class="gate-in"><input id="' + id + '" type="password" autocomplete="' + ac + '" required>' + eyeBtn(id, what) + '</span>'; }
+    var OFF = '<div class="gate-off"><p>Sign in needs the shared database. Use the demo passkey.</p><button type="button" class="btn gate-go" data-goto="pk">Use the demo passkey</button></div>';
+
+    function showGate(msg) {
       var app = document.getElementById("app");
-      app.innerHTML = '<main class="gate"><form class="gate-card" id="gate" autocomplete="off">' +
+      var tab = SHARED ? "in" : "pk";
+      try { var kicked = sessionStorage.getItem("gid-kicked"); if (kicked) { msg = msg || kicked; sessionStorage.removeItem("gid-kicked"); } } catch (x) { /* ignore */ }
+      if (SHARED && store("gid-gate-tab") === "pk") tab = "pk"; // the person used the passkey last time on this device
+      var tabBtn = function (k, label) { return '<button type="button" role="tab" class="gseg-b" id="t-' + k + '" data-tab="' + k + '" aria-controls="p-' + k + '">' + label + '</button>'; };
+      app.innerHTML = '<main class="gate"><div class="gate-card" id="gcard">' +
         '<img class="gate-logo" src="img/logo-square.png" alt="Green In Design · Interior &amp; Exterior">' +
-        '<h1>Management System</h1><p class="gate-sub">Demo for the GID team. Enter the passkey to continue.</p>' +
-        '<label class="gate-field"><span>Passkey</span><span class="gate-in"><input id="pk" type="password" autocomplete="current-password" required aria-describedby="pkerr">' +
-        '<button type="button" class="gate-eye" id="eye" aria-label="Show passkey">Show</button></span></label>' +
-        '<label class="chk gate-chk"><input type="checkbox" id="rem" checked> Remember this device</label>' +
-        '<p class="gate-err" id="pkerr" role="alert"></p>' +
-        '<button class="btn primary gate-go" type="submit">Unlock</button>' +
-        '<p class="gate-note">Demo with sample data only. Ask the system admin for the passkey.</p></form></main>';
+        '<h1>Management System</h1>' +
+        '<div class="gseg" role="tablist" aria-label="How to sign in">' + tabBtn("in", "Sign in") + tabBtn("up", "Create account") + tabBtn("pk", "Demo passkey") + '</div>' +
+        '<p class="gate-err info gate-msg" id="gmsg" role="status"' + (msg ? "" : " hidden") + '>' + esc(msg || "") + '</p>' +
+        // Sign in
+        '<div class="gate-pane" id="p-in" role="tabpanel" aria-labelledby="t-in">' + (SHARED ? '<form id="gin" autocomplete="on" novalidate>' +
+          field("Phone number or email", '<input id="li" type="text" autocomplete="username" autocapitalize="off" spellcheck="false" required>') +
+          field("Password", pwIn("lp", "current-password", "password")) +
+          '<label class="chk gate-chk"><input type="checkbox" id="lrem" checked> Remember this device</label>' +
+          '<div class="gate-err" id="lerr" role="alert"></div>' +
+          '<button class="btn primary gate-go" type="submit">Sign in</button>' +
+          '<p class="gate-note">New here? Choose Create account. Forgot your password? Ask HR.</p></form>' : OFF) + '</div>' +
+        // Create account
+        '<div class="gate-pane" id="p-up" role="tabpanel" aria-labelledby="t-up">' + (SHARED ? '<form id="gup" autocomplete="on" novalidate>' +
+          field("Full name", '<input id="un" type="text" autocomplete="name" required>') +
+          field("Phone number or email", '<input id="ul" type="text" autocomplete="username" autocapitalize="off" spellcheck="false" required>') +
+          field("Password", pwIn("up1", "new-password", "password"), "At least 8 characters, with a letter and a number.") +
+          field("Confirm password", pwIn("up2", "new-password", "password")) +
+          field("Your job / team (so HR can find you)", '<input id="uj" type="text" autocomplete="organization-title">') +
+          '<div class="gate-err" id="uerr" role="alert"></div>' +
+          '<button class="btn primary gate-go" type="submit">Create account</button></form>' : OFF) + '</div>' +
+        // Demo passkey (unchanged check: only the fingerprint is compared)
+        '<div class="gate-pane" id="p-pk" role="tabpanel" aria-labelledby="t-pk"><form id="gate" autocomplete="off">' +
+          '<p class="gate-sub">Demo only: you can switch between sample people.</p>' +
+          '<label class="gate-field"><span>Passkey</span><span class="gate-in"><input id="pk" type="password" autocomplete="current-password" required aria-describedby="pkerr">' +
+          '<button type="button" class="gate-eye" id="eye" data-eye="pk" aria-label="Show passkey">Show</button></span></label>' +
+          '<label class="chk gate-chk"><input type="checkbox" id="rem" checked> Remember this device</label>' +
+          '<p class="gate-err" id="pkerr" role="alert"></p>' +
+          '<button class="btn primary gate-go" type="submit">Unlock</button>' +
+          '<p class="gate-note">Demo with sample data only. Ask the system admin for the passkey.</p></form></div>' +
+        '</div></main>';
+      var card = document.getElementById("gcard");
+      function shake() { card.classList.remove("shake"); void card.offsetWidth; card.classList.add("shake"); }
+      function pick(k, focus) {
+        tab = k;
+        ["in", "up", "pk"].forEach(function (x) { var b = document.getElementById("t-" + x), p = document.getElementById("p-" + x); b.classList.toggle("on", x === k); b.setAttribute("aria-selected", x === k ? "true" : "false"); b.tabIndex = x === k ? 0 : -1; p.hidden = x !== k; });
+        if (focus !== false) { var f = document.querySelector("#p-" + k + " input:not([type=checkbox])"); if (f) f.focus(); }
+      }
+      card.addEventListener("click", function (e) {
+        var t = e.target.closest("[data-tab],[data-goto]"); if (t) { pick(t.dataset.tab || t.dataset.goto); return; }
+        var eye = e.target.closest("[data-eye]"); if (eye) { var inp = document.getElementById(eye.dataset.eye), show = inp.type === "password"; inp.type = show ? "text" : "password"; eye.textContent = show ? "Hide" : "Show"; eye.setAttribute("aria-label", (show ? "Hide " : "Show ") + (eye.dataset.eye === "pk" ? "passkey" : "password")); }
+      });
+      document.querySelector(".gseg").addEventListener("keydown", function (e) {
+        var order = ["in", "up", "pk"], i = order.indexOf(tab);
+        if (e.key === "ArrowRight" || e.key === "ArrowLeft") { e.preventDefault(); var n = order[(i + (e.key === "ArrowRight" ? 1 : 2)) % 3]; pick(n, false); document.getElementById("t-" + n).focus(); }
+      });
+      pick(tab, false);
+      var first = document.querySelector("#p-" + tab + " input:not([type=checkbox])"); if (first) first.focus();
+
+      // Show a message in a form, with a Retry button when the server could not be reached
+      function say(el, text, retryForm) {
+        el.innerHTML = esc(text) + (retryForm ? ' <button type="button" class="gate-retry">Retry</button>' : "");
+        if (retryForm) el.querySelector(".gate-retry").onclick = function () { retryForm.requestSubmit ? retryForm.requestSubmit() : retryForm.dispatchEvent(new Event("submit", { cancelable: true })); };
+        if (typeof window.translateNow === "function") window.translateNow(el);
+      }
+      function busy(form, on, label) { var b = form.querySelector(".gate-go"); if (!b.dataset.label) b.dataset.label = b.textContent; b.disabled = on; b.textContent = on ? label : b.dataset.label; }
+      function failed(el, form, e) { say(el, e && e.code === "server" ? SERVER_MSG : NET_MSG, form); }
+      var hideMsg = function () { var m = document.getElementById("gmsg"); if (m) m.hidden = true; };
+
+      if (SHARED) {
+        var fin = document.getElementById("gin"), lerr = document.getElementById("lerr");
+        fin.onsubmit = function (e) {
+          e.preventDefault(); hideMsg();
+          var login = document.getElementById("li").value.trim(), pw = document.getElementById("lp").value, rem = document.getElementById("lrem").checked;
+          if (!login || !pw) { say(lerr, "Enter your phone number or email and your password."); return; }
+          busy(fin, true, "Signing in…"); say(lerr, "");
+          callRpc("gid_sign_in", { p_login: login, p_password: pw, p_device: store("gid-device-id") || "" }).then(function (r) {
+            busy(fin, false);
+            if (r && r.ok && r.token) {
+              keep(SESSION_KEY, r.token, rem); drop(PASS_KEY); keep("gid-gate-tab", "in", true);
+              window.GID_AUTH = { mode: "account", token: r.token, staff_id: r.staff_id, name: r.name, must_change_password: !!r.must_change_password, expires_at: r.expires_at, verified: true, remember: rem };
+              app.innerHTML = '<div class="setup card"><p>Loading…</p></div>'; openGate(); return;
+            }
+            var c = (r && r.error) || "";
+            var text = c === "pending" ? "Your account is waiting for approval by HR or the System Admin."
+              : c === "rejected" || c === "disabled" ? "This account cannot sign in. Ask HR."
+              : c === "locked" ? "Too many wrong tries. Try again in " + Math.max(1, Math.ceil(Number(r.minutes) || 15)) + " minutes."
+              : c === "invalid_login" ? "Enter a phone number like 012 345 678 or an email address."
+              : c === "wrong" ? "Wrong phone/email or password." : SERVER_MSG;
+            if (c === "wrong") { document.getElementById("lp").value = ""; shake(); }
+            say(lerr, text);
+          }, function (err) { busy(fin, false); failed(lerr, fin, err); });
+        };
+        var fup = document.getElementById("gup"), uerr = document.getElementById("uerr");
+        // A message under one box (and the cursor put there)
+        function fieldErr(id, text) {
+          var inp = document.getElementById(id), lab = inp.closest(".gate-field"), el = lab.querySelector(".gate-ferr");
+          if (!el) { el = document.createElement("small"); el.className = "gate-ferr"; el.setAttribute("role", "alert"); lab.appendChild(el); }
+          el.textContent = text; inp.setAttribute("aria-invalid", "true"); inp.focus();
+          inp.addEventListener("input", function () { el.remove(); inp.removeAttribute("aria-invalid"); }, { once: true });
+          if (typeof window.translateNow === "function") window.translateNow(el);
+        }
+        function clearFieldErrs() { fup.querySelectorAll(".gate-ferr").forEach(function (x) { x.remove(); }); fup.querySelectorAll("[aria-invalid]").forEach(function (x) { x.removeAttribute("aria-invalid"); }); }
+        fup.onsubmit = function (e) {
+          e.preventDefault(); hideMsg(); clearFieldErrs();
+          var name = document.getElementById("un").value.trim(), login = document.getElementById("ul").value.trim(), p1 = document.getElementById("up1").value, p2 = document.getElementById("up2").value, note = document.getElementById("uj").value.trim();
+          if (!name) { fieldErr("un", "Enter your full name."); return; }
+          if (!login) { fieldErr("ul", "Enter a phone number like 012 345 678 or an email address."); return; }
+          if (!strongPw(p1)) { fieldErr("up1", "At least 8 characters, with a letter and a number."); return; }
+          if (p1 !== p2) { fieldErr("up2", "The two passwords are not the same."); return; }
+          busy(fup, true, "Sending…"); say(uerr, "");
+          callRpc("gid_sign_up", { p_login: login, p_password: p1, p_name: name, p_note: note }).then(function (r) {
+            busy(fup, false);
+            if (r && r.ok) {
+              document.getElementById("p-up").innerHTML = '<div class="gate-done"><p class="gate-ok" role="status">Request sent. You can sign in after HR or the System Admin approves you.</p><button type="button" class="btn primary gate-go" data-goto="in">Back to sign in</button></div>';
+              var li = document.getElementById("li"); if (li) li.value = login;
+              if (typeof window.translateNow === "function") window.translateNow(document.getElementById("p-up"));
+              return;
+            }
+            var c = (r && r.error) || "";
+            if (c === "invalid_login" && r.field === "name") return fieldErr("un", "Enter your full name.");
+            if (c === "invalid_login") return fieldErr("ul", "Enter a phone number like 012 345 678 or an email address.");
+            if (c === "weak_password") return fieldErr("up1", "At least 8 characters, with a letter and a number.");
+            if (c === "exists") return fieldErr("ul", "This phone number or email already has an account. Sign in, or ask HR to reset your password.");
+            say(uerr, SERVER_MSG);
+          }, function (err) { busy(fup, false); failed(uerr, fup, err); });
+        };
+      }
+
       var f = document.getElementById("gate"), pk = document.getElementById("pk"), err = document.getElementById("pkerr"), fails = 0, waitUntil = 0;
-      pk.focus();
-      try { var kicked = sessionStorage.getItem("gid-kicked"); if (kicked) { err.textContent = kicked; err.classList.add("info"); sessionStorage.removeItem("gid-kicked"); } } catch (x) { /* ignore */ }
-      document.getElementById("eye").onclick = function () { var show = pk.type === "password"; pk.type = show ? "text" : "password"; this.textContent = show ? "Hide" : "Show"; this.setAttribute("aria-label", show ? "Hide passkey" : "Show passkey"); };
       f.onsubmit = function (e) {
-        e.preventDefault();
+        e.preventDefault(); hideMsg();
         if (Date.now() < waitUntil) { err.textContent = "Too many tries. Wait " + Math.ceil((waitUntil - Date.now()) / 1000) + " seconds."; return; }
         sha256hex(pk.value).then(function (h) {
           if (h === PASS_HASH) {
-            try { (document.getElementById("rem").checked ? localStorage : sessionStorage).setItem(PASS_KEY, h); } catch (x) { /* ignore */ }
+            keep(PASS_KEY, h, document.getElementById("rem").checked); drop(SESSION_KEY); keep("gid-gate-tab", "pk", true);
+            window.GID_AUTH = { mode: "passkey" };
             app.innerHTML = '<div class="setup card"><p>Loading…</p></div>'; openGate();
           } else {
-            fails++; pk.value = ""; pk.focus(); f.classList.remove("shake"); void f.offsetWidth; f.classList.add("shake");
+            fails++; pk.value = ""; pk.focus(); shake();
             if (fails >= 5) { waitUntil = Date.now() + 30000; fails = 0; err.textContent = "Wrong passkey 5 times. Wait 30 seconds and try again."; }
             else err.textContent = "Wrong passkey. Check capital letters and try again.";
           }
         });
       };
     }
-    // Start loading the app straight away, even while the passkey screen is showing
-    // When the intro finishes, put the cursor in the passkey box
-    window.addEventListener("gid:splash-done", function () { var p = document.getElementById("pk"); if (p) p.focus(); });
-    if (savedPass() === PASS_HASH) openGate(); else showGate();
+    // When the intro finishes, put the cursor in the first box of the open tab
+    window.addEventListener("gid:splash-done", function () { var p = document.querySelector(".gate-pane:not([hidden]) input:not([type=checkbox])"); if (p) p.focus(); });
+    // A saved account sign-in is checked by app.js (gid_session) before the app opens; a saved passkey opens straight away.
+    if (SHARED && store(SESSION_KEY)) { window.GID_AUTH = { mode: "account", token: store(SESSION_KEY), verified: false, remember: (function () { try { return !!localStorage.getItem(SESSION_KEY); } catch (e) { return false; } })() }; openGate(); }
+    else if (savedPass() === PASS_HASH) { window.GID_AUTH = { mode: "passkey" }; openGate(); }
+    else showGate();
+    // Start loading the app straight away, even while the sign-in screen is showing
     bootApp();
   </script>
 </body>

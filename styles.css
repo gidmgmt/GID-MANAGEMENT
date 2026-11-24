@@ -1271,3 +1271,59 @@ html[data-theme="dark"] .voline .rm, html[data-theme="dark"] .tgrid .rm { backgr
 .tscroll > table { min-width: 640px; }
 .step div { overflow-wrap: anywhere; word-break: break-word; padding-left: 2px; padding-right: 2px; line-height: 1.25; }
 @media (max-width: 640px) { html[lang="km"] .step div, body.km .step div { font-size: 9.5px; } }
+/* v20 sign in / create account / demo passkey */
+.gate { align-content: center; }
+.gate h1 { margin-bottom: 14px; }
+.gseg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; padding: 3px; margin: 0 0 16px; border-radius: 14px; background: rgba(31, 77, 43, .07); border: 1px solid var(--line); }
+.gseg-b { border: 0; background: none; color: var(--ink-2); font: inherit; font-size: 13px; font-weight: 700; line-height: 1.2; padding: 9px 4px; min-height: 40px; border-radius: 11px; cursor: pointer; overflow-wrap: anywhere; }
+.gseg-b.on { background: #fff; color: var(--accent-ink); box-shadow: 0 2px 8px rgba(31, 77, 43, .14); }
+.gseg-b:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.gate-pane form, .gate-pane { display: grid; gap: 12px; text-align: left; }
+.gate-pane[hidden] { display: none; }
+.gate-pane .gate-sub { margin: 0 0 2px; text-align: center; }
+.gate-pane .gate-chk { margin: 0; }
+.gate-pane .gate-err { margin: 0; }
+.gate-pane .gate-err:empty { min-height: 0; }
+.gate-pane .gate-note { text-align: center; margin: 2px 0 0; }
+.gate-help { color: var(--muted); font-weight: 500; font-size: 12px; }
+.gate-ferr { color: var(--bad); font-weight: 600; font-size: 12.5px; }
+.gate-in input[aria-invalid="true"], .gate-field > input[aria-invalid="true"] { border-color: var(--bad); }
+.gate-field > input { width: 100%; border-radius: 14px; }
+.gate-msg { margin: 0 0 14px; text-align: left; }
+.gate-msg[hidden] { display: none; }
+.gate-off { display: grid; gap: 12px; text-align: center; }
+.gate-off p { margin: 0; color: var(--ink-2); font-size: 14px; background: var(--info-l); color: var(--info); border-radius: 12px; padding: 12px; }
+.gate-done { display: grid; gap: 14px; text-align: center; }
+.gate-ok { margin: 0; color: var(--good); background: var(--good-l); border-radius: 12px; padding: 12px; font-weight: 600; font-size: 14px; }
+.gate-retry { margin-left: 6px; border: 1px solid currentColor; background: none; color: inherit; font: inherit; font-weight: 700; font-size: 12.5px; border-radius: 999px; padding: 3px 12px; cursor: pointer; }
+.gate-alt { margin-top: 10px; }
+.gate-card > .gate-err { text-align: center; }
+html[data-theme="dark"] .gseg { background: rgba(255, 255, 255, .05); border-color: rgba(255, 255, 255, .08); }
+html[data-theme="dark"] .gseg-b.on { background: rgba(58, 160, 79, .28); color: #d8f3de; box-shadow: none; }
+@media (max-width: 640px) {
+  .gate { padding: 14px; }
+  .gate-card { padding: 22px 16px 18px; border-radius: 22px; }
+  .gate-logo { width: 110px; }
+  .gseg-b { font-size: 12.5px; padding: 8px 2px; }
+}
+/* header: demo chip and the account menu */
+.modechip { font-size: 11.5px; font-weight: 700; color: var(--warn); background: var(--warn-l); border-radius: 999px; padding: 4px 10px; white-space: nowrap; align-self: center; }
+@media (max-width: 1499px) { .modechip { display: none; } } /* narrower screens: the DEMO pill in the menu and the demo banner say it */
+.acct-me { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.acct-me span { display: grid; gap: 2px; min-width: 0; }
+.acct-me small { color: var(--muted); overflow-wrap: anywhere; }
+.acct-menu { display: grid; gap: 8px; }
+.acct-menu .btn { width: 100%; justify-content: center; min-height: 44px; }
+.cpm { display: grid; gap: 12px; }
+.cpm .gate-err:empty { min-height: 0; margin: 0; }
+/* People → Accounts */
+.accounts .card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.acc-h { margin: 18px 0 8px; font-size: 15px; }
+.acc-acts { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.acc-acts .btn { white-space: nowrap; }
+.accounts .tscroll > table { min-width: 0; }
+.temppw { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 8px 0 12px; }
+.temppw code { font-size: 22px; font-weight: 700; letter-spacing: .12em; padding: 8px 14px; border-radius: 12px; background: var(--accent-l); color: var(--accent-ink); user-select: all; overflow-wrap: anywhere; }
+@media (max-width: 640px) { .acc-acts { justify-content: flex-start; } }
+#cpform { display: grid; gap: 12px; text-align: left; }
+#cpform .gate-err:empty { min-height: 0; margin: 0; }

@@ -197,3 +197,14 @@ No database change. Fixes from the automated test round (about 4,700 checks by f
 - Overtime and leave go to the right line manager (site staff → project PM, office teams → their head).
 - Tasks can be edited and reopened; suppliers can be edited; history shows the time; dates no longer slip a day between midnight and 7 AM.
 - Phone: the subcontractor contracts table scrolls sideways; more Khmer text.
+
+## Version 20: sign in and sign up
+
+Database: `supabase/update-v20.sql` (already installed on the GID database and tested: 41 of 41 checks).
+
+- The start screen has three tabs: **Sign in** (phone number or email + password), **Create account**, and **Demo passkey** (works as before, including "switch person").
+- A new account cannot be used until **HR, the System Admin, the backup admin or the MD** approves it in **People → Accounts** and links it to the right staff profile. They get a bell and Telegram alert for each sign-up.
+- Signed in with an account, you are always yourself (no switching). Tap your name for **My account**: change password, sign out.
+- 5 wrong passwords lock the account for 15 minutes. Forgotten password: an approver presses **Reset password** and gives the temporary password in person; the person must change it at the next sign-in.
+- Passwords are stored only in scrambled form, in a part of the database the public website key cannot read.
+- Still a demo: the other tables are open to the public key until the next step (per-role database security). Use sample data only.

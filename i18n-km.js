@@ -323,7 +323,42 @@ window.GID_KM = {
   "Load demo data": "ផ្ទុកទិន្នន័យសាកល្បង", "Could not start": "មិនអាចចាប់ផ្តើម", "Making the PDF…": "កំពុងបង្កើត PDF…", "Telegram test from GID": "សារសាកល្បង Telegram ពី GID",
   "This browser's storage is full: new photos and files will be lost when the page reloads. Connect Supabase to keep them.": "ទំហំផ្ទុកក្នុងកម្មវិធីរុករកពេញ៖ រូបថត និងឯកសារថ្មីនឹងបាត់នៅពេលផ្ទុកទំព័រឡើងវិញ។",
   "Browser demo: data is saved only in this browser on this device. Connect Supabase (see SETUP.md) to share data between people.": "កម្មវិធីសាកល្បង៖ ទិន្នន័យត្រូវរក្សាទុកតែក្នុងកម្មវិធីរុករកលើឧបករណ៍នេះ។",
-  "Connected to Supabase. Every change is saved in the online database and everyone using this link sees it.": "បានភ្ជាប់ Supabase។ រាល់ការផ្លាស់ប្តូរត្រូវរក្សាទុកក្នុងមូលដ្ឋានទិន្នន័យអនឡាញ ហើយអ្នកទាំងអស់គ្នាអាចមើលឃើញ។"
+  "Connected to Supabase. Every change is saved in the online database and everyone using this link sees it.": "បានភ្ជាប់ Supabase។ រាល់ការផ្លាស់ប្តូរត្រូវរក្សាទុកក្នុងមូលដ្ឋានទិន្នន័យអនឡាញ ហើយអ្នកទាំងអស់គ្នាអាចមើលឃើញ។",
+  // ---------- v20: sign in, create account, accounts ----------
+  "Sign in": "ចូលប្រើ", "Create account": "បង្កើតគណនី", "Demo passkey": "លេខសម្ងាត់សាកល្បង",
+  "How to sign in": "របៀបចូលប្រើ", "Phone number or email": "លេខទូរស័ព្ទ ឬអ៊ីមែល", "Password": "ពាក្យសម្ងាត់",
+  "Show password": "បង្ហាញពាក្យសម្ងាត់", "Hide password": "លាក់ពាក្យសម្ងាត់", "Hide passkey": "លាក់លេខសម្ងាត់",
+  "Signing in…": "កំពុងចូល…", "New here? Choose Create account. Forgot your password? Ask HR.": "ទើបមកថ្មី? ជ្រើសរើស «បង្កើតគណនី»។ ភ្លេចពាក្យសម្ងាត់? សូមសួរផ្នែកធនធានមនុស្ស។", "Confirm password": "បញ្ជាក់ពាក្យសម្ងាត់",
+  "Your job / team (so HR can find you)": "មុខងារ / ក្រុមរបស់អ្នក (ដើម្បីឱ្យផ្នែកធនធានមនុស្សរកឃើញអ្នក)", "At least 8 characters, with a letter and a number.": "យ៉ាងហោចណាស់ ៨ តួ មានអក្សរ និងលេខ។", "Sign in needs the shared database. Use the demo passkey.": "ការចូលប្រើត្រូវការមូលដ្ឋានទិន្នន័យរួម។ សូមប្រើលេខសម្ងាត់សាកល្បង។",
+  "Use the demo passkey": "ប្រើលេខសម្ងាត់សាកល្បង", "Demo only: you can switch between sample people.": "សម្រាប់សាកល្បងតែប៉ុណ្ណោះ៖ អ្នកអាចប្តូររវាងមនុស្សគំរូបាន។", "Can't reach the server. Check the internet and try again.": "មិនអាចភ្ជាប់ទៅម៉ាស៊ីនមេបានទេ។ សូមពិនិត្យអ៊ីនធឺណិត ហើយព្យាយាមម្តងទៀត។",
+  "The server could not do this right now. Try again later.": "ម៉ាស៊ីនមេមិនអាចធ្វើការនេះបានឥឡូវនេះទេ។ សូមព្យាយាមម្តងទៀតពេលក្រោយ។", "Retry": "ព្យាយាមម្តងទៀត", "Enter your phone number or email and your password.": "សូមបញ្ចូលលេខទូរស័ព្ទ ឬអ៊ីមែល និងពាក្យសម្ងាត់របស់អ្នក។",
+  "Your account is waiting for approval by HR or the System Admin.": "គណនីរបស់អ្នកកំពុងរង់ចាំការអនុម័តពីផ្នែកធនធានមនុស្ស ឬអ្នកគ្រប់គ្រងប្រព័ន្ធ។", "This account cannot sign in. Ask HR.": "គណនីនេះមិនអាចចូលប្រើបានទេ។ សូមសួរផ្នែកធនធានមនុស្ស។", "Enter a phone number like 012 345 678 or an email address.": "សូមបញ្ចូលលេខទូរស័ព្ទដូចជា 012 345 678 ឬអាសយដ្ឋានអ៊ីមែល។",
+  "Wrong phone/email or password.": "លេខទូរស័ព្ទ/អ៊ីមែល ឬពាក្យសម្ងាត់មិនត្រឹមត្រូវ។", "Enter your full name.": "សូមបញ្ចូលឈ្មោះពេញរបស់អ្នក។", "The two passwords are not the same.": "ពាក្យសម្ងាត់ទាំងពីរមិនដូចគ្នាទេ។",
+  "Request sent. You can sign in after HR or the System Admin approves you.": "បានផ្ញើសំណើ។ អ្នកអាចចូលប្រើបាន បន្ទាប់ពីផ្នែកធនធានមនុស្ស ឬអ្នកគ្រប់គ្រងប្រព័ន្ធអនុម័ត។", "Back to sign in": "ត្រឡប់ទៅចូលប្រើ", "This phone number or email already has an account. Sign in, or ask HR to reset your password.": "លេខទូរស័ព្ទ ឬអ៊ីមែលនេះមានគណនីរួចហើយ។ សូមចូលប្រើ ឬសួរផ្នែកធនធានមនុស្សឱ្យកំណត់ពាក្យសម្ងាត់ឡើងវិញ។",
+  "You were signed out. Please sign in again.": "អ្នកត្រូវបានចាកចេញ។ សូមចូលប្រើម្តងទៀត។", "This device was signed out by the System Admin. Sign in again.": "ឧបករណ៍នេះត្រូវបានចាកចេញដោយអ្នកគ្រប់គ្រងប្រព័ន្ធ។ សូមចូលប្រើម្តងទៀត។", "This device was signed out. Sign in again.": "ឧបករណ៍នេះត្រូវបានចាកចេញ។ សូមចូលប្រើម្តងទៀត។",
+  "Demo mode": "របៀបសាកល្បង", "Signed in with the demo passkey: you can switch between sample people": "បានចូលដោយលេខសម្ងាត់សាកល្បង៖ អ្នកអាចប្តូររវាងមនុស្សគំរូបាន", "My account": "គណនីរបស់ខ្ញុំ",
+  "Change password": "ប្តូរពាក្យសម្ងាត់", "Choose a new password": "ជ្រើសរើសពាក្យសម្ងាត់ថ្មី", "Your password was reset. Choose your own new password to continue.": "ពាក្យសម្ងាត់របស់អ្នកត្រូវបានកំណត់ឡើងវិញ។ សូមជ្រើសរើសពាក្យសម្ងាត់ថ្មីរបស់អ្នក ដើម្បីបន្ត។",
+  "Temporary password": "ពាក្យសម្ងាត់បណ្តោះអាសន្ន", "Current password": "ពាក្យសម្ងាត់បច្ចុប្បន្ន", "New password": "ពាក្យសម្ងាត់ថ្មី",
+  "Confirm new password": "បញ្ជាក់ពាក្យសម្ងាត់ថ្មី", "Save new password": "រក្សាទុកពាក្យសម្ងាត់ថ្មី", "Fill in every box.": "សូមបំពេញគ្រប់ប្រអប់។",
+  "Choose a new password that is different from the old one.": "សូមជ្រើសរើសពាក្យសម្ងាត់ថ្មីដែលខុសពីពាក្យចាស់។", "The current password is wrong.": "ពាក្យសម្ងាត់បច្ចុប្បន្នមិនត្រឹមត្រូវ។", "Your other phones and computers will be signed out.": "ទូរស័ព្ទ និងកុំព្យូទ័រផ្សេងទៀតរបស់អ្នកនឹងត្រូវចាកចេញ។",
+  "Password changed. Your other devices were signed out.": "បានប្តូរពាក្យសម្ងាត់។ ឧបករណ៍ផ្សេងទៀតរបស់អ្នកត្រូវបានចាកចេញ។", "Your account is not linked to a current staff profile. Ask HR.": "គណនីរបស់អ្នកមិនទាន់ភ្ជាប់ទៅប្រវត្តិរូបបុគ្គលិកបច្ចុប្បន្នទេ។ សូមសួរផ្នែកធនធានមនុស្ស។", "You are signed in with your own account. Switching person only works with the demo passkey.": "អ្នកបានចូលដោយគណនីផ្ទាល់ខ្លួន។ ការប្តូរមនុស្សអាចធ្វើបានតែជាមួយលេខសម្ងាត់សាកល្បងប៉ុណ្ណោះ។",
+  "Accounts": "គណនី", "Accounts need the shared database.": "គណនីត្រូវការមូលដ្ឋានទិន្នន័យរួម។", "Sign in with your own account (not the demo passkey) to approve and manage accounts.": "សូមចូលដោយគណនីផ្ទាល់ខ្លួន (មិនមែនលេខសម្ងាត់សាកល្បង) ដើម្បីអនុម័ត និងគ្រប់គ្រងគណនី។",
+  "Loading accounts…": "កំពុងផ្ទុកគណនី…", "Only HR, the System Admin and the MD can manage accounts.": "មានតែផ្នែកធនធានមនុស្ស អ្នកគ្រប់គ្រងប្រព័ន្ធ និងអគ្គនាយកប៉ុណ្ណោះ ដែលអាចគ្រប់គ្រងគណនីបាន។", "People who created an account wait here until you link them to their staff profile. The profile sets what they can see and do.": "អ្នកដែលបានបង្កើតគណនីរង់ចាំនៅទីនេះ រហូតដល់អ្នកភ្ជាប់ពួកគេទៅប្រវត្តិរូបបុគ្គលិក។ ប្រវត្តិរូបកំណត់អ្វីដែលពួកគេអាចមើល និងធ្វើបាន។",
+  "Waiting for approval": "កំពុងរង់ចាំការអនុម័ត", "Active accounts": "គណនីសកម្ម", "Disabled / rejected": "បានបិទ / បានបដិសេធ",
+  "Login": "ឈ្មោះចូល", "Job / team": "មុខងារ / ក្រុម", "Signed up": "បានចុះឈ្មោះ",
+  "Suggested profile": "ប្រវត្តិរូបដែលបានណែនាំ", "No match": "រកមិនឃើញ", "Staff profile": "ប្រវត្តិរូបបុគ្គលិក",
+  "Last sign-in": "ចូលចុងក្រោយ", "Never": "មិនដែល", "Decided": "បានសម្រេច",
+  "You": "អ្នក", "No one is waiting.": "គ្មាននរណារង់ចាំទេ។", "No active accounts yet.": "មិនទាន់មានគណនីសកម្មនៅឡើយ។",
+  "Disabled": "បានបិទ", "Enable": "បើកវិញ", "Disable": "បិទ",
+  "Reset password": "កំណត់ពាក្យសម្ងាត់ឡើងវិញ", "Approve account": "អនុម័តគណនី", "Reject account": "បដិសេធគណនី",
+  "Disable account": "បិទគណនី", "Enable account": "បើកគណនីវិញ", "Choose a person": "ជ្រើសរើសមនុស្ស",
+  "The staff profile sets what this person can see and do.": "ប្រវត្តិរូបបុគ្គលិកកំណត់អ្វីដែលមនុស្សនេះអាចមើល និងធ្វើបាន។", "Choose the staff profile for this person.": "សូមជ្រើសរើសប្រវត្តិរូបបុគ្គលិកសម្រាប់មនុស្សនេះ។", "This person will not be able to sign in.": "មនុស្សនេះនឹងមិនអាចចូលប្រើបានទេ។",
+  "Account rejected.": "បានបដិសេធគណនី។", "This person is signed out everywhere and cannot sign in until the account is enabled again.": "មនុស្សនេះត្រូវចាកចេញពីគ្រប់ឧបករណ៍ ហើយមិនអាចចូលប្រើបានទេ រហូតដល់គណនីត្រូវបានបើកវិញ។", "Account disabled.": "បានបិទគណនី។",
+  "This person can sign in again with the same staff profile.": "មនុស្សនេះអាចចូលប្រើម្តងទៀតជាមួយប្រវត្តិរូបបុគ្គលិកដដែល។", "Account enabled.": "បានបើកគណនីវិញ។", "The request goes back to Waiting for approval, so you can link it to a staff profile.": "សំណើនឹងត្រឡប់ទៅ «កំពុងរង់ចាំការអនុម័ត» វិញ ដើម្បីឱ្យអ្នកអាចភ្ជាប់វាទៅប្រវត្តិរូបបុគ្គលិក។",
+  "Request moved back to Waiting for approval.": "សំណើត្រូវបានប្តូរទៅ «កំពុងរង់ចាំការអនុម័ត» វិញ។", "This staff profile is already used by another active account.": "ប្រវត្តិរូបបុគ្គលិកនេះត្រូវបានប្រើដោយគណនីសកម្មមួយផ្សេងទៀតរួចហើយ។", "This account or staff profile was not found. Press Refresh.": "រកមិនឃើញគណនី ឬប្រវត្តិរូបបុគ្គលិកនេះទេ។ សូមចុច «ផ្ទុកឡើងវិញ»។",
+  "This makes a new temporary password and signs the person out on every device.": "វានឹងបង្កើតពាក្យសម្ងាត់បណ្តោះអាសន្នថ្មី ហើយធ្វើឱ្យមនុស្សនោះចាកចេញពីគ្រប់ឧបករណ៍។", "Give this to the person in person. They must change it when they sign in.": "សូមប្រគល់វាដល់មនុស្សនោះដោយផ្ទាល់។ ពួកគេត្រូវប្តូរវានៅពេលចូលប្រើ។", "Copy": "ចម្លង",
+  "Copied": "បានចម្លង", "Select and copy the password by hand.": "សូមជ្រើសរើស ហើយចម្លងពាក្យសម្ងាត់ដោយដៃ។", "New sign-up waiting for approval": "ការចុះឈ្មោះថ្មីកំពុងរង់ចាំការអនុម័ត",
+  "Account approved": "បានអនុម័តគណនី"
 };
 
 // Texts that contain numbers, names or dates
@@ -332,6 +367,10 @@ window.GID_KM = {
   const t = (x) => (window.I18N && window.I18N.t(x)) || x;
   const date = (s) => s.replace(/\b(\d{1,2}) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sept?|Oct|Nov|Dec) (\d{2,4})\b/g, (_, d, m, y) => d + " " + MON[m] + " " + y);
   window.GID_KM_PATTERNS = [
+    // v20 sign in
+    [/^Too many wrong tries\. Try again in (\d+) minutes\.$/, (m) => "ព្យាយាមខុសច្រើនដងពេក។ សូមព្យាយាមម្តងទៀតក្នុងរយៈពេល " + m[1] + " នាទី។"],
+    [/^Account approved\. (.+) can sign in now\.$/, (m) => m[1] + " អាចចូលប្រើបានឥឡូវនេះ។ គណនីត្រូវបានអនុម័ត។"],
+    [/^(.+)\. My account$/, (m) => m[1] + "។ គណនីរបស់ខ្ញុំ"],
     [/^(\d{1,2}) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sept?|Oct|Nov|Dec) (\d{2,4})$/, (m) => date(m[0])],
     [/^(.+) to (.+)$/, (m) => /\d/.test(m[1]) && /\d/.test(m[2]) && /[A-Z][a-z]{2}/.test(m[1]) ? date(m[1]) + " ដល់ " + date(m[2]) : null],
     [/^Waiting for my approval \((\d+)\)$/, (m) => "រង់ចាំការអនុម័តរបស់ខ្ញុំ (" + m[1] + ")"],
