@@ -1038,18 +1038,26 @@ html[data-theme="dark"] .ocn i { color: #a9bbad; }
 html[data-theme="dark"] .ocn .ocp { box-shadow: 0 0 0 2px #142018, 0 0 0 3.5px #8fb59a; background: #24382b; color: #cfe6d5; }
 html[data-theme="dark"] .ocn:hover { background: rgba(255, 255, 255, .06); }
 /* the PDF copy is always light, landscape A4 width */
-.oc-print { position: fixed; left: -12000px; top: 0; width: 1400px; background: #fff; color: #1d2a21; padding: 34px 40px 26px; font-family: var(--font); }
-.oc-print.km { font-family: "GID Khmer", var(--font); }
-.oc-print .oc { --ocline: #9fb8a5; }
-.oc-print .oc-d { background: #fff; border-color: #dfe9e1; box-shadow: none; }
-.oc-print .ocn b { color: #1d2a21; } .oc-print .ocn i { color: #5c6b60; }
-.oc-print .ocn .ocp { box-shadow: 0 0 0 2px #fff, 0 0 0 3.5px #33443a; background: #e5efe7; color: #1f4d2b; }
-.oc-print.km .oc-l { letter-spacing: 0; text-transform: none; }
-.ocp-head { display: flex; align-items: center; gap: 24px; border-bottom: 3px solid #7cbf3f; padding-bottom: 14px; margin-bottom: 18px; }
-.ocp-head .rp-logo { height: 54px; }
-.ocp-head .rp-co small { color: #5c6b60; font-size: 13px; }
+/* org chart PDF: always the light print palette, whatever the app theme or language (html .oc-print.oc-print beats the dark-theme rules) */
+.oc-print { position: fixed; left: -12000px; top: 0; width: 1400px; background: #fff; color: #1d2a21; padding: 34px 40px 26px; font-family: "Plus Jakarta Sans", "GID Khmer", Arial, sans-serif; color-scheme: light;
+  --bg: #ffffff; --card: #ffffff; --card-solid: #ffffff; --ink: #14241a; --ink-2: #4a5a50; --muted: #7d8c83; --line: rgba(31, 77, 43, .10); --accent: #2e8540; --accent-ink: #1f6b2e; }
+html .oc-print.oc-print .oc { --ocline: #9fb8a5; }
+html .oc-print.oc-print .oc-d { background: #fff; border-color: #dfe9e1; box-shadow: none; }
+html .oc-print.oc-print .ocn b { color: #1d2a21; }
+html .oc-print.oc-print .ocn i { color: #5c6b60; }
+html .oc-print.oc-print .ocn .ocp { box-shadow: none; border: 2px solid #33443a; background: #e5efe7; color: #1f4d2b; }
+html .oc-print.oc-print .oc-none { color: #4a5a50; }
+html .oc-print.oc-print:not(.km) .oc-l { letter-spacing: .05em; text-transform: uppercase; }
+html .oc-print.oc-print.km .oc-l { letter-spacing: 0; text-transform: none; }
+html .oc-print.oc-print.km .ocn b { text-transform: none; letter-spacing: 0; }
+html .oc-print.oc-print.km .ocn i { font-style: normal; }
+.oc-print.km .rp-kw { white-space: nowrap; }
+.ocp-head { display: flex; align-items: flex-start; gap: 24px; border-bottom: 3px solid #7cbf3f; padding-bottom: 14px; margin-bottom: 18px; }
+.ocp-head .rp-brand { display: flex; flex-direction: column; gap: 4px; flex-shrink: 0; }
+.ocp-head .rp-logo { height: 54px; width: auto; display: block; }
+.ocp-head .rp-co { color: #5c6b60; font-size: 13px; white-space: nowrap; }
 .ocp-title { margin-left: auto; text-align: right; }
-.ocp-title h1 { margin: 0; font-size: 26px; color: #1f4d2b; }
+.ocp-title h1 { margin: 0; font-size: 26px; color: #1f4d2b; line-height: 1.3; }
 .ocp-title p { margin: 4px 0 0; color: #3c4a40; font-size: 14px; }
 .ocp-foot { display: flex; justify-content: space-between; margin-top: 18px; padding-top: 8px; border-top: 1px solid #dfe9e1; font-size: 12px; color: #6b7a6f; }
 
@@ -1092,7 +1100,6 @@ html[data-theme="light"] { color-scheme: light; }
 .oc .oc-d:first-child::before { left: 50%; }
 .oc .oc-d:last-child::before { right: 50%; }
 .oc-v { width: 0; background: none; border-left: 2px solid var(--ocline); }
-.oc-print .ocn .ocp { box-shadow: none; border: 2px solid #33443a; }
 /* org chart grid: one row of teams for a project; the company layout for People */
 .oc-br { grid-template-columns: repeat(var(--occols, 3), minmax(0, 1fr)); }
 .oc-br.co { grid-template-columns: repeat(6, minmax(0, 1fr)); max-width: 1180px; }
@@ -1408,4 +1415,18 @@ html:not([data-theme="dark"]) :is(.b-approved, .b-reviewed, .b-issued, .b-done, 
   .card .tabs { flex-wrap: wrap; border-radius: 18px; }
   /* permissions: no inner up/down scroll on phones (the page scrolls); the module column stays in view */
   .permwrap { max-height: none; }
+/* org chart PDF made on a phone: keep the A4 landscape layout (the phone layout above stacks the teams) */
+@media (max-width: 900px) {
+  html .oc-print.oc-print .oc { --ocgap: 26px; }
+  html .oc-print.oc-print .oc-br:not(.co) { grid-template-columns: repeat(var(--occols, 3), minmax(0, 1fr)) !important; row-gap: 26px; }
+  html .oc-print.oc-print .oc-d { margin-top: 30px; padding: 30px 14px 16px; }
+  html .oc-print.oc-print .oc .oc-d::before { display: block !important; }
+  html .oc-print.oc-print .oc-d + .oc-d { border-top: 0 !important; }
+  html .oc-print.oc-print .oc-d.rs::before { left: 50%; } html .oc-print.oc-print .oc-d.re::before { right: 50%; }
+  html .oc-print.oc-print .oc-d::after { top: -30px; height: 18px; }
+  html .oc-print.oc-print .ocn { width: 150px; }
+  html .oc-print.oc-print .ocn b { font-size: 14px; }
+  html .oc-print.oc-print .ocn .ocp { width: 84px; height: 84px; }
+  html .oc-print.oc-print .ocn.lead .ocp { width: 100px; height: 100px; }
+  html .oc-print.oc-print .oc-r { gap: 10px 4px; }
 }

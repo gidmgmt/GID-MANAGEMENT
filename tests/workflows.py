@@ -34,7 +34,7 @@ async def run(b, vp, tag, out):
     await open_vo(pg,'Test VO cable'); await btnm(pg,'Client approved'); await submit(pg); A('client approval needs evidence', await pg.locator('#mform').count()==1)
     await pg.set_input_files('.evidence input[accept="image/*,application/pdf"]', files=FILE); await pg.wait_for_timeout(500); await submit(pg); A('client approved', await st(pg)=='Client approved')
     await login(pg,'s33','vo'); await open_vo(pg,'Test VO cable'); await btnm(pg,'Add to claim'); await submit(pg); A('in claim', await st(pg)=='In claim')
-    await btnm(pg,'PDF English'); await pg.wait_for_selector('#modal iframe.pdf', timeout=30000); A('VO pdf', True); await pg.keyboard.press('Escape'); await pg.keyboard.press('Escape')
+    await btnm(pg,'PDF English'); await pg.wait_for_selector('#modal iframe.pdf, #modal a.btn[target=_blank]', timeout=30000); A('VO pdf', True); await pg.keyboard.press('Escape'); await pg.keyboard.press('Escape')
     # --- Subcontractor payment flow
     await login(pg,'s33','subs'); await pg.locator('table.list tbody tr', has_text='Angkor').click(); await pg.wait_for_timeout(300)
     if tag=='d': await pg.screenshot(path='v19-sub-d.png')
@@ -73,7 +73,7 @@ async def run(b, vp, tag, out):
     await pg.click('#tform button[type=submit]'); await pg.wait_for_timeout(700)
     res=await pg.evaluate("(()=>{const d=JSON.parse(localStorage.getItem('gid-demo-v6'));const t=d.tests.find(x=>x.location==='DB-L1');return [t.result,t.rows.length,(t.defect_ids||[]).length, d.defects.filter(f=>/L1-C02/.test(f.description)).length]})()")
     A('test fail + defect '+str(res), res==['Fail',2,1,1])
-    await pg.locator('table.list tbody tr', has_text='DB-L1').first.click(); await pg.wait_for_timeout(300); await btnm(pg,'PDF ខ្មែរ'); await pg.wait_for_selector('#modal iframe.pdf', timeout=30000); A('test pdf km', True)
+    await pg.locator('table.list tbody tr', has_text='DB-L1').first.click(); await pg.wait_for_timeout(300); await btnm(pg,'PDF ខ្មែរ'); await pg.wait_for_selector('#modal iframe.pdf, #modal a.btn[target=_blank]', timeout=30000); A('test pdf km', True)
     await pg.keyboard.press('Escape'); await pg.keyboard.press('Escape')
     # warranty + handover item
     await login(pg,'s03','handover'); await pg.locator('.main .btn', has_text='Add warranty').click(); await pg.wait_for_timeout(200)
