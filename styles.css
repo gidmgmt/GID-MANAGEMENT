@@ -1715,3 +1715,6 @@ html[data-theme="dark"] .t-other { --c: #b2c3b7; } html[data-theme="dark"] .m-do
   padding: 12px 14px; border-radius: 14px; background: var(--warn-l); color: var(--ink); border: 1px solid var(--warn); box-shadow: 0 10px 30px rgba(0, 0, 0, .18); font-size: 14px; }
 .dayend svg { width: 20px; height: 20px; flex: none; color: var(--warn); margin-top: 2px; }
 html[data-theme="dark"] .dayend { background: #2b2414; }
+/* v23: alert list: "Action needed" tag and the project / amount / date line */
+.nk { display: inline-block; font-style: normal; font-size: 11px; font-weight: 800; letter-spacing: .02em; text-transform: uppercase; color: var(--bad); background: var(--bad-l); border-radius: 6px; padding: 1px 6px; margin-bottom: 2px; }
+small.nx { color: var(--ink-2); }

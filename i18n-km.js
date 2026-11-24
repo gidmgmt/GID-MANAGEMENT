@@ -718,7 +718,8 @@ Object.assign(window.GID_KM, {
   "Only the System Admin can do this.": "មានតែអ្នកគ្រប់គ្រងប្រព័ន្ធទេដែលអាចធ្វើបាន។", "Announcement withdrawn": "បានដកសេចក្តីជូនដំណឹងវិញ",
   "Withdraw this announcement? It disappears from everyone's Dashboard and My work. It stays in the history.": "ដកសេចក្តីជូនដំណឹងនេះវិញ? វានឹងបាត់ពីផ្ទាំងគ្រប់គ្រង និងការងាររបស់ខ្ញុំ របស់អ្នកទាំងអស់គ្នា។ វានៅតែមានក្នុងប្រវត្តិ។",
   // sign in every day
-  "Please sign in again for today.": "សូមចូលប្រើម្តងទៀតសម្រាប់ថ្ងៃនេះ។", "Your sign-in for today has ended.": "ការចូលប្រើរបស់អ្នកសម្រាប់ថ្ងៃនេះបានបញ្ចប់ហើយ។",
+  "Please sign in again for today.": "សូមចូលប្រើម្តងទៀតសម្រាប់ថ្ងៃនេះ។", "Everyone signs in again each day after 3:00 am. Please sign in.": "បុគ្គលិកទាំងអស់ត្រូវចូលប្រើម្តងទៀតជារៀងរាល់ថ្ងៃ បន្ទាប់ពីម៉ោង 3:00 ព្រឹក។ សូមចូលប្រើ។",
+  "Action needed": "រង់ចាំអ្នកចាត់ការ", "Your sign-in for today has ended.": "ការចូលប្រើរបស់អ្នកសម្រាប់ថ្ងៃនេះបានបញ្ចប់ហើយ។",
   "Save your work now. You will be asked to sign in again when you close this window.": "សូមរក្សាទុកការងាររបស់អ្នកឥឡូវនេះ។ អ្នកនឹងត្រូវចូលប្រើម្តងទៀត នៅពេលបិទផ្ទាំងនេះ។"
 });
 window.GID_KM_PATTERNS.unshift(

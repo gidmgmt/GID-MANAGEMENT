@@ -65,7 +65,9 @@
       rows: "jsonb", result: "text", tested_by: "text", witness: "text", test_date: "date", photos: "jsonb", defect_ids: "jsonb", note: "text" },
     handover_items: { project_id: "text", category: "text", title: "text", status: "text", due_date: "date", evidence: "jsonb", note: "text", updated_by: "text" },
     warranties: { project_id: "text", item: "text", supplier: "text", start_date: "date", end_date: "date", evidence: "jsonb", note: "text" },
-    notifications: { to_id: "text", actor_id: "text", title: "text", body: "text", tbl: "text", record_id: "text", read: "boolean", at: "timestamptz" },
+    // v23: kind (action|approved|rejected|reminder|announcement|info|welcome), module, ref, project ("CODE · Name"), amount, due, Khmer title and detail (docs/NOTIFICATIONS.md); silent = bell only, no Telegram
+    notifications: { to_id: "text", actor_id: "text", title: "text", body: "text", tbl: "text", record_id: "text", read: "boolean", at: "timestamptz",
+      kind: "text", module: "text", ref: "text", project: "text", amount: "text", due: "text", title_km: "text", body_km: "text", silent: "boolean" },
     // v22 Schedule & Meetings: staff events (meetings, inspections, site visits, claim dates…) and Cambodia's official public holidays
     events: { no: "text", title: "text", type: "text", date: "date", start_time: "text", end_time: "text", all_day: "boolean", project_id: "text", location: "text",
       organiser_id: "text", attendees: "jsonb", notes: "text", minutes: "text", status: "text", link_module: "text", link_id: "text", created_by: "text", updated_at: "timestamptz" },

@@ -10,7 +10,7 @@ from harness import new_context, login, remember_script, _pass_hash, WORKDAY_JS
 SHOTS = os.environ.get("GID_SHOTS", "/tmp/gid-shots/v23")
 os.makedirs(SHOTS, exist_ok=True)
 YESTERDAY_JS = "new Date(Date.now()-27*3600000).toLocaleDateString('en-CA',{timeZone:'Asia/Phnom_Penh'})"
-MSG = "Please sign in again for today."
+MSG = "Everyone signs in again each day after 3:00 am. Please sign in."
 
 # Stand-in for supabase-js: tables come from seed(), inserts are kept in window.__inserts, rpc() posts to /rest/v1/rpc/<name>
 FAKE_SUPA = r"""(function(){
@@ -95,7 +95,7 @@ async def main():
             await c.add_init_script("if(!sessionStorage.getItem('t-init')){sessionStorage.setItem('t-init','1');" + init + "}")
             return c
         ctx = await acct_ctx(f"localStorage.setItem('gid-session','T1');localStorage.setItem('gid-session-day',{YESTERDAY_JS});localStorage.setItem('gid-outbox',JSON.stringify([{json.dumps(OUTBOX_ITEM)}]));")
-        pg = await ctx.new_page(); pg.on("pageerror", lambda e: errs.append(str(e)))
+        pg = await ctx.new_page(); pg.on("pageerror", lambda e: errs.append(str(e)));
         await pg.goto("http://localhost/index.html"); await pg.wait_for_selector("#gin", timeout=10000)
         ok("account, yesterday's sign-in: sign-in screen with the message", MSG in await pg.inner_text("#gmsg"))
         ok("account, yesterday's sign-in: token dropped", await pg.evaluate("localStorage.getItem('gid-session')") is None)
@@ -104,7 +104,10 @@ async def main():
         await pg.wait_for_timeout(1500)
         ok("account, yesterday's sign-in: server told to end it", "gid_sign_out" in CALLS)
         # sign in again: today's stamp saved, the queued report is sent
-        await pg.fill("#li", "012345678"); await pg.fill("#lp", "good1234"); await pg.click("#gin .gate-go")
+        await pg.wait_for_timeout(1500)  # (the queued report must not be sent, and the app not drawn, before signing in)
+        ok("nothing is sent and the app stays closed before signing in", await pg.locator(".rail").count() == 0 and not await pg.evaluate("window.__inserts.length"))
+        await pg.fill("#li", "012345678")
+        await pg.fill("#lp", "good1234"); await pg.click("#gin .gate-go")
         await pg.wait_for_selector(".rail", timeout=10000)
         ok("signed in again: today's day stamp saved", await pg.evaluate(f"localStorage.getItem('gid-session-day') === {WORKDAY_JS}"))
         await pg.wait_for_timeout(3500)

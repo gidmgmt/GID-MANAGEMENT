@@ -72,7 +72,7 @@
     // ---- v23: sign in every day. A sign-in lasts until 03:00 the next morning (Phnom Penh time), so overtime after midnight is not cut.
     // The "work day" is the Phnom Penh date of (now - 3 hours). tests/harness.py computes it the same way.
     var PASS_DAY = "gid-pass-day", SESSION_DAY = "gid-session-day", SESSION_EXP = "gid-session-exp";
-    var DAILY_MSG = "Please sign in again for today.";
+    var DAILY_MSG = "Everyone signs in again each day after 3:00 am. Please sign in.";
     function workDay(t) {
       var d = new Date((t || Date.now()) - 3 * 3600000);
       try { return d.toLocaleDateString("en-CA", { timeZone: "Asia/Phnom_Penh" }); }
