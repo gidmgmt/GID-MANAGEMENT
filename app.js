@@ -1167,7 +1167,10 @@
     const h = a.getAttribute("href") || "#";
     e.preventDefault();
     if (h === location.hash || (h === "#" && !location.hash)) { closeLightbox(); closeBadges(true); closeDrawer(); document.body.classList.remove("nav-open"); closeAllModals(); return; }
-    location.replace(h);
+    // Replace the layer's Back step with the new screen in one go and clear its marker. (Safari on iPhone kept the
+    // layer marker with location.replace(), so closing the menu then stepped Back to the old screen.)
+    try { history.replaceState(null, "", h); } catch (err) { location.replace(h); return; }
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
   });
   // Keep the phone's back button in step with the windows
   function syncHistory() {

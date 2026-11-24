@@ -216,6 +216,7 @@ Database change: run `supabase/update-v22.sql` once (adds the `events` and `holi
 - **People**: tapping a person now shows two hanging staff badges (front and back) in GID green, with all their details; Back button, phone Back or Escape removes them. On phones swipe to see the back.
 - **Settings freeze fixed** on tablets and phones: the permissions table no longer traps scrolling, the page no longer redraws while your finger is on the screen, and "Telegram bot: Checking…" now finishes (or says it did not answer).
 - Khmer test-sheet answers now read ត្រឹមត្រូវ / មិនត្រឹមត្រូវ.
+- Fix (25 Nov): on iPhone, tapping a module in the menu now opens it (before, Safari jumped back to the old screen).
 
 ## Version 21: screen, PDF and Khmer fixes
 
