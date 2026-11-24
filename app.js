@@ -3,6 +3,7 @@
 (function () {
   "use strict";
   const { TABLES, GROUPS, PERMS: PERMS_STANDARD, APPROVAL_LIMIT, seed } = window.GID;
+  const HOLIDAYS_STD = window.GID.HOLIDAYS || []; // v22: official public holidays, used when the saved data has none yet
   const CFG = window.GID_CONFIG || {};
   const LEVEL = { none: 0, view: 1, own: 2, edit: 3, approve: 4, admin: 5 };
   const LS_KEY = "gid-demo-v6";
@@ -77,6 +78,7 @@
         const saved = this.readLocal();
         Object.assign(db, saved || seed());
         for (const t of Object.keys(TABLES)) db[t] = db[t] || [];
+        if (!db.holidays.length) { db.holidays = HOLIDAYS_STD.map((h) => Object.assign({ created_at: nowIso() }, h)); if (saved) this.writeLocal(); } // v22: data saved before the Schedule existed
         if (!saved) this.writeLocal();
       }
     },
@@ -91,7 +93,7 @@
       const res = await Promise.all(names.map((t) => this.client.from(t).select("*").limit(5000)));
       res.forEach(({ data, error }, i) => {
         // a table added in a newer version (for example site_visits) may not exist yet: start it empty instead of stopping the app
-        if (error && ["site_visits", "variations", "subcontractors", "sub_contracts", "sub_payments", "tests", "handover_items", "warranties"].includes(names[i])) { console.warn(names[i] + " table missing: run the newest supabase/update SQL"); db[names[i]] = []; this.missing = (this.missing || []).concat(names[i]); return; }
+        if (error && ["site_visits", "variations", "subcontractors", "sub_contracts", "sub_payments", "tests", "handover_items", "warranties", "events", "holidays"].includes(names[i])) { console.warn(names[i] + " table missing: run the newest supabase/update SQL"); db[names[i]] = names[i] === "holidays" ? HOLIDAYS_STD.map((h) => Object.assign({}, h)) : []; this.missing = (this.missing || []).concat(names[i]); return; }
         if (error) throw new Error("Could not read table '" + names[i] + "': " + error.message + ". Did you run schema.sql in Supabase?");
         db[names[i]] = data || [];
       });
@@ -128,6 +130,9 @@
       const chats = {}; (db.staff || []).forEach((st) => { if (String(st.telegram_chat_id || "").trim()) chats[st.id] = st.telegram_chat_id; });
       const keptSettings = keep.settings ? (db.app_settings || []).filter((x) => x.key === "permissions" || String(x.key).startsWith("notify:")) : [];
       if (keep.settings) { const keys = new Set(keptSettings.map((x) => x.key)); fresh.app_settings = (fresh.app_settings || []).filter((x) => !keys.has(x.key)).concat(keptSettings); }
+      // Public holidays are real company settings (HR keeps them up to date): Reset demo keeps HR's list and only adds missing standard days
+      if ((db.holidays || []).length && fresh.holidays) { const have = new Set(db.holidays.map((h) => h.id)), days = new Set(db.holidays.map((h) => h.date));
+        fresh.holidays = db.holidays.map((h) => Object.assign({}, h)).concat(fresh.holidays.filter((h) => !have.has(h.id) && !days.has(h.date))); }
       if (this.mode === "supabase") {
         const names = Object.keys(TABLES);
         const del = await Promise.all(names.map((t) => this.client.from(t).delete().neq("id", "___")));
@@ -184,7 +189,7 @@
   const LEVELS = ["none", "view", "own", "edit", "approve", "admin"];
   const MODULE_NAMES = { requests: "Requests & Approvals", people: "People", projects: "Projects & Tasks", daily: "Daily reports", docs: "Document Control", cost: "Cost & Claims",
     procurement: "Procurement", finance: "Finance", qaqc: "QA/QC & Snags", safety: "Safety", dashboard: "Management Dashboard", stock: "Stock",
-    vo: "Variations", subs: "Subcontractors", handover: "Testing & Handover", svr: "Site visits (SVR)" };
+    vo: "Variations", subs: "Subcontractors", handover: "Testing & Handover", svr: "Site visits (SVR)", schedule: "Schedule & Meetings" };
   const LEVEL_HELP = { none: "Hidden: the module is not in the menu", view: "See all records (in their projects), change nothing", own: "Create and see only their own records",
     edit: "Create and update records", approve: "Edit, plus approve or reject", admin: "Full control, including settings and deleting" };
   function permSetting() { return (db.app_settings || []).find((x) => x.key === "permissions"); }
@@ -202,6 +207,8 @@
     if (mod === "people" && hasTag(u, "HR")) best = "admin";
     if (mod === "procurement" && hasTag(u, "PROC")) best = "admin";
     if (mod === "docs" && hasTag(u, "DOC")) best = "admin";
+    if (mod === "schedule" && (hasTag(u, "HR") || hasTag(u, "BACKUPADMIN") || hasTag(u, "MD"))) best = "admin";
+    if (mod === "schedule" && LEVEL[best] < LEVEL.own) best = "own"; // everyone keeps their own diary, even if a group is set lower
     return best;
   }
   const can = (u, mod, min) => LEVEL[level(u, mod)] >= LEVEL[min];
@@ -732,9 +739,9 @@
   // Every save is logged. The people concerned by it get one notification per action (several saves from one tap are merged).
   const NOTE_MODULE = { requests: "requests", purchase_orders: "procurement", suppliers: "procurement", stock_moves: "stock", stock_items: "stock", stores: "stock", daily_reports: "daily",
     documents: "docs", tasks: "projects", projects: "projects", project_members: "projects", claims: "cost", cost_lines: "cost", monthly_costs: "cost", invoices: "finance",
-    defects: "qaqc", inspections: "qaqc", safety: "safety", site_visits: "svr", variations: "vo", subcontractors: "subs", sub_contracts: "subs", sub_payments: "subs", tests: "handover", handover_items: "handover", warranties: "handover", staff: "people", accounts: "people", app_settings: "admin" };
+    defects: "qaqc", inspections: "qaqc", safety: "safety", site_visits: "svr", variations: "vo", subcontractors: "subs", sub_contracts: "subs", sub_payments: "subs", tests: "handover", handover_items: "handover", warranties: "handover", staff: "people", accounts: "people", app_settings: "admin", events: "schedule", holidays: "schedule" };
   const NOTE_ICON = { requests: "requests", purchase_orders: "procurement", suppliers: "procurement", stock_moves: "stock", stock_items: "stock", stores: "stock", daily_reports: "daily", documents: "docs",
-    tasks: "projects", projects: "projects", project_members: "people", claims: "cost", cost_lines: "cost", monthly_costs: "cost", invoices: "finance", defects: "qaqc", inspections: "qaqc", safety: "safety", site_visits: "svr", variations: "vo", subcontractors: "subs", sub_contracts: "subs", sub_payments: "subs", tests: "handover", handover_items: "handover", warranties: "handover", staff: "people", accounts: "people", app_settings: "admin" };
+    tasks: "projects", projects: "projects", project_members: "people", claims: "cost", cost_lines: "cost", monthly_costs: "cost", invoices: "finance", defects: "qaqc", inspections: "qaqc", safety: "safety", site_visits: "svr", variations: "vo", subcontractors: "subs", sub_contracts: "subs", sub_payments: "subs", tests: "handover", handover_items: "handover", warranties: "handover", staff: "people", accounts: "people", app_settings: "admin", events: "schedule", holidays: "schedule" };
   const PREF_LABEL = { mine: "Only things for me", projects: "Everything on my projects", all: "Everything in the company" };
   function notifyPref(u) {
     const s = (db.app_settings || []).find((x) => x.key === "notify:" + u.id);
@@ -783,6 +790,7 @@
       case "warranties": case "handover_items": return [pm(pid)];
       case "site_visits": return ids("MD").concat(inGroup("PM").map((s) => s.id), split(r.visited_by), (r.actions || []).map((a) => a.who), [r.author_id]);
       case "app_settings": return ids("MD").concat(ids("SYSADMIN"), ids("BACKUPADMIN"));
+      case "events": return [r.organiser_id].concat(Array.isArray(r.attendees) ? r.attendees : []);
       default: return [];
     }
   }
@@ -797,6 +805,8 @@
       if (pref === "projects" && pid && (isPMof(s, pid) || db.project_members.some((m) => m.project_id === pid && m.staff_id === s.id) || hasTag(s, "SITEMGR"))) out.add(s.id);
     }
     out.delete(actor);
+    if (tbl === "events" && r) return [...out].filter((id) => { const s = byId("staff", id); return s && canSeeEvent(s, r); });
+    if (tbl === "holidays") return [];
     return [...out].filter((id) => byId("staff", id));
   }
   // A clear title for each kind of record
@@ -818,6 +828,7 @@
     if (tbl === "requests") return r.title + (r.amount ? " · " + money(r.amount) : "") + (r.project_id ? " · " + projLabel(r.project_id) : "") + (r.status === "Pending" ? " · waiting for " + waitingOn(r) : "");
     if (tbl === "daily_reports") return r.kind === "Design" ? sum(r.entries || [], (e) => e.hours) + " hours" : r.manpower + " workers · " + reportPhotos(r).length + " photos" + (r.issues ? " · issue: " + String(r.issues).slice(0, 60) : "");
     if (tbl === "purchase_orders") return r.description + " · " + supplierName(r.supplier_id) + " · " + money(r.amount);
+    if (tbl === "events") return [fmtDate(r.date), r.all_day || !r.start_time ? "All day" : r.start_time + (r.end_time ? "–" + r.end_time : ""), r.location, projLabel(r.project_id), staffName(r.organiser_id)].filter(Boolean).join(" · ");
     if (tbl === "stock_moves") { const it = byId("stock_items", r.item_id) || {}; return (r.qty > 0 ? "+" : "") + r.qty + " " + it.unit + " · " + ((byId("stores", r.store_id) || {}).name || "") + (r.project_id ? " · " + projLabel(r.project_id) : "") + " · now " + stockQty(it.id) + " " + it.unit + " in total"; }
     return summary;
   }
@@ -885,7 +896,7 @@
     const r = byId(tbl, id);
     const map = { requests: openRequest, purchase_orders: openPO, daily_reports: openDaily, documents: openDoc, tasks: openTask, claims: openClaim, invoices: openInvoice, defects: openDefect, safety: openSafety,
       inspections: openInspection, projects: openProject, staff: openPerson, stock_items: openItem, site_visits: openSvr,
-      variations: openVO, subcontractors: openSub, sub_payments: openPayment, tests: openTest, sub_contracts: (k) => openSub(byId("subcontractors", k.sub_id)) };
+      variations: openVO, subcontractors: openSub, sub_payments: openPayment, tests: openTest, sub_contracts: (k) => openSub(byId("subcontractors", k.sub_id)), events: openEvent };
     if (tbl === "welcome") { const st = byId("staff", id); if (st) return openPerson(st); }
     if (tbl === "accounts") { state.tab.people = "accounts"; ACC.loaded = false; if (state.route === "people" && (location.hash || "").replace(/^#\/?/, "") === "people") render(); else go("people"); return; }
     if (tbl === "stock_moves" && r) return openItem(byId("stock_items", r.item_id));
@@ -974,7 +985,7 @@
     closeDrawer();
     const u = me(); tab = tab || "mine";
     const notes = myNotes(u).slice(0, 80), unread = notes.filter((n) => !n.read).length;
-    const feed = db.audit_log.filter((a) => { const mod = NOTE_MODULE[a.tbl]; if (!mod || !navVisible(u, mod)) return false; if (a.tbl === "accounts" && !canAccounts(u)) return false; const r = byId(a.tbl, a.record_id); return inScope(u, recordProject(a.tbl, r)); })
+    const feed = db.audit_log.filter((a) => { const mod = NOTE_MODULE[a.tbl]; if (!mod || !navVisible(u, mod)) return false; if (a.tbl === "accounts" && !canAccounts(u)) return false; const r = byId(a.tbl, a.record_id); if (a.tbl === "events" && !(r && canSeeEvent(u, r))) return false; return inScope(u, recordProject(a.tbl, r)); })
       .sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 80)
       .map((a) => ({ id: a.id, title: a.summary || a.action, body: a.action + " · " + (MODULE_NAMES[NOTE_MODULE[a.tbl]] || "Settings"), actor_id: a.actor_id, at: a.at, tbl: a.tbl, record_id: a.record_id, read: true }));
     const d = document.createElement("div"); d.id = "drawer"; d.className = "drawer-wrap";
@@ -1226,7 +1237,7 @@
   // Menu in groups. Each person sees only the items (and groups) their role allows.
   const NAV = [
     ["dashboard", "Dashboard", "dashboard", ""],
-    ["home", "My work", null, "My work"], ["requests", "Requests", "requests", "My work"], ["daily", "Daily report", "daily", "My work"],
+    ["home", "My work", null, "My work"], ["schedule", "Schedule", "schedule", "My work"], ["requests", "Requests", "requests", "My work"], ["daily", "Daily report", "daily", "My work"],
     ["projects", "Projects", "projects", "Projects"], ["svr", "Site visits", "svr", "Projects"], ["docs", "Documents", "docs", "Projects"], ["qaqc", "QA/QC", "qaqc", "Projects"], ["safety", "Safety", "safety", "Projects"],
     ["vo", "Variations", "vo", "Projects"], ["handover", "Handover", "handover", "Projects"],
     ["cost", "Cost & Claims", "cost", "Money & materials"], ["subs", "Subcontractors", "subs", "Money & materials"], ["procurement", "Procurement", "procurement", "Money & materials"],
@@ -1285,7 +1296,7 @@
         <section class="card"><h2>My requests</h2>
           ${mine.length ? `<ul class="todo">${mine.map((r) => `<li data-act="${act(() => openRequest(r))}"><span class="kind">${badge(r.status)}</span><b>${esc(r.ref_no + " " + r.title)}</b><small>${r.status === "Pending" ? "Waiting for " + esc(waitingOn(r)) : esc(r.type)}</small></li>`).join("")}</ul>` : empty("No requests yet.")}
         </section>
-      </div>`;
+      </div>${todayScheduleCard(u, "sch-home")}`;
   };
 
   // ---------- REQUESTS ----------
@@ -2077,7 +2088,7 @@
     const fields = next === "Invoiced" ? [{ name: "certified", label: "Amount certified by client (USD)", type: "number", value: c.claimed, required: true }, { name: "note", label: "Comment", type: "textarea" }] : [{ name: "note", label: "Comment", type: "textarea" }];
     const vos = db.variations.filter((v) => v.claim_id === c.id);
     detail(projLabel(c.project_id) + " · IPC " + c.ipc_no, [["Period", esc(c.period)], ["Claimed", money(c.claimed)], vos.length ? ["Variations included", vos.map((v) => `<a href="#" data-act="${act(() => openVO(v))}">${esc(v.vo_no)}</a> ${money(v.amount)}`).join(" · ") + " = <b>" + money(sum(vos, (v) => v.amount)) + "</b>"] : null, ["Certified", c.certified ? money(c.certified) : ""], ["Status", badge(c.status)]],
-      next ? btn(next === "Invoiced" ? "Raise invoice" : "Mark " + next, () => confirmAction(next + " · IPC " + c.ipc_no, fields, run), "primary") : "",
+      (next ? btn(next === "Invoiced" ? "Raise invoice" : "Mark " + next, () => confirmAction(next + " · IPC " + c.ipc_no, fields, run), "primary") : "") + schedBtn(u, "claims", c, { type: "Progress claim", title: "Submit IPC " + c.ipc_no + " · " + projLabel(c.project_id), all_day: true, start_time: "", end_time: "" }),
       `<h4>Route</h4><ol class="steps">${CLAIM_FLOW.map((s, i) => `<li class="${i <= CLAIM_FLOW.indexOf(c.status) ? "done" : ""}"><b>${esc(s)}</b></li>`).join("")}</ol>${historyHtml(c.history)}`);
   }
 
@@ -2261,6 +2272,7 @@
     }
     if (i.result === "Failed" && canRaiseQA(u)) acts.push(btn("Raise defect", () => newDefect(u, { project_id: i.project_id, location: i.area, discipline: i.discipline, inspection_id: i.id })));
     acts.push(btn("PDF English", () => qaPdf("insp", i, "en")) + btn("PDF ខ្មែរ", () => qaPdf("insp", i, "km")));
+    if (i.result === "Open") acts.push(schedBtn(u, "inspections", i, { type: "Inspection", title: i.title, date: i.insp_date && i.insp_date >= today() ? i.insp_date : today(), location: i.area || "", attendees: [i.inspector_id].filter(Boolean) }));
     const raised = db.defects.filter((f) => f.inspection_id === i.id);
     detail(inspNo(i) + " · " + i.title, [["Project", esc(projLabel(i.project_id))], ["Area", esc(i.area)], ["Discipline", esc(i.discipline)], ["Inspector", esc(staffName(i.inspector_id))], ["Date", fmtDate(i.insp_date)], ["Result", badge(i.result)],
       ["Checklist notes", esc(i.notes)], i.result_note ? ["Result notes", esc(i.result_note)] : null, raised.length ? ["Defects raised", raised.map((f) => esc(defectNo(f)) + " " + badge(f.status)).join(" ")] : null], acts.join(""),
@@ -2850,6 +2862,7 @@
   function openVO(v) {
     const u = me(), acts = voActions(u, v).map(([label, to, cls, fields]) => btn(label, () => to === "price" ? priceVO(v) : to === "claim" ? voToClaim(v) : fields ? formModal(label + " · " + v.vo_no, fields, (x) => voMove(v, to, x), label) : voMove(v, to).then(() => { closeModal(); render(); toast(v.vo_no + ": " + to); }), cls));
     acts.push(btn("PDF English", () => voPdf(v, "en")) + btn("PDF ខ្មែរ", () => voPdf(v, "km")));
+    if (!["In claim", "Client rejected", "Cancelled"].includes(v.status)) acts.push(schedBtn(u, "variations", v, { type: "Meeting", title: v.vo_no + " · " + v.title }));
     const p = byId("projects", v.project_id) || {}, c = v.claim_id ? byId("claims", v.claim_id) : null;
     const lines = (v.lines || []).length ? `<table class="boq"><thead><tr><th>Item</th><th class="r">Qty</th><th>Unit</th><th class="r">Rate</th><th class="r">Amount</th></tr></thead><tbody>${v.lines.map((l) => `<tr><td>${esc(l.item)}</td><td class="r">${esc(l.qty)}</td><td>${esc(l.unit)}</td><td class="r">${money(l.rate)}</td><td class="r">${money(l.qty * l.rate)}</td></tr>`).join("")}
       <tr><td colspan="4">Overhead & profit ${esc(v.markup_pct)}%</td><td class="r">${money(v.amount - sum(v.lines, (l) => l.qty * l.rate))}</td></tr></tbody><tfoot><tr><td colspan="4">Total variation</td><td class="r">${money(v.amount)}</td></tr></tfoot></table>` : '<p class="muted small">Not priced yet. The QS prices it line by line.</p>';
@@ -3260,7 +3273,8 @@
       body = subTable(list, p.id) + `<div class="sec-h"><h2>Payment certificates</h2></div>` + payTable(pays.sort((a, b) => (a.status === "Paid") - (b.status === "Paid") || String(b.period_to).localeCompare(String(a.period_to)))); }
     else if (cur === "handover") body = handoverBody(u, new Set([p.id]), p.id);
     else body = embedScreen(cur, u, p.id);
-    const acts = (canUpdateProgress(u, p) ? btn("Update progress", () => updateProgress(p), "primary") : "") + (canManageProject(u) ? btn("Site location", () => editSiteLocation(p)) : "");
+    const acts = (canUpdateProgress(u, p) ? btn("Update progress", () => updateProgress(p), "primary") : "") + (canManageProject(u) ? btn("Site location", () => editSiteLocation(p)) : "")
+      + schedBtn(u, "projects", p, { type: "Site visit", title: "Site visit · " + p.code, location: p.name });
     return `<h1>Projects</h1><p class="muted">${esc(p.code)} · everything about this job in one place</p>
       <a class="backlink" href="#projects">‹ All projects</a>
       <div class="phub-h"><div><span class="pc">${esc(p.code)} · ${esc(p.location || "")} · ${esc(p.status)}</span><h2>${esc(p.name)}</h2><span class="meta">Client: ${esc(p.client || "")} · PM ${esc(staffName(p.pm_id))} · ${fmtDate(p.start_date)} → ${fmtDate(p.end_date)}${can(u, "cost", "view") ? " · Contract " + money(revisedContract(p)) : ""}</span></div><div class="phub-acts">${acts}</div></div>
@@ -3460,6 +3474,7 @@
   // ---------- DASHBOARD ----------
   const SVGI = {
     back: '<path d="M15 18l-6-6 6-6"/>',
+    schedule: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/><path d="M8 14h2M14 14h2M8 17h2"/>',
     vo: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M12 11v6M9 14h6"/>',
     subs: '<circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><path d="M16 4.5a3 3 0 0 1 0 6M18 14.5c1.8.9 3 2.9 3 5.5"/>',
     handover: '<path d="M9 4h6a1 1 0 0 1 1 1v1H8V5a1 1 0 0 1 1-1z"/><path d="M8 5H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><path d="m9 14 2 2 4-4"/>',
@@ -3854,11 +3869,323 @@
         <section class="card dark c3"><div class="card-head"><h2>Stock overview</h2><a class="link" href="#stock" style="color:var(--accent-2)">Open</a></div>${stockDark}</section>
         <section class="card c9">${head("This week", "projects")}${week}</section>
         <section class="card c3">${head("Approvals waiting", "requests")}${approvals}</section>
+        ${todayScheduleCard(u, "c4")}
         <section class="card c8">${head("Projects", "projects")}${pcards}</section>
         ${svrAccess(u) ? svrDashCard() : ""}
         <section class="card c4">${head("Checks for the MD", null)}${checks}</section>
       </div>`;
   };
+
+  // ---------- SCHEDULE & MEETINGS (v22) ----------
+  // One diary for everyone: events people plan (meetings, inspections, site visits, claim dates…), Cambodia's public holidays,
+  // and the dated items of every other module (task due dates, IPC steps, VO dates, deliveries, tests, handover, leave…) that the person may see.
+  const EV_TYPES = ["Meeting", "Inspection", "Site visit", "Progress claim", "Deadline", "Training", "Other"];
+  const EV_CLS = { Meeting: "meet", Inspection: "insp", "Site visit": "site", "Progress claim": "claim", Deadline: "dead", Training: "train", Other: "other" };
+  const DEPT_ORDER = ["EXEC", "PM", "SITE", "DESIGN", "ENG", "QS", "FIN", "ADMIN"];
+  const p2_ = (n) => String(n).padStart(2, "0");
+  const isoOf = (d) => d.getFullYear() + "-" + p2_(d.getMonth() + 1) + "-" + p2_(d.getDate()); // local (Phnom Penh) calendar date
+  const dOf = (iso) => { const [y, m, d] = String(iso).slice(0, 10).split("-").map(Number); return new Date(y, m - 1, d); };
+  const isoAdd = (iso, n) => { const d = dOf(iso); d.setDate(d.getDate() + n); return isoOf(d); };
+  const isoAddMonths = (iso, n) => { const d = dOf(iso); d.setMonth(d.getMonth() + Number(n || 0)); return isoOf(d); };
+  const weekStartOf = (iso) => isoAdd(iso, -((dOf(iso).getDay() + 6) % 7)); // Monday
+  const wdShort = (iso) => dOf(iso).toLocaleDateString("en-GB", { weekday: "short" });
+  const isSunday = (iso) => dOf(iso).getDay() === 0;
+  const holidaysOn = (iso) => (db.holidays || []).filter((h) => String(h.date).slice(0, 10) === iso);
+  const holName = (h) => (window.I18N && I18N.lang === "km" && h.name_km) || h.name;
+  const evAttendees = (e) => (Array.isArray(e.attendees) ? e.attendees : []);
+  // Admins of the diary: they see and manage every event
+  const seesAllEvents = (u) => hasTag(u, "MD") || isSysAdmin(u) || hasTag(u, "BACKUPADMIN");
+  const canHolidays = (u) => hasTag(u, "HR") || isSysAdmin(u) || hasTag(u, "BACKUPADMIN");
+  const canAddEvent = (u) => can(u, "schedule", "own");
+  // A person "belongs" to a project when they are its PM or on its team
+  const belongsTo = (u, pid) => { const p = byId("projects", pid); return !!pid && ((p && p.pm_id === u.id) || db.project_members.some((m) => m.project_id === pid && m.staff_id === u.id)); };
+  function canSeeEvent(u, e) {
+    if (!u || !e) return false;
+    return seesAllEvents(u) || e.organiser_id === u.id || e.created_by === u.id || evAttendees(e).includes(u.id) || belongsTo(u, e.project_id);
+  }
+  function canEditEvent(u, e) {
+    if (!u || !e) return false;
+    return e.organiser_id === u.id || e.created_by === u.id || can(u, "schedule", "admin") || (!!e.project_id && (byId("projects", e.project_id) || {}).pm_id === u.id && can(u, "schedule", "edit"));
+  }
+  const evTime = (e) => e.all_day || !e.start_time ? "All day" : e.start_time + (e.end_time ? "–" + e.end_time : "");
+
+  // Every dated item the person may see, from the events table and from the other modules
+  function linkedItems(u) {
+    const out = [];
+    const ok = (mod, pid, who) => navVisible(u, mod) && inScope(u, pid) && (seesAll(u, mod) || (who || []).includes(u.id));
+    const add = (o) => { if (o.d && /^\d{4}-\d{2}-\d{2}/.test(String(o.d))) { o.d = String(o.d).slice(0, 10); out.push(o); } };
+    const L = (mod, cls, type, label, title, pid, who, go, d, extra) => add(Object.assign({ kind: "link", mod, cls, type, label, title, pid: pid || "", mine: (who || []).includes(u.id), go, d }, extra || {}));
+    for (const p of db.projects) {
+      if (!navVisible(u, "projects") || !inScope(u, p.id)) continue;
+      const w = [p.pm_id], g = () => openProject(p), x = { tbl: "projects", rid: p.id };
+      L("projects", "m-proj", "Deadline", "Project start", p.code + " " + p.name, p.id, w, g, p.start_date, x);
+      L("projects", "m-proj", "Deadline", "Planned finish", p.code + " " + p.name, p.id, w, g, p.end_date, x);
+      if (p.handover_date) { L("projects", "m-proj", "Deadline", "Handover to client", p.code + " " + p.name, p.id, w, g, p.handover_date, x);
+        if (Number(p.dlp_months) > 0) L("projects", "m-proj", "Deadline", "Defects liability ends", p.code + " " + p.name, p.id, w, g, isoAddMonths(p.handover_date, p.dlp_months), x); }
+    }
+    db.tasks.filter((t) => t.status !== "Done").forEach((t) => { const w = [t.assignee_id, t.created_by]; if (ok("projects", t.project_id, w) || isPMof(u, t.project_id) && navVisible(u, "projects") && inScope(u, t.project_id)) L("projects", "m-task", "Deadline", "Task due", t.title, t.project_id, [t.assignee_id], () => openTask(t), t.due_date, { tbl: "tasks", rid: t.id }); });
+    db.documents.filter((x) => ["Draft", "In review"].includes(x.status)).forEach((x) => { if (ok("docs", x.project_id, [x.owner_id])) L("docs", "m-docs", "Deadline", "Drawing due", x.doc_no + " " + x.title, x.project_id, [x.owner_id], () => openDoc(x), x.due_date, { tbl: "documents", rid: x.id }); });
+    db.claims.forEach((c) => { if (!ok("cost", c.project_id, [])) return; (c.history || []).forEach((h) => L("cost", "m-cost", "Progress claim", "IPC " + c.ipc_no + " · " + h.action, projLabel(c.project_id) + " · " + (c.period || ""), c.project_id, [h.by], () => openClaim(c), dateInPP(h.at), { tbl: "claims", rid: c.id })); });
+    db.invoices.filter((i) => i.status !== "Paid").forEach((i) => { if (ok("finance", i.project_id, [])) L("finance", "m-fin", "Deadline", i.direction === "Receivable" ? "Client payment due" : "Bill due", i.inv_no + " " + i.party, i.project_id, [], () => openInvoice(i), i.due_date); });
+    db.inspections.forEach((i) => { if (ok("qaqc", i.project_id, [i.inspector_id])) L("qaqc", "m-qa", "Inspection", "QA/QC inspection", i.title, i.project_id, [i.inspector_id], () => openInspection(i), i.insp_date, { done: i.result !== "Open", tbl: "inspections", rid: i.id }); });
+    db.defects.filter((f) => f.status === "Open").forEach((f) => { if (ok("qaqc", f.project_id, [f.assigned_to, f.raised_by])) L("qaqc", "m-qa", "Deadline", "Defect fix by", f.description, f.project_id, [f.assigned_to], () => openDefect(f), f.due_date, { tbl: "defects", rid: f.id }); });
+    db.safety.forEach((x) => { if (ok("safety", x.project_id, [x.reported_by])) L("safety", "m-safe", "Other", "Safety · " + x.rec_type, x.description, x.project_id, [x.reported_by], () => openSafety(x), x.rec_date); });
+    db.variations.forEach((v) => { if (!ok("vo", v.project_id, [v.raised_by])) return; L("vo", "m-vo", "Other", "Variation raised", v.vo_no + " " + v.title, v.project_id, [v.raised_by], () => openVO(v), v.asked_date, { tbl: "variations", rid: v.id });
+      (v.history || []).filter((h) => ["Sent to client", "Client approved"].includes(h.action)).forEach((h) => L("vo", "m-vo", "Other", "Variation · " + h.action, v.vo_no + " " + v.title, v.project_id, [h.by], () => openVO(v), dateInPP(h.at), { tbl: "variations", rid: v.id })); });
+    db.sub_payments.forEach((x) => { const k = byId("sub_contracts", x.contract_id); if (!k || !ok("subs", k.project_id, [])) return; L("subs", "m-subs", "Progress claim", "Subcontractor claim " + x.pc_no, ((byId("subcontractors", k.sub_id) || {}).name || ""), k.project_id, [], () => openPayment(x), x.period_to, { tbl: "sub_payments", rid: x.id }); });
+    db.sub_contracts.forEach((k) => { if (!ok("subs", k.project_id, [])) return; const sc = byId("subcontractors", k.sub_id) || {}; L("subs", "m-subs", "Deadline", "Subcontract ends", (sc.name || "") + " · " + k.scope, k.project_id, [], () => openSub(sc), k.end_date); });
+    db.subcontractors.filter((s) => s.status === "Active").forEach((s) => { if (ok("subs", "", [])) L("subs", "m-subs", "Deadline", "Insurance ends", s.name, "", [], () => openSub(s), s.insurance_until); });
+    db.tests.forEach((t) => { if (!ok("handover", t.project_id, [t.tested_by])) return; L("handover", "m-hand", "Inspection", "Test " + t.test_no, t.system + " · " + (t.location || ""), t.project_id, [t.tested_by], () => openTest(t), t.test_date, { done: t.result !== "Open", tbl: "tests", rid: t.id });
+      if (t.calib_until) L("handover", "m-hand", "Deadline", "Instrument calibration ends", (t.instrument || "") + " " + (t.instrument_sn || ""), t.project_id, [t.tested_by], () => openTest(t), t.calib_until); });
+    db.handover_items.filter((h) => h.status === "Pending").forEach((h) => { if (ok("handover", h.project_id, [])) L("handover", "m-hand", "Deadline", "Handover item due", h.title, h.project_id, [], () => go("handover"), h.due_date); });
+    db.warranties.forEach((w) => { if (ok("handover", w.project_id, [])) L("handover", "m-hand", "Deadline", "Warranty ends", w.item, w.project_id, [], () => go("handover"), w.end_date); });
+    if (svrAccess(u)) db.site_visits.forEach((v) => { const w = split(v.visited_by).concat([v.author_id]);
+      L("svr", "m-svr", "Site visit", "Site visit (SVR)", v.svr_no + " · " + v.client, v.project_id, w, () => openSvr(v), v.visit_date, { time: v.time_from || "", tbl: "site_visits", rid: v.id });
+      if (["Lead", "Quoted"].includes(v.status)) { if (v.quote_due) L("svr", "m-svr", "Deadline", "Quotation due", v.svr_no + " · " + v.client, "", w, () => openSvr(v), v.quote_due);
+        (v.actions || []).filter((a) => !a.done && a.by).forEach((a) => L("svr", "m-svr", "Deadline", "Site visit action", a.action, "", [a.who], () => openSvr(v), a.by)); } });
+    db.purchase_orders.forEach((po) => { const rq = byId("requests", po.request_id), w = [rq && rq.requester_id, po.delivered_by].filter(Boolean); if (!ok("procurement", po.project_id, w)) return;
+      if (po.delivered_at) L("procurement", "m-proc", "Other", "Delivered", po.po_no + " " + po.description, po.project_id, w, () => openPO(po), dateInPP(po.delivered_at));
+      else if (po.status === "Ordered" && rq && rq.needed_by) L("procurement", "m-proc", "Deadline", "Delivery expected", po.po_no + " " + po.description, po.project_id, w, () => openPO(po), rq.needed_by); });
+    db.requests.forEach((r) => {
+      const who = [r.requester_id].concat(r.status === "Pending" ? approversFor(r) : []), mayOpen = who.includes(u.id) || hasTag(u, "HR") || seesAll(u, "requests") && inScope(u, r.project_id);
+      if (r.type === "Leave" && ["Approved", "Pending"].includes(r.status)) {
+        // who is away is shown to everyone (no reason); a leave still waiting only to the people concerned
+        if (r.status === "Pending" && !mayOpen) return;
+        const n = Math.max(1, Math.ceil(Number(r.leave_days) || 1));
+        for (let i = 0, d = r.needed_by; i < n && d; i++, d = isoAdd(d, 1)) L("requests", "m-leave", "Other", r.status === "Approved" ? "On leave" : "Leave asked", staffName(r.requester_id), "", [r.requester_id], mayOpen ? () => openRequest(r) : null, d, { company: true });
+      } else if (r.type === "Overtime" && r.status !== "Rejected") {
+        if (mayOpen || isPMof(u, r.project_id) && navVisible(u, "requests")) L("requests", "m-req", "Other", r.status === "Approved" ? "Overtime" : "Overtime asked", staffName(r.requester_id) + (r.project_id ? " · " + projLabel(r.project_id) : ""), r.project_id, [r.requester_id], () => openRequest(r), r.needed_by);
+      } else if (r.status === "Pending" && r.needed_by && (who.includes(u.id) || seesAll(u, "requests") && inScope(u, r.project_id))) L("requests", "m-req", "Deadline", "Needed by", r.ref_no + " " + r.title, r.project_id, who, () => openRequest(r), r.needed_by);
+    });
+    return out;
+  }
+  function scheduleItems(u) {
+    const ev = db.events.filter((e) => canSeeEvent(u, e)).map((e) => ({ kind: "event", ev: e, d: String(e.date || "").slice(0, 10), type: e.type, cls: "t-" + (EV_CLS[e.type] || "other"), label: e.type, title: e.title,
+      pid: e.project_id || "", time: e.all_day ? "" : e.start_time || "", mine: e.organiser_id === u.id || e.created_by === u.id || evAttendees(e).includes(u.id), done: e.status !== "Planned", cancelled: e.status === "Cancelled", go: () => openEvent(e) }));
+    // an event made from a record (link) already shows that record: the record's own date item on the same day is not repeated
+    const linked = new Set(db.events.filter((e) => e.link_module && e.status !== "Cancelled").map((e) => e.link_module + ":" + e.link_id + ":" + String(e.date).slice(0, 10)));
+    return ev.concat(linkedItems(u).filter((x) => !linked.has((x.tbl || "") + ":" + (x.rid || "") + ":" + x.d)));
+  }
+  function schedFilter(u, items) {
+    const sc = state.tab.schedScope || "projects", ty = state.tab.schedType || "";
+    return items.filter((x) => {
+      if (state.project && x.pid !== state.project) return false;
+      if (ty === "linked" ? x.kind !== "link" : ty && x.type !== ty) return false;
+      if (sc === "mine") return x.mine;
+      if (sc === "projects") return x.mine || x.company || (x.pid ? belongsTo(u, x.pid) : x.kind === "link");
+      return true;
+    }).sort((a, b) => a.d.localeCompare(b.d) || (a.kind === "event" ? 0 : 1) - (b.kind === "event" ? 0 : 1) || String(a.time || "").localeCompare(String(b.time || "")));
+  }
+  const schedItemHtml = (x) => `<li class="sch-it ${x.kind === "link" ? "lnk " + x.cls : x.cls}${x.cancelled ? " cxl" : ""}${x.done && !x.cancelled ? " done" : ""}" ${x.go ? `data-act="${act(x.go)}"` : ""}>
+      <span class="sch-tm">${x.kind === "event" ? esc(evTime(x.ev)) : x.time ? esc(x.time) : ""}</span>
+      <span class="sch-body"><span class="sch-k">${esc(x.label)}</span>${x.kind === "link" ? `<span class="sch-mod">${esc(MODULE_NAMES[x.mod] || "")}</span>` : ""}${x.cancelled ? `<span class="tag bad">Cancelled</span>` : x.kind === "event" && x.ev.status === "Done" ? `<span class="tag ok">Done</span>` : ""}
+        <b>${esc(x.title)}</b><small>${esc([x.pid ? projLabel(x.pid) : "", x.kind === "event" ? x.ev.location : "", x.kind === "event" && evAttendees(x.ev).length ? evAttendees(x.ev).length + " people" : ""].filter(Boolean).join(" · "))}</small></span></li>`;
+  const holRow = (h) => `<li class="sch-it hol"><span class="sch-tm">All day</span><span class="sch-body"><span class="sch-k">Public holiday</span><b>${esc(holName(h))}</b></span></li>`;
+  function dayList(u, iso, items, opts) {
+    opts = opts || {};
+    const hol = holidaysOn(iso), list = items.filter((x) => x.d === iso);
+    const head = opts.head ? `<div class="sch-dh${hol.length ? " hol" : ""}${isSunday(iso) ? " sun" : ""}"><b>${esc(wdShort(iso))} · ${fmtDate(iso)}</b>${iso === today() ? `<span class="tag order">Today</span>` : ""}${opts.add && canAddEvent(u) ? btn("Add", () => eventForm(u, null, { date: iso }), "small") : ""}</div>` : "";
+    if (!hol.length && !list.length && opts.skipEmpty) return "";
+    return head + `<ul class="sch-list">${hol.map(holRow).join("")}${list.map(schedItemHtml).join("")}${!hol.length && !list.length ? `<li class="sch-none">Nothing planned.</li>` : ""}</ul>`;
+  }
+  const typeCount = (list, t) => list.filter((x) => x.type === t && !x.cancelled).length;
+  function schedTodayCard(u, items) {
+    const t = today(), list = items.filter((x) => x.d === t), hol = holidaysOn(t), tomHol = holidaysOn(isoAdd(t, 1));
+    const c = (label, n, cls) => `<div class="sch-cnt ${cls}"><b>${n}</b><span>${label}</span></div>`;
+    return `<section class="card sch-today"><div class="card-head"><h2>Today</h2><span class="muted">${esc(wdShort(t))} · ${fmtDate(t)}</span></div>
+      ${hol.length ? `<div class="sch-holbar">${svgI("schedule")}<span><b>${esc(hol.map(holName).join(" · "))}</b><small>Public holiday</small></span></div>` : ""}
+      ${!hol.length && tomHol.length ? `<div class="sch-holbar soon">${svgI("schedule")}<span><b>${esc(tomHol.map(holName).join(" · "))}</b><small>Tomorrow is a public holiday</small></span></div>` : ""}
+      <div class="sch-cnts">${c("Meetings", typeCount(list, "Meeting"), "t-meet")}${c("Inspections", typeCount(list, "Inspection"), "t-insp")}${c("Site visits", typeCount(list, "Site visit"), "t-site")}${c("Deadlines", typeCount(list, "Deadline") + typeCount(list, "Progress claim"), "t-dead")}</div></section>`;
+  }
+  function monthView(u, items) {
+    const t = today(), mon = state.tab.schedMonth || t.slice(0, 7), first = mon + "-01", sel = state.tab.schedDay || (t.slice(0, 7) === mon ? t : first);
+    const start = weekStartOf(first), mStart = dOf(first), title = mStart.toLocaleDateString("en-GB", { month: "long", year: "numeric" });
+    const shift = (n) => { const d = dOf(first); d.setMonth(d.getMonth() + n); state.tab.schedMonth = isoOf(d).slice(0, 7); state.tab.schedDay = state.tab.schedMonth === t.slice(0, 7) ? t : state.tab.schedMonth + "-01"; renderKeep(); };
+    const cells = [];
+    for (let i = 0; i < 42; i++) {
+      const d = isoAdd(start, i); if (i === 35 && d.slice(0, 7) !== mon) break;
+      const hol = holidaysOn(d), list = items.filter((x) => x.d === d), other = d.slice(0, 7) !== mon;
+      const cls = ["cal-d", other ? "other" : "", d === t ? "today" : "", hol.length ? "hol" : "", isSunday(d) ? "sun" : "", d === sel ? "sel" : ""].filter(Boolean).join(" ");
+      cells.push(`<button type="button" class="${cls}" data-date="${d}" aria-label="${esc(fmtDate(d))}${hol.length ? " · " + esc(hol[0].name) : ""}" data-act="${act(() => { state.tab.schedDay = d; if (other) state.tab.schedMonth = d.slice(0, 7); renderKeep(); const p = document.querySelector(".sch-day"); if (p && window.innerWidth <= 640) p.scrollIntoView({ block: "start", behavior: "smooth" }); })}">
+        <span class="cal-n">${dOf(d).getDate()}</span>${hol.length ? `<span class="cal-h">${esc(holName(hol[0]))}</span>` : ""}
+        <span class="cal-chips">${list.slice(0, 3).map((x) => `<i class="chip ${x.kind === "link" ? "lnk " + x.cls : x.cls}${x.cancelled ? " cxl" : ""}">${esc(x.title)}</i>`).join("")}${list.length > 3 ? `<i class="chip more">+${list.length - 3}</i>` : ""}</span></button>`);
+    }
+    const wd = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    return `<div class="sch-month"><section class="card sch-cal"><div class="cal-bar"><button type="button" class="icon" aria-label="Previous month" data-act="${act(() => shift(-1))}">‹</button><h2>${esc(title)}</h2><button type="button" class="icon" aria-label="Next month" data-act="${act(() => shift(1))}">›</button>
+        <button type="button" class="btn small" data-act="${act(() => { state.tab.schedMonth = t.slice(0, 7); state.tab.schedDay = t; renderKeep(); })}">Today</button></div>
+      <div class="cal-grid">${wd.map((w) => `<div class="cal-wd${w === "Sun" ? " sun" : ""}">${w}</div>`).join("")}${cells.join("")}</div>
+      <div class="cal-key"><span><i class="k hol"></i>Public holiday</span><span><i class="k t-meet"></i>Meeting</span><span><i class="k t-insp"></i>Inspection</span><span><i class="k t-site"></i>Site visit</span><span><i class="k t-claim"></i>Progress claim</span><span><i class="k t-dead"></i>Deadline</span><span><i class="k lnk"></i>From other modules</span></div></section>
+      <section class="card sch-day">${dayList(u, sel, items, { head: true, add: true })}</section></div>`;
+  }
+  function agendaView(u, items) {
+    const t = today(), tom = isoAdd(t, 1), ws = weekStartOf(t), nextWs = isoAdd(ws, 7);
+    const range = (a, b) => { const out = []; for (let d = a; d <= b; d = isoAdd(d, 1)) out.push(d); return out; };
+    const sec = (title, days, skip) => { const html = days.map((d) => dayList(u, d, items, { head: true, add: true, skipEmpty: skip })).join(""); return `<section class="card sch-sec"><h2>${esc(title)}</h2>${html || `<p class="muted small">Nothing planned.</p>`}</section>`; };
+    const rest = range(isoAdd(tom, 1), isoAdd(ws, 6));
+    return sec("Today", [t]) + sec("Tomorrow", [tom]) + (rest.length ? sec("This week", rest, true) : "") + sec("Next week", range(rest.length ? nextWs : isoAdd(tom, 1), isoAdd(nextWs, 6)), true);
+  }
+  function holidaysView(u) {
+    const years = [...new Set((db.holidays || []).map((h) => Number(h.year) || Number(String(h.date).slice(0, 4))))].sort();
+    const rows = (y) => db.holidays.filter((h) => String(h.date).slice(0, 4) === String(y)).sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    const add = canHolidays(u) ? btn("Add holiday", () => holidayForm(u), "primary") : "";
+    return `<div class="sec-h"><p class="muted small" style="margin:0">Official public holidays of the Kingdom of Cambodia (shown in red on the calendar). Lunar dates can move: HR updates them when the government announces the year's list.</p><span class="grow"></span>${add}</div>
+      ${years.map((y) => `<section class="card"><div class="card-head"><h2>${y}</h2><span class="count">${rows(y).length}</span></div><div class="tscroll">${table([{ label: "Date", get: (h) => `<b>${esc(wdShort(String(h.date).slice(0, 10)))} · ${fmtDate(h.date)}</b>` },
+        { label: "Holiday", get: (h) => esc(h.name) }, { label: "Khmer", get: (h) => `<span class="km-txt">${esc(h.name_km || "")}</span>` }], rows(y), canHolidays(u) ? (h) => holidayForm(u, h) : null)}</div></section>`).join("") || empty("No public holidays yet.")}`;
+  }
+  function holidayForm(u, h) {
+    const isNew = !h; h = h || {};
+    formModal(isNew ? "Add public holiday" : "Edit public holiday", [
+      { name: "date", label: "Date", type: "date", required: true, value: String(h.date || today()).slice(0, 10) },
+      { name: "name", label: "Holiday name (English)", required: true, value: h.name || "" },
+      { name: "name_km", label: "Holiday name (Khmer)", value: h.name_km || "" }
+    ], async (v) => {
+      if (db.holidays.some((x) => x.id !== h.id && String(x.date).slice(0, 10) === v.date && String(x.name).trim().toLowerCase() === v.name.trim().toLowerCase())) throw new Error("This holiday is already in the list for that date.");
+      const row = { date: v.date, name: v.name.trim(), name_km: v.name_km.trim(), year: Number(v.date.slice(0, 4)) };
+      if (isNew) await save("holidays", row, "Public holiday added: " + row.name + " · " + fmtDate(row.date)); else await patch("holidays", h.id, row, "Public holiday changed: " + row.name + " · " + fmtDate(row.date));
+      toast("Saved");
+    }, isNew ? "Add holiday" : "Save changes", { extraHtml: isNew ? "" : `<div class="form-actions" style="justify-content:flex-start;margin-top:0">${btn("Remove holiday", async () => { if (!confirm("Remove " + h.name + " (" + fmtDate(h.date) + ") from the public holidays?")) return; await Store.remove("holidays", h.id); await log("Removed", "holidays", h.id, "Public holiday removed: " + h.name + " · " + fmtDate(h.date)); closeModal(); render(); toast("Removed"); }, "danger")}</div>` });
+  }
+
+  // ----- attendee picker: search, grouped by department, select a whole department -----
+  function peoplePicker(sel) {
+    const people = staffNow(), deptOf = (s) => { const g = groupsOf(s)[0]; return DEPT_ORDER.includes(g) ? g : "ADMIN"; };
+    const groups = DEPT_ORDER.map((g) => [g, people.filter((s) => deptOf(s) === g).sort((a, b) => a.name.localeCompare(b.name))]).filter((x) => x[1].length);
+    const kmD = (g) => (window.I18N && I18N.km ? I18N.km(DEPT_NAME[g]) || "" : "");
+    return `<div class="field pp" data-pp><span>Attendees</span>
+      <div class="pp-top"><b class="pp-count" aria-live="polite"></b><button type="button" class="link pp-clear">Clear all</button></div>
+      <div class="pp-chips"></div>
+      <input type="search" class="pp-q" placeholder="Type to search: name, job or department" aria-label="Search people" autocomplete="off">
+      <div class="pp-list">${groups.map(([g, list]) => `<div class="pp-grp" data-g="${g}"><div class="pp-gh"><b>${esc(DEPT_NAME[g])}</b><small>${list.length}</small><button type="button" class="btn small pp-all" data-g="${g}">Select all</button></div>
+        ${list.map((s) => `<label class="pp-row" data-q="${esc([s.name, s.short_name, s.title, DEPT_NAME[g], kmD(g)].filter(Boolean).join(" ").toLowerCase())}"><input type="checkbox" value="${esc(s.id)}" ${sel.includes(s.id) ? "checked" : ""}>${avatar(s, "av sm")}<span><b>${esc(s.name)}</b><small>${esc(s.title)}</small></span></label>`).join("")}</div>`).join("")}
+        <p class="pp-none muted small" hidden>No one matches.</p></div>
+      <input type="hidden" name="attendees" value="${esc(JSON.stringify(sel))}"></div>`;
+  }
+  function wirePeoplePicker(m) {
+    const w = m.querySelector("[data-pp]"); if (!w) return;
+    const hid = w.querySelector('input[name="attendees"]'), boxes = [...w.querySelectorAll(".pp-row input")], q = w.querySelector(".pp-q");
+    const paint = () => {
+      const ids = boxes.filter((b) => b.checked).map((b) => b.value); hid.value = JSON.stringify(ids);
+      w.querySelector(".pp-count").textContent = ids.length === 1 ? "1 person selected" : ids.length + " people selected";
+      w.querySelector(".pp-chips").innerHTML = ids.map((id) => `<span class="pp-chip">${esc((byId("staff", id) || {}).name || id)}<button type="button" data-rm="${esc(id)}" aria-label="Remove ${esc((byId("staff", id) || {}).name || "")}">×</button></span>`).join("");
+      w.querySelectorAll(".pp-grp").forEach((g) => { const bs = [...g.querySelectorAll(".pp-row input")], all = bs.length && bs.every((b) => b.checked); const b = g.querySelector(".pp-all"); b.textContent = all ? "Clear" : "Select all"; b.classList.toggle("on", all); });
+    };
+    boxes.forEach((b) => b.addEventListener("change", paint));
+    w.querySelector(".pp-chips").addEventListener("click", (e) => { const b = e.target.closest("[data-rm]"); if (!b) return; e.preventDefault(); const x = boxes.find((y) => y.value === b.dataset.rm); if (x) x.checked = false; paint(); });
+    w.querySelectorAll(".pp-all").forEach((b) => b.addEventListener("click", (e) => { e.preventDefault(); const bs = [...w.querySelectorAll(`.pp-grp[data-g="${b.dataset.g}"] .pp-row input`)], all = bs.every((x) => x.checked); bs.forEach((x) => { x.checked = !all; }); paint(); }));
+    w.querySelector(".pp-clear").addEventListener("click", (e) => { e.preventDefault(); boxes.forEach((b) => { b.checked = false; }); paint(); });
+    q.addEventListener("input", () => {
+      const v = q.value.trim().toLowerCase(); let any = false;
+      w.querySelectorAll(".pp-grp").forEach((g) => { let n = 0; g.querySelectorAll(".pp-row").forEach((r) => { const hit = !v || r.dataset.q.includes(v); r.hidden = !hit; if (hit) n++; }); g.hidden = !n; if (n) any = true; });
+      w.querySelector(".pp-none").hidden = any;
+    });
+    q.addEventListener("keydown", (e) => { if (e.key === "Enter") e.preventDefault(); });
+    paint();
+  }
+
+  // ----- create / edit an event -----
+  function eventForm(u, ev, preset) {
+    const isNew = !ev;
+    const e = ev || Object.assign({ type: "Meeting", date: state.tab.schedDay && state.tab.schedDay >= today() ? state.tab.schedDay : today(), start_time: "09:00", end_time: "10:00", all_day: false, project_id: state.project || "", attendees: [], title: "", location: "", notes: "", link_module: "", link_id: "" }, preset || {});
+    const projects = projectOptions(u); if (e.project_id && !projects.some((p) => p[0] === e.project_id)) projects.push([e.project_id, projLabel(e.project_id)]);
+    const lk = e.link_module && byId(e.link_module, e.link_id);
+    formModal(isNew ? "New event" : "Edit event", [
+      { name: "title", label: "Title", required: true, value: e.title, help: "Example: Weekly site meeting, MEP inspection level 3, Submit IPC 4" },
+      { name: "type", label: "Type", type: "select", options: EV_TYPES, value: e.type },
+      { name: "date", label: "Date", type: "date", required: true, value: String(e.date || today()).slice(0, 10) },
+      { name: "start_time", label: "Start time", type: "time", value: e.start_time || "" },
+      { name: "end_time", label: "End time", type: "time", value: e.end_time || "" },
+      { name: "project_id", label: "Project", type: "select", options: projects, blank: "No project (office)", value: e.project_id || "" },
+      { name: "location", label: "Location", value: e.location || "", help: "Meeting room, site office, address or online link" },
+      { name: "notes", label: "Notes / agenda", type: "textarea", value: e.notes || "" }
+    ], async (v) => {
+      let att = []; try { att = JSON.parse(v.attendees || "[]"); } catch (x) { att = []; }
+      const allDay = v.all_day === "on";
+      if (!allDay && !v.start_time) throw new Error("Set the start time, or tick All day.");
+      if (!allDay && v.end_time && v.end_time < v.start_time) throw new Error("The end time is before the start time.");
+      const row = { title: v.title.trim(), type: v.type, date: v.date, all_day: allDay, start_time: allDay ? "" : v.start_time, end_time: allDay ? "" : v.end_time || "", project_id: v.project_id || "",
+        location: v.location || "", notes: v.notes || "", attendees: att.filter((id) => byId("staff", id)), link_module: v.link_module || "", link_id: v.link_id || "", updated_at: nowIso() };
+      if (isNew) {
+        const r = await save("events", Object.assign(row, { no: nextNo("events", "no", "EV-"), organiser_id: u.id, created_by: u.id, status: "Planned", minutes: "" }), "Invitation: " + row.title + " · " + fmtDate(row.date));
+        toast(r.no + " saved" + (row.attendees.length ? " · " + row.attendees.length + " people invited" : ""));
+      } else {
+        const before = evAttendees(e), removed = before.filter((id) => !row.attendees.includes(id) && id !== u.id);
+        await patch("events", e.id, row, "Event changed: " + row.title + " · " + fmtDate(row.date));
+        for (const id of removed) { try { await Store.insert("notifications", { to_id: id, actor_id: u.id, title: "Removed from: " + row.title, body: fmtDate(row.date) + " · " + staffName(u.id), tbl: "events", record_id: e.id, read: false, at: nowIso() }); } catch (x) { /* never block */ } }
+        toast("Saved");
+      }
+      state.tab.schedDay = row.date; state.tab.schedMonth = row.date.slice(0, 7);
+    }, isNew ? "Save and invite" : "Save changes", {
+      extraHtml: peoplePicker(evAttendees(e)) + `<input type="hidden" name="link_module" value="${esc(e.link_module || "")}"><input type="hidden" name="link_id" value="${esc(e.link_id || "")}">`
+        + (lk ? `<p class="muted small">Linked to: ${esc(MODULE_NAMES[NOTE_MODULE[e.link_module]] || "")} · ${esc(linkLabel(e.link_module, lk))}</p>` : ""),
+      onReady: (m) => {
+        const f = m.querySelector("#mform"), dateIn = f.querySelector('input[name="date"]'), st = f.querySelector('input[name="start_time"]'), en = f.querySelector('input[name="end_time"]');
+        const dateField = dateIn.closest(".field"), warn = document.createElement("p"); warn.className = "sch-warn"; warn.hidden = true; dateField.appendChild(warn);
+        const ad = document.createElement("label"); ad.className = "chk sch-allday"; ad.innerHTML = `<input type="checkbox" name="all_day" ${e.all_day ? "checked" : ""}> <span>All day</span>`; dateField.after(ad);
+        const cb = ad.querySelector("input");
+        const sync = () => { [st, en].forEach((x) => { x.disabled = cb.checked; x.closest(".field").classList.toggle("off", cb.checked); }); };
+        const check = () => { const d = dateIn.value, h = d ? holidaysOn(d) : []; const msg = h.length ? "Public holiday: " + h.map(holName).join(" · ") + ". You can still save." : d && isSunday(d) ? "This date is a Sunday. You can still save." : "";
+          warn.textContent = msg; warn.hidden = !msg; };
+        cb.addEventListener("change", sync); dateIn.addEventListener("change", check); dateIn.addEventListener("input", check); sync(); check();
+        wirePeoplePicker(m);
+      } });
+  }
+  function linkLabel(tbl, r) {
+    if (!r) return "";
+    const m = { claims: () => projLabel(r.project_id) + " IPC " + r.ipc_no, variations: () => r.vo_no + " " + r.title, inspections: () => r.title, projects: () => r.code + " " + r.name, tasks: () => r.title, documents: () => r.doc_no + " " + r.title,
+      tests: () => r.test_no, sub_payments: () => r.pc_no, site_visits: () => r.svr_no, defects: () => r.description, requests: () => r.ref_no + " " + r.title };
+    return (m[tbl] || (() => r.title || r.name || r.id))();
+  }
+  // Prefilled "Add to schedule" from a record (project, IPC, VO, inspection…)
+  function scheduleFrom(u, tbl, r, preset) {
+    eventForm(u, null, Object.assign({ project_id: r.project_id || (tbl === "projects" ? r.id : ""), link_module: tbl, link_id: r.id }, preset || {}));
+  }
+  const schedBtn = (u, tbl, r, preset) => canAddEvent(u) ? btn("Add to schedule", () => scheduleFrom(u, tbl, r, preset)) : "";
+
+  function openEvent(e) {
+    const u = me();
+    if (!canSeeEvent(u, e)) { toast("This event is private to the people invited.", true); return; }
+    markSeen("events", e.id);
+    const att = evAttendees(e).map((id) => byId("staff", id)).filter(Boolean), hol = holidaysOn(String(e.date).slice(0, 10)), lk = e.link_module && byId(e.link_module, e.link_id);
+    const acts = [];
+    if (canEditEvent(u, e) && e.status === "Planned") {
+      acts.push(btn("Cancel event", () => confirmAction("Cancel · " + e.title, [{ name: "reason", label: "Reason (sent to the people invited)", type: "textarea" }], async (v) => {
+        await patch("events", e.id, { status: "Cancelled", notes: [e.notes, v.reason ? "Cancelled: " + v.reason : ""].filter(Boolean).join("\n"), updated_at: nowIso() }, "Event cancelled: " + e.title + " · " + fmtDate(e.date)); }, "Cancel event"), "danger"));
+      acts.push(btn("Edit", () => eventForm(u, e)));
+      acts.push(btn(e.type === "Meeting" ? "Mark done and add minutes" : "Mark done", () => formModal((e.type === "Meeting" ? "Minutes · " : "Done · ") + e.title, [{ name: "minutes", label: e.type === "Meeting" ? "Meeting minutes (decisions, actions, who does what by when)" : "What happened (optional)", type: "textarea", required: e.type === "Meeting", value: e.minutes || "" }],
+        async (v) => { await patch("events", e.id, { status: "Done", minutes: v.minutes || "", updated_at: nowIso() }, "Event done: " + e.title + " · " + fmtDate(e.date)); toast("Saved"); }, "Save"), "primary"));
+    } else if (canEditEvent(u, e) && e.status === "Done") {
+      acts.push(btn("Edit minutes", () => formModal("Minutes · " + e.title, [{ name: "minutes", label: "Meeting minutes", type: "textarea", value: e.minutes || "" }], async (v) => { await patch("events", e.id, { minutes: v.minutes || "", updated_at: nowIso() }, "Minutes updated: " + e.title); toast("Saved"); }, "Save")));
+    }
+    detail((e.no ? e.no + " · " : "") + e.title, [["Type", `<span class="tag sch-tag t-${EV_CLS[e.type] || "other"}">${esc(e.type)}</span>`], ["Status", badge(e.status)],
+      ["Date", `${esc(wdShort(String(e.date).slice(0, 10)))} · ${fmtDate(e.date)}${hol.length ? ` <span class="tag bad">Public holiday</span> <small>${esc(hol.map(holName).join(" · "))}</small>` : isSunday(String(e.date).slice(0, 10)) ? ` <span class="tag order">Sunday</span>` : ""}`], ["Time", esc(evTime(e))],
+      ["Project", e.project_id ? esc(projLabel(e.project_id) + " " + ((byId("projects", e.project_id) || {}).name || "")) : "No project (office)"], ["Location", esc(e.location)], ["Organiser", esc(staffName(e.organiser_id))],
+      lk ? ["Linked record", `<a href="#" data-act="${act(() => openRecord(e.link_module, e.link_id))}">${esc(MODULE_NAMES[NOTE_MODULE[e.link_module]] || "")} · ${esc(linkLabel(e.link_module, lk))}</a>`] : null,
+      ["Notes", e.notes ? `<span class="sch-pre">${esc(e.notes)}</span>` : ""], e.minutes ? ["Minutes", `<span class="sch-pre">${esc(e.minutes)}</span>`] : null].filter(Boolean), acts.join(""),
+      `<h4>Attendees · ${att.length}</h4>${att.length ? `<ul class="sch-att">${att.map((s) => `<li>${avatar(s, "av sm")}<span><b>${esc(s.name)}</b><small>${esc(s.title)} · ${esc(DEPT_NAME[groupsOf(s)[0]] || "")}</small></span></li>`).join("")}</ul>` : `<p class="muted small">No one invited.</p>`}`);
+  }
+
+  SCREENS.schedule = (u) => {
+    if (!state.tab.schedule) state.tab.schedule = window.innerWidth <= 640 ? "agenda" : "month";
+    const T = tabs("schedule", [["agenda", "Agenda"], ["month", "Month"], ["holidays", "Public holidays"]]);
+    const all = scheduleItems(u), items = schedFilter(u, all);
+    const sc = state.tab.schedScope || "projects";
+    const seg = (k, label) => `<button type="button" class="${sc === k ? "on" : ""}" data-act="${act(() => { state.tab.schedScope = k; renderKeep(); })}">${esc(label)}</button>`;
+    const ty = state.tab.schedType || "";
+    const typeSel = `<select data-change-tab="schedType" aria-label="Type"><option value="">All types</option>${EV_TYPES.map((t) => `<option value="${esc(t)}" ${ty === t ? "selected" : ""}>${esc(t)}</option>`).join("")}<option value="linked" ${ty === "linked" ? "selected" : ""}>From other modules</option></select>`;
+    const bar = T.cur === "holidays" ? "" : `<div class="toolbar sch-tools"><div class="seg">${seg("mine", "Mine")}${seg("projects", "My projects")}${seg("all", "Everyone")}</div>${projectFilter(u)}${typeSel}<span class="grow"></span>${canAddEvent(u) ? btn("New event", () => eventForm(u), "primary") : ""}</div>`;
+    const body = T.cur === "holidays" ? holidaysView(u) : T.cur === "month" ? monthView(u, items) : agendaView(u, items);
+    return `<h1>Schedule</h1><p class="muted">Meetings, inspections, site visits, claims and deadlines from every module, with Cambodia's public holidays in red.</p>
+      ${T.cur === "holidays" ? "" : schedTodayCard(u, items)}${T.html}${bar}${body}`;
+  };
+  // Small "Today's schedule" card for My work and the Dashboard
+  function todayScheduleCard(u, cls) {
+    if (!navVisible(u, "schedule")) return "";
+    const t = today(), mine = scheduleItems(u).filter((x) => x.mine && !x.cancelled && (x.d === t)).sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
+    const hol = holidaysOn(t), tom = holidaysOn(isoAdd(t, 1));
+    return `<section class="card ${cls || ""} sch-mini"><div class="card-head"><h2>Today's schedule</h2><a class="link" href="#schedule">Open schedule</a></div>
+      ${hol.length ? `<div class="sch-holbar">${svgI("schedule")}<span><b>${esc(hol.map(holName).join(" · "))}</b><small>Public holiday</small></span></div>` : tom.length ? `<div class="sch-holbar soon">${svgI("schedule")}<span><b>${esc(tom.map(holName).join(" · "))}</b><small>Tomorrow is a public holiday</small></span></div>` : ""}
+      ${mine.length ? `<ul class="sch-list">${mine.slice(0, 6).map(schedItemHtml).join("")}</ul>${mine.length > 6 ? `<p class="muted small">+${mine.length - 6} more</p>` : ""}` : `<p class="muted small">Nothing planned for you today.</p>`}</section>`;
+  }
 
   // ---------- STOCK ----------
   function canActStore(u, st) {
@@ -4545,7 +4872,7 @@
     if (m) { title = m[1]; sub = m[3] || ""; body = body.slice(m[0].length); }
     // Phone tab bar: the four most used places plus the full menu
     const has = (r) => navItems.some((n) => n[0] === r);
-    const tabs = [has("dashboard") ? ["dashboard", "Dashboard"] : ["home", "My work"], has("requests") ? ["requests", "Requests"] : ["projects", "Projects"], has("daily") ? ["daily", "Reports"] : has("docs") ? ["docs", "Drawings"] : ["home", "My work"]];
+    const tabs = [has("dashboard") ? ["dashboard", "Dashboard"] : ["home", "My work"], has("requests") ? ["requests", "Requests"] : ["projects", "Projects"], has("daily") ? ["daily", "Reports"] : has("docs") ? ["docs", "Drawings"] : has("schedule") ? ["schedule", "Schedule"] : ["home", "My work"]];
     const tabbar = `<nav class="tabbar" aria-label="Quick menu">${tabs.slice(0, 3).map(([r, l]) => `<a href="#${r}" class="${r === route ? "on" : ""}" data-badge="${r}">${svgI(r)}<span>${l}</span>${nb(r, mods[r])}</a>`).join("")}
       <button class="bell-ring" data-badge="all" data-act="${act(() => openDrawer("mine"))}" aria-label="Notifications">${svgI("bell")}<span>Alerts</span>${nb("all", unread)}</button>
       <button data-act="${act(() => document.body.classList.toggle("nav-open"))}" aria-label="Open full menu">${svgI("menu")}<span>Menu</span></button></nav>`;

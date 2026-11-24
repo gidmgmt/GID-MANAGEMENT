@@ -627,3 +627,63 @@ window.GID_KM = {
     [/^(.+), (.+)$/, (m, tr) => { const a = tr(m[1]), b = tr(m[2]); return a != null && b != null ? a + ", " + b : null; }]
   ];
 })();
+
+// ---------- v22: schedule & meetings ----------
+Object.assign(window.GID_KM, {
+  "Cancel": "បោះបង់", // fixes the older entry, which said "pay off" instead of "cancel"
+  "Schedule": "កាលវិភាគ", "Schedule & Meetings": "កាលវិភាគ និងកិច្ចប្រជុំ", "Agenda": "បញ្ជីកាលវិភាគ", "Month": "ខែ", "Public holidays": "ថ្ងៃឈប់សម្រាកសាធារណៈ", "Public holiday": "ថ្ងៃឈប់សម្រាកសាធារណៈ",
+  "Mine": "របស់ខ្ញុំ", "My projects": "គម្រោងរបស់ខ្ញុំ", "Everyone": "ទាំងអស់គ្នា", "All types": "គ្រប់ប្រភេទ", "From other modules": "ពីផ្នែកផ្សេងៗ", "New event": "កាលវិភាគថ្មី",
+  "Tomorrow": "ថ្ងៃស្អែក", "This week": "សប្តាហ៍នេះ", "Next week": "សប្តាហ៍ក្រោយ", "Nothing planned.": "គ្មានអ្វីគ្រោងទុកទេ។", "Add": "បន្ថែម", "All day": "ពេញមួយថ្ងៃ",
+  "Meetings": "កិច្ចប្រជុំ", "Deadlines": "កាលកំណត់", "Tomorrow is a public holiday": "ថ្ងៃស្អែកជាថ្ងៃឈប់សម្រាកសាធារណៈ", "Previous month": "ខែមុន", "Next month": "ខែក្រោយ",
+  "Meetings, inspections, site visits, claims and deadlines from every module, with Cambodia's public holidays in red.": "កិច្ចប្រជុំ ការត្រួតពិនិត្យ ការចុះពិនិត្យទីតាំង ការស្នើសុំទូទាត់ និងកាលកំណត់ពីគ្រប់ផ្នែក ព្រមទាំងថ្ងៃឈប់សម្រាកសាធារណៈនៃកម្ពុជាជាពណ៌ក្រហម។",
+  "Meeting": "កិច្ចប្រជុំ", "Progress claim": "ការស្នើសុំទូទាត់តាមវឌ្ឍនភាព", "Deadline": "កាលកំណត់", "Planned": "បានគ្រោងទុក", "Sunday": "ថ្ងៃអាទិត្យ",
+  "Project start": "ចាប់ផ្តើមគម្រោង", "Planned finish": "គ្រោងបញ្ចប់", "Handover to client": "ប្រគល់ការងារឱ្យម្ចាស់គម្រោង", "Defects liability ends": "ផុតរយៈពេលធានាកំហុស",
+  "Task due": "កាលកំណត់កិច្ចការ", "Drawing due": "កាលកំណត់ប្លង់", "Client payment due": "កាលកំណត់ម្ចាស់គម្រោងទូទាត់", "Bill due": "កាលកំណត់ទូទាត់វិក្កយបត្រ",
+  "QA/QC inspection": "ការត្រួតពិនិត្យគុណភាព", "Defect fix by": "ជួសជុលចំណុចខ្វះខាតត្រឹម", "Variation raised": "បានស្នើការងារកែប្រែ", "Subcontract ends": "កិច្ចសន្យាម៉ៅការបន្តបញ្ចប់",
+  "Insurance ends": "ធានារ៉ាប់រងផុតកំណត់", "Instrument calibration ends": "ការក្រិតតាមខ្នាតឧបករណ៍ផុតកំណត់", "Handover item due": "កាលកំណត់ប្រគល់ឯកសារ/សម្ភារៈ", "Warranty ends": "ការធានាផុតកំណត់",
+  "Site visit (SVR)": "ចុះពិនិត្យទីតាំង (SVR)", "Quotation due": "កាលកំណត់សម្រង់តម្លៃ", "Site visit action": "កិច្ចការក្រោយចុះពិនិត្យទីតាំង", "Delivered": "បានដឹកជញ្ជូន",
+  "Delivery expected": "រំពឹងថានឹងដឹកមកដល់", "On leave": "ឈប់សម្រាក", "Leave asked": "បានស្នើសុំច្បាប់", "Overtime asked": "បានស្នើសុំថែមម៉ោង", "Needed by": "ត្រូវការត្រឹម",
+  "Today's schedule": "កាលវិភាគថ្ងៃនេះ", "Open schedule": "បើកកាលវិភាគ", "Nothing planned for you today.": "ថ្ងៃនេះគ្មានអ្វីគ្រោងទុកសម្រាប់អ្នកទេ។",
+  "Official public holidays of the Kingdom of Cambodia (shown in red on the calendar). Lunar dates can move: HR updates them when the government announces the year's list.": "ថ្ងៃឈប់សម្រាកសាធារណៈផ្លូវការនៃព្រះរាជាណាចក្រកម្ពុជា (បង្ហាញជាពណ៌ក្រហមលើប្រតិទិន)។ ថ្ងៃតាមចន្ទគតិអាចប្តូរ៖ ផ្នែកធនធានមនុស្សកែប្រែនៅពេលរាជរដ្ឋាភិបាលប្រកាសបញ្ជីប្រចាំឆ្នាំ។",
+  "Add holiday": "បន្ថែមថ្ងៃឈប់សម្រាក", "Holiday": "ថ្ងៃឈប់សម្រាក", "Khmer": "ខ្មែរ", "No public holidays yet.": "មិនទាន់មានថ្ងៃឈប់សម្រាកសាធារណៈ។",
+  "Add public holiday": "បន្ថែមថ្ងៃឈប់សម្រាកសាធារណៈ", "Edit public holiday": "កែថ្ងៃឈប់សម្រាកសាធារណៈ", "Holiday name (English)": "ឈ្មោះថ្ងៃឈប់សម្រាក (អង់គ្លេស)",
+  "Holiday name (Khmer)": "ឈ្មោះថ្ងៃឈប់សម្រាក (ខ្មែរ)", "Remove holiday": "ដកថ្ងៃឈប់សម្រាកចេញ", "This holiday is already in the list for that date.": "ថ្ងៃឈប់សម្រាកនេះមានក្នុងបញ្ជីសម្រាប់ថ្ងៃនោះរួចហើយ។",
+  "Edit event": "កែកាលវិភាគ", "Example: Weekly site meeting, MEP inspection level 3, Submit IPC 4": "ឧទាហរណ៍៖ ប្រជុំការដ្ឋានប្រចាំសប្តាហ៍ ត្រួតពិនិត្យ MEP ជាន់ទី 3 ដាក់ IPC 4",
+  "Start time": "ម៉ោងចាប់ផ្តើម", "End time": "ម៉ោងបញ្ចប់", "Meeting room, site office, address or online link": "បន្ទប់ប្រជុំ ការិយាល័យការដ្ឋាន អាសយដ្ឋាន ឬតំណអនឡាញ",
+  "Notes / agenda": "កំណត់ចំណាំ / របៀបវារៈ", "Save and invite": "រក្សាទុក និងអញ្ជើញ", "Attendees": "អ្នកចូលរួម", "Clear all": "សម្អាតទាំងអស់",
+  "Type to search: name, job or department": "វាយដើម្បីស្វែងរក៖ ឈ្មោះ មុខងារ ឬផ្នែក", "Search people": "ស្វែងរកបុគ្គលិក", "Select all": "ជ្រើសទាំងអស់", "Clear": "សម្អាត",
+  "No one matches.": "រកមិនឃើញនរណាម្នាក់។", "1 person selected": "បានជ្រើស 1 នាក់", "Set the start time, or tick All day.": "សូមកំណត់ម៉ោងចាប់ផ្តើម ឬធីក ពេញមួយថ្ងៃ។",
+  "The end time is before the start time.": "ម៉ោងបញ្ចប់នៅមុនម៉ោងចាប់ផ្តើម។", "This date is a Sunday. You can still save.": "ថ្ងៃនេះជាថ្ងៃអាទិត្យ។ អ្នកនៅតែអាចរក្សាទុកបាន។",
+  "Cancel event": "លុបចោលកាលវិភាគ", "Reason (sent to the people invited)": "មូលហេតុ (ផ្ញើទៅអ្នកដែលបានអញ្ជើញ)", "Mark done and add minutes": "សម្គាល់ថារួចរាល់ និងបន្ថែមកំណត់ហេតុប្រជុំ",
+  "Meeting minutes (decisions, actions, who does what by when)": "កំណត់ហេតុប្រជុំ (សេចក្តីសម្រេច កិច្ចការ អ្នកណាធ្វើអ្វី ត្រឹមពេលណា)", "What happened (optional)": "អ្វីដែលបានកើតឡើង (មិនចាំបាច់)",
+  "Edit minutes": "កែកំណត់ហេតុប្រជុំ", "Meeting minutes": "កំណត់ហេតុប្រជុំ", "Minutes": "កំណត់ហេតុប្រជុំ", "Organiser": "អ្នករៀបចំ", "Linked record": "កំណត់ត្រាដែលភ្ជាប់",
+  "No one invited.": "មិនទាន់អញ្ជើញនរណាម្នាក់។", "This event is private to the people invited.": "កាលវិភាគនេះសម្រាប់តែអ្នកដែលបានអញ្ជើញប៉ុណ្ណោះ។", "Add to schedule": "បន្ថែមទៅកាលវិភាគ"
+});
+(function () {
+  const FM = { January: "មករា", February: "កុម្ភៈ", March: "មីនា", April: "មេសា", May: "ឧសភា", June: "មិថុនា", July: "កក្កដា", August: "សីហា", September: "កញ្ញា", October: "តុលា", November: "វិច្ឆិកា", December: "ធ្នូ" };
+  const t = (x, tr) => { const y = tr(x); return y == null ? x : y; };
+  window.GID_KM_PATTERNS.unshift(
+    [/^(January|February|March|April|May|June|July|August|September|October|November|December) (\d{4})$/, (m) => "ខែ" + FM[m[1]] + " " + m[2]],
+    [/^(\d+) people$/, (m) => m[1] + " នាក់"],
+    [/^(\d+) people selected$/, (m) => "បានជ្រើស " + m[1] + " នាក់"],
+    [/^Attendees · (\d+)$/, (m) => "អ្នកចូលរួម · " + m[1]],
+    [/^\+(\d+) more$/, (m) => "+" + m[1] + " ទៀត"],
+    [/^IPC (\d+)$/, (m) => "IPC " + m[1]],
+    [/^Submit IPC (\d+)$/, (m) => "ដាក់ IPC " + m[1]],
+    [/^Test (TC-[\w-]+)$/, (m) => "តេស្ត " + m[1]],
+    [/^Subcontractor claim (\S+)$/, (m) => "ការស្នើសុំទូទាត់អ្នកម៉ៅការបន្ត " + m[1]],
+    [/^Public holiday: (.+)\. You can still save\.$/, (m) => "ថ្ងៃឈប់សម្រាកសាធារណៈ៖ " + m[1] + "។ អ្នកនៅតែអាចរក្សាទុកបាន។"],
+    [/^Linked to: (.+)$/, (m, tr) => "ភ្ជាប់ជាមួយ៖ " + m[1].split(" · ").map((p) => t(p, tr)).join(" · ")],
+    [/^(EV-\d+) saved(?: · (\d+) people invited)?$/, (m) => m[1] + " បានរក្សាទុក" + (m[2] ? " · បានអញ្ជើញ " + m[2] + " នាក់" : "")],
+    [/^Invitation: (.+)$/, (m) => "ការអញ្ជើញ៖ " + m[1]],
+    [/^Event changed: (.+)$/, (m) => "កាលវិភាគបានកែប្រែ៖ " + m[1]],
+    [/^Event cancelled: (.+)$/, (m) => "កាលវិភាគបានលុបចោល៖ " + m[1]],
+    [/^Event done: (.+)$/, (m) => "កាលវិភាគបានបញ្ចប់៖ " + m[1]],
+    [/^Removed from: (.+)$/, (m) => "បានដកអ្នកចេញពី៖ " + m[1]],
+    [/^Minutes updated: (.+)$/, (m) => "កំណត់ហេតុប្រជុំបានកែ៖ " + m[1]],
+    [/^Public holiday (added|changed|removed): (.+)$/, (m) => "ថ្ងៃឈប់សម្រាកសាធារណៈ " + ({ added: "បានបន្ថែម", changed: "បានកែ", removed: "បានដកចេញ" })[m[1]] + "៖ " + m[2]],
+    [/^Cancel · (.+)$/, (m) => "លុបចោល · " + m[1]],
+    [/^Minutes · (.+)$/, (m) => "កំណត់ហេតុប្រជុំ · " + m[1]],
+    [/^Done · (.+)$/, (m) => "រួចរាល់ · " + m[1]]
+  );
+})();

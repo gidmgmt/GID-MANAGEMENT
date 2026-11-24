@@ -6,7 +6,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from playwright.async_api import async_playwright
 from harness import new_context, login
 
-ROUTES = ["home", "dashboard", "projects", "projects/p1", "daily", "requests", "docs", "qaqc", "safety", "svr", "vo", "subs",
+ROUTES = ["home", "schedule", "dashboard", "projects", "projects/p1", "daily", "requests", "docs", "qaqc", "safety", "svr", "vo", "subs",
           "cost", "finance", "procurement", "stock", "handover", "people", "admin"]
 ROLES = ["s01", "s03", "s06", "s13", "s18", "s20", "s29", "s30", "s31", "s33", "s34", "s35", "s39"]
 
