@@ -184,3 +184,16 @@ The GID database already has this update.
 
 What is new in version 18: Settings → Devices shows every phone or computer that unlocked the app, who is using it, when it was last active and whether it is online now. The System Admin (and backup admin) can sign one device, or all other devices, out; that device locks within a minute and asks for the passkey again. The MD can see the list but not sign devices out. The lock button in the menu now also marks the device as signed out.
 Note: this is a demo control. Until real logins are added, it signs the app out on that device but does not stop a technical person from reading the database with the public key.
+
+## Version 19 (testing fixes)
+
+No database change. Fixes from the automated test round (about 4,700 checks by four AI test helpers):
+- Drawings: a duplicate drawing number is refused; an older revision can no longer be issued over a newer one; only one new revision at a time; PDF and progress are locked while a drawing is in review.
+- Defects: "Who fixes it" follows the chosen project's team; failed test lines are assigned to the project's site team (not the tester); a test line needs its circuit name.
+- Money: a PO cannot be more than the approved request; the QS cannot certify more than the subcontractor claimed; retention can be released more than once without losing later retention; the dashboard "Spent this month" now includes bills paid in the app.
+- Variations: a priced line without an item name is refused instead of silently dropped.
+- Site reports: "Copy last report" copies the plan only from the same kind of report; designers' daily hours (0–16) and progress are checked.
+- Site visits: the GPS pin is required; only the author, the visitors or an approver can change the status.
+- Overtime and leave go to the right line manager (site staff → project PM, office teams → their head).
+- Tasks can be edited and reopened; suppliers can be edited; history shows the time; dates no longer slip a day between midnight and 7 AM.
+- Phone: the subcontractor contracts table scrolls sideways; more Khmer text.

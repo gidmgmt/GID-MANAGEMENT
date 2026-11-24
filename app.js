@@ -15,7 +15,8 @@
   const nowIso = () => new Date().toISOString();
   const money = (n) => (n == null || n === "" ? "" : "$" + Number(n).toLocaleString("en-US", { maximumFractionDigits: 0 }));
   const fmtDate = (d) => { if (!d) return ""; const x = new Date(String(d).length === 10 ? d + "T00:00:00" : d); return isNaN(x) ? esc(d) : x.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "2-digit" }); };
-  const daysSince = (d) => (Date.now() - new Date(d).getTime()) / 86400000;
+  // a date like "2026-12-01" means local midnight (Phnom Penh), not UTC
+  const daysSince = (d) => (Date.now() - new Date(String(d).length === 10 ? d + "T00:00:00" : d).getTime()) / 86400000;
   const daysUntil = (d) => -daysSince(d);
   const sum = (arr, f) => arr.reduce((a, x) => a + (Number(f(x)) || 0), 0);
   const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
@@ -175,7 +176,8 @@
   // Permission matrix in use: the standard one, with the changes saved by the MD or system admin on top
   const LEVELS = ["none", "view", "own", "edit", "approve", "admin"];
   const MODULE_NAMES = { requests: "Requests & Approvals", people: "People", projects: "Projects & Tasks", daily: "Daily reports", docs: "Document Control", cost: "Cost & Claims",
-    procurement: "Procurement", finance: "Finance", qaqc: "QA/QC & Snags", safety: "Safety", dashboard: "Management Dashboard", stock: "Stock" };
+    procurement: "Procurement", finance: "Finance", qaqc: "QA/QC & Snags", safety: "Safety", dashboard: "Management Dashboard", stock: "Stock",
+    vo: "Variations", subs: "Subcontractors", handover: "Testing & Handover", svr: "Site visits (SVR)" };
   const LEVEL_HELP = { none: "Hidden: the module is not in the menu", view: "See all records (in their projects), change nothing", own: "Create and see only their own records",
     edit: "Create and update records", approve: "Edit, plus approve or reject", admin: "Full control, including settings and deleting" };
   function permSetting() { return (db.app_settings || []).find((x) => x.key === "permissions"); }
@@ -259,7 +261,9 @@
       case "PROC": case "STORE": ids = withTag("PROC").map((s) => s.id); break;
       case "FIN": ids = inGroup("FIN").map((s) => s.id); break;
       case "HEAD": ids = headOf(req.requester_id); break;
-      case "LINE": ids = p ? [p.pm_id] : headOf(req.requester_id); if (ids.includes(req.requester_id)) ids = headOf(req.requester_id); break;
+      // line manager: site staff answer to the project's PM; office teams (design, engineering, QS, finance, admin) to their own head
+      case "LINE": { const rq = byId("staff", req.requester_id) || { groups: "" };
+        ids = p && groupsOf(rq).includes("SITE") ? [p.pm_id] : headOf(req.requester_id); if (ids.includes(req.requester_id)) ids = headOf(req.requester_id); break; }
       case "HR": ids = withTag("HR").map((s) => s.id); break;
     }
     ids = ids.filter((x) => x && x !== req.requester_id);
@@ -282,6 +286,8 @@
       const lines = (req.items || []).filter((x) => x.to_order > 0).map((x) => ({ item_id: x.item_id, name: x.name, unit: x.unit, qty: x.to_order, unit_cost: x.unit_cost }));
       if (!(req.items || []).length || lines.length) {
         if (!extra.supplier_id) throw new Error("Choose the supplier for the items to order.");
+        const poAmt = Number(extra.amount || req.amount) || 0, approved = Number(req.amount) || 0;
+        if (approved > 0 && poAmt > approved + 0.5) throw new Error("The PO amount (" + money(poAmt) + ") is more than what was approved (" + money(approved) + "). Lower the PO, or reject and ask for a new request so the right people approve the higher amount.");
         const po = await createPO({ request_id: req.id, project_id: req.project_id, supplier_id: extra.supplier_id, description: lines.length ? lines.map((x) => x.name + " x" + x.qty).join(", ").slice(0, 120) : req.title,
           amount: Number(extra.amount || req.amount), items: lines });
         notes.push(po.po_no + " issued");
@@ -1212,7 +1218,7 @@
       return `<li class="${done ? "done" : cur ? "cur" : rej ? "rej" : ""}"><b>${esc(s.label)}</b><small>${cur ? "Waiting for " + esc(waitingOn(r)) : rej ? "Rejected here" : done ? "Done" : ""}</small></li>`;
     }).join("")}</ol>`;
   }
-  const historyHtml = (h) => `<h4>History</h4><ul class="hist">${(h || []).map((x) => `<li><b>${esc(x.action)}</b> · ${esc(staffName(x.by))} · ${fmtDate(x.at)}${x.note ? `<br><small>${esc(x.note)}</small>` : ""}</li>`).join("")}</ul>`;
+  const historyHtml = (h) => `<h4>History</h4><ul class="hist">${(h || []).map((x) => `<li><b>${esc(x.action)}</b> · ${esc(staffName(x.by))} · ${fmtDate(x.at)}${String(x.at || "").length > 10 ? " " + rTime(x.at) : ""}${x.note ? `<br><small>${esc(x.note)}</small>` : ""}</li>`).join("")}</ul>`;
 
   function openRequest(r) {
     const u = me(); const acts = [];
@@ -1292,7 +1298,7 @@
   function canUpdateProgress(u, p) {
     if (canManageProject(u) || isSysAdmin(u)) return true;
     const g = groupsOf(u), mine = db.project_members.some((m) => m.project_id === p.id && m.staff_id === u.id);
-    if (g.includes("SITE")) return mine;
+    if (g.includes("SITE")) return mine || hasTag(u, "SITEMGR");
     if (g.includes("QS")) return mine || !teamOf(p.id, "QS").length;
     return false;
   }
@@ -1440,22 +1446,47 @@
     }, "Create project", { extraHtml: scopePicker([]) + '<p class="muted small">Each scope gets a usual share of the project to start with. The PM or QS can change the shares in Update progress.</p>' + locationField({}), onReady: (m) => { wireLocation(m); wireScopePicker(m); } });
   }
 
+  // people who work on a project: its team plus the PM (everyone if the project has no team yet)
+  function projectPeople(pid) {
+    const p = byId("projects", pid), ids = db.project_members.filter((m) => m.project_id === pid).map((m) => m.staff_id);
+    if (p && p.pm_id) ids.push(p.pm_id);
+    const list = staffNow().filter((s) => ids.includes(s.id));
+    return list.length ? list : staffNow();
+  }
+  function wireTeamSelect(m, field) {
+    const ps = m.querySelector('select[name="project_id"]'), as = m.querySelector(`select[name="${field}"]`);
+    if (!ps || !as) return;
+    const fill = () => { const cur = as.value, team = projectPeople(ps.value);
+      as.innerHTML = '<option value="">—</option>' + team.map((x) => `<option value="${esc(x.id)}"${x.id === cur ? " selected" : ""}>${esc(x.name + " · " + x.title)}</option>`).join("");
+      if (!as.value && team.length) as.value = team[0].id;
+      if (typeof translateNow === "function") translateNow(as); };
+    ps.addEventListener("change", fill); fill();
+  }
+  function taskForm(u, t) {
+    const isNew = !t; t = t || {};
+    formModal(isNew ? "New task" : "Edit task", [
+      { name: "project_id", label: "Project", type: "select", options: projectOptions(u), required: true, value: t.project_id || state.project },
+      { name: "title", label: "Task", required: true, value: t.title || "" },
+      { name: "assignee_id", label: "Assign to", type: "select", options: staffOptions(projectPeople(t.project_id || state.project)), value: t.assignee_id || u.id, required: true },
+      { name: "due_date", label: "Due", type: "date", value: t.due_date || today() }, { name: "priority", label: "Priority", type: "select", options: ["Normal", "High"], value: t.priority || "Normal" }
+    ], async (v) => {
+      if (!projectPeople(v.project_id).some((x) => x.id === v.assignee_id)) throw new Error("Choose someone on this project's team.");
+      if (isNew) await save("tasks", Object.assign(v, { status: "To do", created_by: u.id }), "New task: " + v.title);
+      else await patch("tasks", t.id, v, "Task changed: " + v.title);
+    }, isNew ? "Save" : "Save changes", { onReady: (m) => wireTeamSelect(m, "assignee_id") });
+  }
   function openTask(t) {
     const u = me(); const acts = [];
     const mineOrPM = t.assignee_id === u.id || isPMof(u, t.project_id) || isSysAdmin(u);
+    const canEdit = t.created_by === u.id || isPMof(u, t.project_id) || isSysAdmin(u) || hasTag(u, "HEAD");
     if (mineOrPM && t.status === "To do") acts.push(btn("Start", async () => { await patch("tasks", t.id, { status: "In progress" }, "Task started: " + t.title); closeModal(); render(); }, "primary"));
     if (mineOrPM && t.status !== "Done") acts.push(btn("Mark done", async () => { await patch("tasks", t.id, { status: "Done" }, "Task done: " + t.title); closeModal(); render(); }, "primary"));
-    detail(t.title, [["Project", esc(projLabel(t.project_id))], ["Assigned to", esc(staffName(t.assignee_id))], ["Due", fmtDate(t.due_date)], ["Priority", esc(t.priority)], ["Status", badge(t.status)]], acts.join(""));
+    if (canEdit && t.status === "Done") acts.push(btn("Reopen", async () => { await patch("tasks", t.id, { status: "To do" }, "Task reopened: " + t.title); closeModal(); render(); }));
+    if (canEdit) acts.push(btn("Edit", () => taskForm(u, t)));
+    detail(t.title, [["Project", esc(projLabel(t.project_id))], ["Assigned to", esc(staffName(t.assignee_id))], ["Due", fmtDate(t.due_date)], ["Priority", esc(t.priority)], ["Status", badge(t.status)], t.created_by ? ["Created by", esc(staffName(t.created_by))] : null].filter(Boolean), acts.join(""));
   }
 
-  function newTask(u) {
-    formModal("New task", [
-      { name: "project_id", label: "Project", type: "select", options: projectOptions(u), required: true, value: state.project },
-      { name: "title", label: "Task", required: true },
-      { name: "assignee_id", label: "Assign to", type: "select", options: staffOptions(), value: u.id, required: true },
-      { name: "due_date", label: "Due", type: "date", value: today() }, { name: "priority", label: "Priority", type: "select", options: ["Normal", "High"] }
-    ], async (v) => { await save("tasks", Object.assign(v, { status: "To do", created_by: u.id }), "New task: " + v.title); });
-  }
+  function newTask(u) { taskForm(u); }
 
   SCREENS.projects = (u) => {
     if (state.pid) { const pp = byId("projects", state.pid); if (pp && inScope(u, pp.id)) return projectPage(u, pp); }
@@ -1578,10 +1609,12 @@
       $("#sd-ph", m).onchange = async (e) => { for (const file of e.target.files) { try { f.photos.push(await compressImage(file)); f.captions.push(""); f.times.push(nowHM()); } catch (x) { toast("Could not read a photo", true); } } paint(); };
       $("#sd-copy", m).onclick = () => {
         const last = db.daily_reports.filter((d) => d.kind !== "Design" && d.author_id === u.id && d.project_id === f.project_id).sort((a, b) => String(b.submitted_at || b.report_date).localeCompare(String(a.submitted_at || a.report_date)));
-        const same = last.find((d) => (d.session || "End of day") === f.session) || last[0];
+        const exact = last.find((d) => (d.session || "End of day") === f.session), same = exact || last[0];
         if (!same) { toast("No earlier report on this project to copy.", true); return; }
         f.weather = same.weather || f.weather; f.trades = (same.trades || []).map((t) => ({ trade: t.trade, workers: String(t.workers) })); if (!f.trades.length) f.trades = [{ trade: "", workers: "" }];
-        f.manpower = same.manpower != null ? String(same.manpower) : ""; f.plan = same.plan || ""; f.safety_note = same.safety_note || ""; f.work_done = f.session === "Morning" ? "" : (same.work_done || "");
+        f.manpower = same.manpower != null ? String(same.manpower) : "";
+        // only copy the written parts from a report of the same kind (morning plan must not become an overtime reason)
+        if (exact) { f.plan = exact.plan || ""; f.safety_note = exact.safety_note || ""; f.work_done = f.session === "Morning" ? "" : (exact.work_done || ""); }
         paint(); toast("Copied from " + fmtDate(same.report_date) + ". Check and change what is different today.");
       };
       $("#sd-go", m).onclick = async (e) => {
@@ -1655,8 +1688,17 @@
       $("#dd-ph", m).addEventListener("change", async (e) => { for (const f of e.target.files) { try { shots.push(await compressImage(f)); } catch (x) { toast("Could not read a photo", true); } } $("#dd-prev", m).innerHTML = shots.map((s) => `<span class="ph"><img src="${s}" alt=""></span>`).join(""); });
       $("#dd-go", m).onclick = async (e) => {
         const entries = [];
-        rows.forEach((r, i) => { const h = Number($(`[data-h="${i}"]`, m).value) || 0, p = Math.min(100, Number($(`[data-p="${i}"]`, m).value) || 0); if (h > 0 || p !== r.cur) entries.push({ ref_type: r.ref_type, ref_id: r.ref_id, label: r.label, project_id: r.project_id, hours: h, progress: p, note: "" }); });
+        let bad = "";
+        rows.forEach((r, i) => {
+          const hv = $(`[data-h="${i}"]`, m).value, pv = $(`[data-p="${i}"]`, m).value;
+          const h = Number(hv) || 0, p = pv === "" ? r.cur : Number(pv);
+          if (h < 0 || h > 16) bad = "Hours must be between 0 and 16 for “" + r.label + "”.";
+          else if (!(p >= 0 && p <= 100)) bad = "Progress must be between 0 and 100% for “" + r.label + "”.";
+          if (h > 0 || p !== r.cur) entries.push({ ref_type: r.ref_type, ref_id: r.ref_id, label: r.label, project_id: r.project_id, hours: h, progress: p, note: "" }); });
+        if (bad) return toast(bad, true);
         const oh = Number($("#dd-oh", m).value) || 0, ot = $("#dd-other", m).value.trim();
+        if (oh < 0 || oh > 16) return toast("Hours must be between 0 and 16.", true);
+        if (sum(entries, (x) => x.hours) + oh > 16) return toast("Total hours for one day cannot be more than 16.", true);
         if (ot || oh) entries.push({ ref_type: "other", ref_id: "", label: ot || "Other work", project_id: "", hours: oh, progress: 0, note: "" });
         if (!entries.length) return toast("Enter hours or progress for at least one item.", true);
         e.target.disabled = true;
@@ -1757,7 +1799,9 @@
   function openDoc(d) {
     const u = me(); const acts = []; const go2 = async (status, summary, extra) => { await patch("documents", d.id, Object.assign({ status }, extra || {}), summary); closeModal(); render(); toast("Saved"); };
     const edit = canEditDoc(u, d);
-    if (edit && ["Draft", "In review"].includes(d.status)) {
+    const sameNo = db.documents.filter((x) => x.project_id === d.project_id && x.doc_no === d.doc_no);
+    const maxRev = Math.max.apply(null, sameNo.map((x) => Number(x.revision) || 0));
+    if (edit && d.status === "Draft") {
       acts.push(btn(d.file_url ? "Replace PDF" : "Upload PDF", () => formModal("Upload PDF · " + d.doc_no + " rev " + d.revision, [{ name: "file", label: "Drawing PDF", type: "pdf", required: true }],
         async (v) => { const url = await storeFile(v.file, v.file_name || d.doc_no + ".pdf"); await patch("documents", d.id, { file_url: url, file_name: v.file_name }, "PDF uploaded for " + d.doc_no); toast("PDF uploaded"); })));
       acts.push(btn("Update progress", () => formModal("Progress · " + d.doc_no, [{ name: "progress", label: "Drawing progress (%)", type: "number", value: d.progress, required: true }],
@@ -1769,10 +1813,13 @@
       acts.push(btn("Approve", () => go2("Approved", d.doc_no + " approved", { progress: 100 }), "primary"));
     }
     if (d.status === "Approved" && canIssueDoc(u)) acts.push(btn("Issue to site", async () => {
+      const newer = sameNo.find((x) => x.id !== d.id && x.status === "Issued" && Number(x.revision) > Number(d.revision));
+      if (newer) return toast("Rev " + newer.revision + " of " + d.doc_no + " is already issued. An older revision cannot replace it.", true);
       for (const o of db.documents.filter((x) => x.project_id === d.project_id && x.doc_no === d.doc_no && x.id !== d.id && x.status === "Issued")) await patch("documents", o.id, { status: "Superseded" }, o.doc_no + " rev " + o.revision + " superseded");
       await go2("Issued", d.doc_no + " rev " + d.revision + " issued");
     }, "primary"));
-    if (d.status === "Issued" && edit) acts.push(btn("Start new revision", () => formModal("New revision · " + d.doc_no + " rev " + (Number(d.revision) + 1), [{ name: "file", label: "Revised drawing PDF (can add later)", type: "pdf" }, { name: "notes", label: "What changed", type: "textarea" }],
+    const openNewer = sameNo.some((x) => x.id !== d.id && Number(x.revision) > Number(d.revision) && x.status !== "Superseded");
+    if (d.status === "Issued" && edit && Number(d.revision) === maxRev && !openNewer) acts.push(btn("Start new revision", () => formModal("New revision · " + d.doc_no + " rev " + (Number(d.revision) + 1), [{ name: "file", label: "Revised drawing PDF (can add later)", type: "pdf" }, { name: "notes", label: "What changed", type: "textarea" }],
       async (v) => {
         const url = v.file ? await storeFile(v.file, v.file_name || d.doc_no + ".pdf") : "";
         await save("documents", { project_id: d.project_id, doc_no: d.doc_no, title: d.title, discipline: d.discipline, doc_type: d.doc_type, revision: Number(d.revision) + 1, status: "Draft", owner_id: u.id, due_date: today(), notes: v.notes || "", file_url: url, file_name: v.file_name || "", progress: url ? 60 : 20 }, d.doc_no + " new revision");
@@ -1800,6 +1847,8 @@
         { name: "discipline", label: "Discipline", type: "select", options: ["Architecture", "Interior", "Structure", "Mechanical", "Electrical", "Plumbing", "Fire", "ELV"] },
         { name: "due_date", label: "Due", type: "date", value: today() }, { name: "file", label: "PDF file (can add later)", type: "pdf" }
       ], async (v) => {
+        v.doc_no = String(v.doc_no || "").trim().toUpperCase();
+        if (db.documents.some((x) => x.project_id === v.project_id && String(x.doc_no).trim().toUpperCase() === v.doc_no)) throw new Error(v.doc_no + " already exists on this project. Open it and use “Start new revision”, or choose another number.");
         const url = v.file ? await storeFile(v.file, v.file_name || v.doc_no + ".pdf") : ""; delete v.file;
         await save("documents", Object.assign(v, { revision: 0, status: "Draft", owner_id: u.id, notes: "", file_url: url, progress: url ? 50 : 10 }), "New document " + v.doc_no);
       }), "primary") : "" })}
@@ -1904,7 +1953,10 @@
         { name: "name", label: "Company", required: true }, { name: "trade", label: "Supplies" }, { name: "contact", label: "Contact person" }, { name: "phone", label: "Phone" }
       ], async (v) => { await save("suppliers", v, "New supplier " + v.name); }), "primary") : "" })}
         ${table([{ label: "Supplier", get: (s) => `<b>${esc(s.name)}</b>` }, { label: "Supplies", get: (s) => esc(s.trade) }, { label: "Contact", get: (s) => esc(s.contact) },
-          { label: "Orders", get: (s) => esc(db.purchase_orders.filter((p) => p.supplier_id === s.id).length) }], db.suppliers.filter((s) => matchSearch(s, ["name", "trade"])))}`;
+          { label: "Orders", get: (s) => esc(db.purchase_orders.filter((p) => p.supplier_id === s.id).length) }], db.suppliers.filter((s) => matchSearch(s, ["name", "trade"])),
+          can(u, "procurement", "admin") ? (s) => formModal("Edit supplier · " + s.name, [
+            { name: "name", label: "Company", required: true, value: s.name }, { name: "trade", label: "Supplies", value: s.trade || "" }, { name: "contact", label: "Contact person", value: s.contact || "" }, { name: "phone", label: "Phone", value: s.phone || "" }
+          ], async (v) => { await patch("suppliers", s.id, v, "Supplier changed: " + v.name); }, "Save changes") : null)}`;
     }
     const rows = db.purchase_orders.filter((p) => inScope(u, p.project_id)).filter(byProjectFilter).filter((p) => matchSearch(p, ["po_no", "description"])).sort((a, b) => String(b.po_no).localeCompare(String(a.po_no)));
     return `<h1>Procurement</h1><p class="muted">Material requests check stock first; only the shortfall becomes a purchase order. Site confirms delivery with a photo, the items go into stock, then Finance pays.</p>${T.html}
@@ -1962,7 +2014,13 @@
   const qaEvidence = (f) => (f.evidence && f.evidence.length ? f.evidence : f.photo ? [{ type: "image", name: "defect.jpg", url: f.photo }] : []);
   function newDefect(u, preset) {
     preset = preset || {};
-    const siteTeam = (pid) => { const t = pid ? teamOf(pid, "SITE").map((m) => byId("staff", m.staff_id)).filter(Boolean) : []; return t.length ? t : inGroup("SITE"); };
+    // who can fix it: the site team of that project, then its PM; only the whole site group if the project has no team yet
+    const siteTeam = (pid) => {
+      const p = pid ? byId("projects", pid) : null;
+      const t = pid ? teamOf(pid, "SITE").map((m) => byId("staff", m.staff_id)).filter(Boolean) : [];
+      if (p && p.pm_id && byId("staff", p.pm_id) && !t.some((x) => x.id === p.pm_id)) t.push(byId("staff", p.pm_id));
+      return t.length ? t : inGroup("SITE");
+    };
     formModal("Report a defect", [
       { name: "project_id", label: "Project", type: "select", options: projectOptions(u), required: true, value: preset.project_id || state.project },
       { name: "location", label: "Location", required: true, value: preset.location || "" }, { name: "discipline", label: "Discipline", type: "select", options: QA_DISC, value: preset.discipline || "" },
@@ -1972,9 +2030,18 @@
       { name: "due_date", label: "Fix by", type: "date", value: today() },
       { name: "evidence", label: "Photos or files", type: "evidence", required: true, requiredMsg: "Attach at least one photo, image or PDF of the defect.", help: "Required. Take a photo with the camera, or attach images or a PDF." }
     ], async (v) => {
+      if (!siteTeam(v.project_id).some((x) => x.id === v.assigned_to)) throw new Error("The person who fixes it must be on this project's team.");
       v.evidence = await storeEvidence(v.evidence, "defect");
       await save("defects", Object.assign(v, { status: "Open", raised_by: u.id, photo: "", close_evidence: [], inspection_id: preset.inspection_id || "" }), "Defect: " + v.description);
-    }, "Send defect");
+    }, "Send defect", { onReady: (m) => {
+      const ps = m.querySelector('select[name="project_id"]'), as = m.querySelector('select[name="assigned_to"]');
+      if (!ps || !as) return;
+      const fill = () => { const cur = as.value, team = siteTeam(ps.value);
+        as.innerHTML = '<option value="">—</option>' + team.map((x) => `<option value="${esc(x.id)}"${x.id === cur ? " selected" : ""}>${esc(x.name + " · " + x.title)}</option>`).join("");
+        if (!as.value && team.length) as.value = team[0].id;
+        if (typeof translateNow === "function") translateNow(as); };
+      ps.addEventListener("change", fill); fill();
+    } });
   }
   function newInspection(u) {
     formModal("New inspection", [
@@ -2063,7 +2130,7 @@
       blocks = [
         `<h2><i>1</i>${L.details}</h2><table class="sf-t"><tr><th>${L.project}</th><td>${esc(p.code)} ${esc(p.name)}</td><th>${L.loc}</th><td>${esc(r.location || "")}</td></tr>
           <tr><th>${L.disc}</th><td>${T(L.discMap, r.discipline)}</td><th>${L.pri}</th><td>${T(L.priMap, r.priority)}</td></tr>
-          <tr><th>${L.raised}</th><td>${esc(rb.name || "")} · ${esc(rb.title || "")}</td><th>${L.date}</th><td>${esc(rDate((r.created_at || today()).slice(0, 10), lang))}</td></tr>
+          <tr><th>${L.raised}</th><td>${esc(rb.name || "")} · ${esc(rb.title || "")}</td><th>${L.date}</th><td>${esc(rDate(r.created_at ? dateInPP(r.created_at) : today(), lang))}</td></tr>
           <tr><th>${L.assigned}</th><td>${esc(person(r.assigned_to).name || "")}</td><th>${L.due}</th><td>${esc(rDate(r.due_date, lang))}</td></tr>
           ${insp ? `<tr><th>${L.from}</th><td colspan="3">${esc(inspNo(insp))} · ${esc(insp.title)}</td></tr>` : ""}</table>`,
         `<h2><i>2</i>${L.found}</h2><div class="sf-box">${esc(r.description || "")}</div>`,
@@ -2354,6 +2421,7 @@
         const miss = [!f.client.trim() && "client", !f.contact_phone.trim() && "contact phone", !f.address.trim() && "site address", !f.visit_date && "visit date", !f.visited_by.length && "who visited", !f.requirements.trim() && "what the client wants", !f.scopes.length && "scope", !f.photos.length && "at least one photo"].filter(Boolean);
         if (miss.length) { toast("Please fill in: " + miss.join(", ") + ".", true); return; }
         const ll = parseLatLng(form.querySelector("#site_loc").value);
+        if (!ll) { toast("Please set the site location (GPS pin): tap “Use my location” or paste the map link.", true); return; }
         const b = form.querySelector("button[type=submit]"); b.disabled = true; b.textContent = "Saving…";
         try {
           const photos = await storeFiles(f.photos, "svr");
@@ -2393,7 +2461,7 @@
   function openSvr(v) {
     const u = me(), acts = [];
     if (svrCanEdit(u, v) && v.status !== "Won") acts.push(btn("Edit", () => newSvr(u, v)));
-    if (can(u, "svr", "edit")) {
+    if (svrCanEdit(u, v)) {
       if (v.status === "Lead") acts.push(btn("Quotation sent", () => svrSetStatus(v, "Quoted")));
       if (["Lead", "Quoted"].includes(v.status)) { acts.push(btn("Lost", () => svrSetStatus(v, "Lost"), "danger")); if (canManageProject(u)) acts.push(btn("Won: make project", () => svrSetStatus(v, "Won"), "primary")); }
       if (v.status === "Lost") acts.push(btn("Reopen", () => svrSetStatus(v, "Lead")));
@@ -2562,7 +2630,10 @@
       const paint = () => { f.querySelector("#vo-lines").innerHTML = rowsHtml(); f.querySelectorAll("[data-rm]").forEach((b) => b.onclick = () => { read(); lines.splice(Number(b.dataset.rm), 1); if (!lines.length) lines.push({ item: "", qty: 1, unit: "lot", rate: 0 }); paint(); }); calc(); translateNow(f); };
       f.addEventListener("input", calc); f.querySelector("#vo-add").onclick = () => { read(); lines.push({ item: "", qty: 1, unit: "no", rate: 0 }); paint(); }; paint();
       f.addEventListener("submit", async (e) => {
-        e.preventDefault(); read(); const ls = lines.filter((l) => l.item.trim());
+        e.preventDefault(); read();
+        const noName = lines.findIndex((l) => !l.item.trim() && (Number(l.qty) * Number(l.rate)) !== 0);
+        if (noName >= 0) { toast("Line " + (noName + 1) + " has a price but no item name. Write what it is, or remove the line.", true); return; }
+        const ls = lines.filter((l) => l.item.trim());
         if (!ls.length) { toast("Add at least one priced line.", true); return; }
         const mk = Number(f.querySelector("#vo-mk").value) || 0, amount = voSum(ls, mk);
         try { await patch("variations", v.id, { lines: ls, markup_pct: mk, time_days: Number(f.querySelector("#vo-days").value) || 0, amount, status: "Priced", history: (v.history || []).concat([{ at: nowIso(), by: me().id, action: "Priced", note: money(amount) }]) }, v.vo_no + " priced: " + money(amount));
@@ -2641,7 +2712,10 @@
   const paysOf = (kid) => db.sub_payments.filter((x) => x.contract_id === kid);
   const kCertified = (k) => sum(paysOf(k.id).filter((x) => x.status !== "Claimed"), (x) => x.certified);
   const kPaid = (k) => sum(paysOf(k.id).filter((x) => x.status === "Paid"), (x) => x.certified - x.retention_amt);
-  const kRetention = (k) => k.retention_released ? 0 : sum(paysOf(k.id).filter((x) => ["PM approved", "Paid"].includes(x.status)), (x) => x.retention_amt);
+  // retention held = all retention kept on approved claims minus what was already released (each release makes a retention bill)
+  const kRetentionKept = (k) => sum(paysOf(k.id).filter((x) => ["PM approved", "Paid"].includes(x.status)), (x) => x.retention_amt);
+  const kRetentionReleased = (k) => sum(db.invoices.filter((i) => i.source_type === "retention" && i.source_id === k.id), (i) => i.amount);
+  const kRetention = (k) => Math.max(0, Math.round((kRetentionKept(k) - kRetentionReleased(k)) * 100) / 100);
   const subRating = (sid) => { const r = contractsOf(sid).flatMap((k) => k.ratings || []); return r.length ? sum(r, (x) => (x.quality + x.time + x.safety) / 3) / r.length : 0; };
   const insDays = (s) => s.insurance_until ? Math.floor(daysUntil(s.insurance_until)) : null;
   function subStatusChip(s) {
@@ -2697,7 +2771,11 @@
   }
   async function payMove(x, k, to, v) {
     const u = me(), s = byId("subcontractors", k.sub_id) || {}, p = { status: to, history: (x.history || []).concat([{ at: nowIso(), by: u.id, action: to, note: (v && v.note) || "" }]) };
-    if (to === "QS checked") { p.certified = Number(v.certified) || 0; p.retention_amt = Math.round(p.certified * (Number(k.retention_pct) || 0)) / 100; if (v.note) p.note = v.note; }
+    if (to === "QS checked") {
+      const cert = Number(v.certified);
+      if (!(cert >= 0)) throw new Error("Enter the amount certified.");
+      if (cert > Number(x.claimed)) throw new Error("Certified (" + money(cert) + ") cannot be more than the subcontractor claimed (" + money(x.claimed) + ").");
+      p.certified = cert; p.retention_amt = Math.round(p.certified * (Number(k.retention_pct) || 0)) / 100; if (v.note) p.note = v.note; }
     if (to === "PM approved") {
       const net = Number(x.certified) - Number(x.retention_amt);
       await save("invoices", { inv_no: nextNo("invoices", "inv_no", "AP-"), direction: "Payable", project_id: k.project_id, party: s.name, source_type: "sub_payment", source_id: x.id, amount: net,
@@ -2726,8 +2804,8 @@
   }
   function openSub(s) {
     const u = me(), mgr = can(u, "subs", "approve"), ks = contractsOf(s.id), r = subRating(s.id);
-    const kt = ks.length ? `<table class="boq"><thead><tr><th>Project</th><th>Scope</th><th class="r">Contract</th><th class="r">Retention</th><th class="r">Certified</th><th class="r">Paid</th><th class="r">Held</th><th></th></tr></thead><tbody>${ks.map((k) => `<tr><td>${esc(projLabel(k.project_id))}</td><td>${esc(k.scope)}</td><td class="r">${money(k.contract_value)}</td><td class="r">${k.retention_pct ? esc(k.retention_pct) + "%" : "None"}</td><td class="r">${money(kCertified(k))}</td><td class="r">${money(kPaid(k))}</td><td class="r">${k.retention_released ? "Released" : money(kRetention(k))}</td>
-      <td class="r nowrap">${can(u, "subs", "edit") || isQS(u) || isPMof(u, k.project_id) ? `<button class="btn small" data-act="${act(() => newPayment(k))}">Claim</button>` : ""}${isPMof(u, k.project_id) || hasTag(u, "MD") ? ` <button class="btn small" data-act="${act(() => rateContract(k))}">Rate</button>` : ""}${mgr && !k.retention_released && kRetention(k) ? ` <button class="btn small" data-act="${act(() => releaseRetention(k))}">Release retention</button>` : ""}</td></tr>`).join("")}</tbody></table>` : '<p class="muted small">No contract yet.</p>';
+    const kt = ks.length ? `<div class="tscroll"><table class="boq"><thead><tr><th>Project</th><th>Scope</th><th class="r">Contract</th><th class="r">Retention</th><th class="r">Certified</th><th class="r">Paid</th><th class="r">Held</th><th></th></tr></thead><tbody>${ks.map((k) => `<tr><td>${esc(projLabel(k.project_id))}</td><td>${esc(k.scope)}</td><td class="r">${money(k.contract_value)}</td><td class="r">${k.retention_pct ? esc(k.retention_pct) + "%" : "None"}</td><td class="r">${money(kCertified(k))}</td><td class="r">${money(kPaid(k))}</td><td class="r">${kRetention(k) ? money(kRetention(k)) : kRetentionReleased(k) ? "Released" : money(0)}</td>
+      <td class="r nowrap">${can(u, "subs", "edit") || isQS(u) || isPMof(u, k.project_id) ? `<button class="btn small" data-act="${act(() => newPayment(k))}">Claim</button>` : ""}${isPMof(u, k.project_id) || hasTag(u, "MD") ? ` <button class="btn small" data-act="${act(() => rateContract(k))}">Rate</button>` : ""}${mgr && kRetention(k) ? ` <button class="btn small" data-act="${act(() => releaseRetention(k))}">Release retention</button>` : ""}</td></tr>`).join("")}</tbody></table></div>` : '<p class="muted small">No contract yet.</p>';
     const pays = ks.flatMap((k) => paysOf(k.id)).sort((a, b) => String(b.period_to).localeCompare(String(a.period_to)));
     const rts = ks.flatMap((k) => (k.ratings || []).map((x) => Object.assign({ pid: k.project_id }, x))).sort((a, b) => String(b.at).localeCompare(String(a.at)));
     detail(s.name + " · " + s.trade, [["Contact", esc([s.contact, s.phone, s.telegram].filter(Boolean).join(" · "))], ["Company documents", (s.patent ? "Patent ✓" : "Patent ✗") + " · " + (s.vat ? "VAT ✓" : "VAT ✗") + " · Insurance " + (s.insurance_until ? fmtDate(s.insurance_until) : "not set")],
@@ -2829,10 +2907,15 @@
         try {
           t.rows = t.rows.filter((r) => String(r.id || "").trim() || TT[t.test_type].cols.slice(1).some(([k]) => r[k] !== "" && r[k] != null));
           if (!t.rows.length) throw new Error("Add at least one line.");
+          const noId = t.rows.findIndex((r) => !String(r.id || "").trim());
+          if (noId >= 0) throw new Error("Line " + (noId + 1) + " has readings but no " + TT[t.test_type].cols[0][1].toLowerCase() + ". Write it so the result can be judged.");
           const u = me(), ids = (t.defect_ids || []).slice();
+          // a failed line is fixed by the project's site team (then the PM), not by the tester
+          const proj = byId("projects", t.project_id) || {};
+          const fixer = (teamOf(t.project_id, "SITE")[0] || {}).staff_id || proj.pm_id || t.tested_by || u.id;
           for (const r of t.rows) if (rowPass(t, r) === false && !r.defect_id) {
             const d = await save("defects", { project_id: t.project_id, location: t.location + " · " + r.id, description: "Test failed " + t.test_no + ": " + T.name.toLowerCase() + " " + r.id, discipline: T.system, priority: "High",
-              assigned_to: t.tested_by || u.id, due_date: new Date(Date.now() + 3 * 86400000).toLocaleDateString("en-CA"), status: "Open", photo: "", raised_by: u.id, evidence: [], close_evidence: [], inspection_id: "" }, "Defect from failed test " + t.test_no + " · " + r.id);
+              assigned_to: fixer, due_date: new Date(Date.now() + 3 * 86400000).toLocaleDateString("en-CA"), status: "Open", photo: "", raised_by: u.id, evidence: [], close_evidence: [], inspection_id: "" }, "Defect from failed test " + t.test_no + " · " + r.id);
             r.defect_id = d.id; ids.push(d.id);
           }
           const photos = await storeFiles(t.photos, "test");
@@ -2893,7 +2976,7 @@
   }
   const wDays = (w) => Math.ceil(daysUntil(w.end_date));
   const wChip = (w) => { const d = wDays(w); return d < 0 ? chip("Ended", "n") : d <= 14 ? chip("Ends in " + d + " days", "r") : d <= 60 ? chip("Ends in " + d + " days", "w") : chip("Valid", "g"); };
-  const dlpEnd = (p) => { if (!p.handover_date) return null; const d = new Date(p.handover_date + "T00:00:00"); d.setMonth(d.getMonth() + Number(p.dlp_months || 12)); return d.toLocaleDateString("en-CA"); };
+  const dlpEnd = (p) => { if (!p.handover_date) return null; const d = new Date(p.handover_date + "T00:00:00"), day = d.getDate(); d.setDate(1); d.setMonth(d.getMonth() + Number(p.dlp_months || 12)); d.setDate(Math.min(day, new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate())); return d.toLocaleDateString("en-CA"); };
   function setHandoverDate(p) {
     formModal("Handover date · " + p.code, [{ name: "handover_date", label: "Handover date", type: "date", required: true, value: p.handover_date || today() }, { name: "dlp_months", label: "Defect liability period", type: "select", options: [["6", "6 months"], ["12", "12 months"], ["24", "24 months"]], value: String(p.dlp_months || 12) }],
       async (x) => { await patch("projects", p.id, { handover_date: x.handover_date, dlp_months: Number(x.dlp_months) }, p.code + " handover date " + x.handover_date); }, "Save");
@@ -3455,7 +3538,7 @@
       <div class="detail" id="sdetail">Tap a category to see items below their minimum level.</div>`;
   }
 
-  const monthKeys = (n) => Array.from({ length: n }, (_, i) => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - (n - 1 - i)); return d.toISOString().slice(0, 7); });
+  const monthKeys = (n) => Array.from({ length: n }, (_, i) => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - (n - 1 - i)); return d.toLocaleDateString("en-CA").slice(0, 7); });
   const monthLabel = (k) => new Date(k + "-01T00:00:00").toLocaleDateString("en-GB", { month: "short" });
 
   SCREENS.dashboard = (u) => {
@@ -3464,7 +3547,9 @@
     const aged = pend.filter((r) => waitDays(r) > 2);
     const mc = db.monthly_costs.filter((m) => pids.has(m.project_id));
     const keys = monthKeys(12), thisM = keys[11], lastM = keys[10];
-    const spentM = (k) => sum(mc.filter((m) => m.month === k), (m) => m.spent);
+    // spent = costs booked by the QS for the month + every supplier/subcontractor bill and payment request paid in the app that month
+    const paidAP = db.invoices.filter((i) => i.direction === "Payable" && i.status === "Paid" && i.paid_at && (!i.project_id || pids.has(i.project_id)));
+    const spentM = (k) => sum(mc.filter((m) => m.month === k), (m) => m.spent) + sum(paidAP.filter((i) => dateInPP(i.paid_at).slice(0, 7) === k), (i) => i.amount);
     const chg = pct(spentM(thisM) - spentM(lastM), spentM(lastM) || 1);
     const ar = db.invoices.filter((i) => i.direction === "Receivable" && i.status === "Unpaid" && pids.has(i.project_id));
     const arOver = ar.filter((i) => i.due_date < today());
@@ -3481,7 +3566,8 @@
     const ks = keys.slice(12 - span);
     const raw = (f) => ks.map((k) => sum(mc.filter((m) => m.month === k), f));
     const run = (a) => a.reduce((o, v, i) => (o.push((o[i - 1] || 0) + v), o), []);
-    const sp = raw((m) => m.spent), bl = raw((m) => m.billed);
+    const arPaid = db.invoices.filter((i) => i.direction === "Receivable" && i.created_at && (!i.project_id || pids.has(i.project_id)));
+    const sp = ks.map(spentM), bl = ks.map((k) => sum(mc.filter((m) => m.month === k), (m) => m.billed) + sum(arPaid.filter((i) => dateInPP(i.created_at).slice(0, 7) === k), (i) => i.amount));
     const series = [{ name: "Spent", color: "var(--s1)", values: mode === "run" ? run(sp) : sp }, { name: "Billed to clients", color: "var(--s2)", values: mode === "run" ? run(bl) : bl }];
     AFTER.push(() => { const el = $("#dline"); if (el) lineChart(el, ks.map(monthLabel), series, money); });
     const segBtn = (key, val, label) => `<button class="${(state.tab[key] || (key === "dashLine" ? "run" : "6")) === val ? "on" : ""}" data-act="${act(() => { state.tab[key] = val; render(); })}">${label}</button>`;

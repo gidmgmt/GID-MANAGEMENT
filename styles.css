@@ -1266,3 +1266,8 @@ html[data-theme="dark"] .voline .rm, html[data-theme="dark"] .tgrid .rm { backgr
 .devices .card-head .quick { display: flex; gap: 8px; flex-wrap: wrap; }
 .devices td .btn.small { white-space: nowrap; }
 @media (max-width: 640px) { .devices .card-head .quick { width: 100%; } .devices .card-head .quick .btn { flex: 1; } }
+/* v19: wide tables inside windows scroll sideways on phones */
+.tscroll { overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; }
+.tscroll > table { min-width: 640px; }
+.step div { overflow-wrap: anywhere; word-break: break-word; padding-left: 2px; padding-right: 2px; line-height: 1.25; }
+@media (max-width: 640px) { html[lang="km"] .step div, body.km .step div { font-size: 9.5px; } }

@@ -98,7 +98,7 @@
 
   // ---------- Demo data ----------
   const day = 86400000;
-  const iso = (d) => new Date(d).toISOString().slice(0, 10);
+  const iso = (d) => new Date(d).toLocaleDateString("en-CA");
   const ago = (n) => iso(Date.now() - n * day);
   const ahead = (n) => iso(Date.now() + n * day);
   const ts = (n) => new Date(Date.now() - n * day).toISOString();
@@ -327,7 +327,7 @@
 
     // Monthly cost snapshots (entered by QS each month) for the line chart
     const monthly_costs = [];
-    const monthKey = (back) => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - back); return d.toISOString().slice(0, 7); };
+    const monthKey = (back) => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - back); return d.toLocaleDateString("en-CA").slice(0, 7); };
     projects.forEach((p, pi) => {
       const total = cost_lines.filter((c) => c.project_id === p.id).reduce((a, c) => a + c.actual, 0);
       const started = Math.max(1, Math.min(11, Math.ceil((Date.now() - new Date(p.start_date)) / (30 * day))));
@@ -394,7 +394,11 @@
       { id: "inv3", inv_no: "AP-0001", direction: "Payable", project_id: "p3", party: "Demo Electrical Supply", source_type: "po", source_id: "po1",
         amount: 345, due_date: ahead(7), status: "Unpaid", paid_at: null },
       { id: "inv4", inv_no: "AP-0002", direction: "Payable", project_id: "p2", party: "Demo HVAC Trading", source_type: "po", source_id: "po3",
-        amount: 470, due_date: ago(10), status: "Paid", paid_at: ts(12) }
+        amount: 470, due_date: ago(10), status: "Paid", paid_at: ts(12) },
+      { id: "inv5", inv_no: "AP-0003", direction: "Payable", project_id: "p2", party: "Cool Air Engineering", source_type: "sub_payment", source_id: "pc5",
+        amount: 24948, due_date: ago(4), status: "Unpaid", paid_at: null },
+      { id: "inv6", inv_no: "AP-0004", direction: "Payable", project_id: "p3", party: "Bright Paint Team", source_type: "sub_payment", source_id: "pc6",
+        amount: 4900, due_date: ahead(12), status: "Unpaid", paid_at: null }
     ];
 
     const EV = (label, v) => [{ type: "image", name: label.replace(/\W+/g, "-").toLowerCase() + ".jpg", url: photo(label, v) }];
