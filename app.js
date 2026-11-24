@@ -35,7 +35,7 @@
   });
 
   // Escape closes the top layer only: the photo viewer first, then the window, then the alerts panel
-  document.addEventListener("keydown", (e) => { if (e.key !== "Escape") return; if (closeLightbox()) { e.preventDefault(); return; } if (document.getElementById("modal")) modalBack(); else if (document.getElementById("drawer")) closeDrawer(); else document.body.classList.remove("nav-open"); });
+  document.addEventListener("keydown", (e) => { if (e.key !== "Escape") return; if (closeLightbox()) { e.preventDefault(); return; } if (badgesOnTop()) { e.preventDefault(); closeBadges(); return; } if (document.getElementById("modal")) modalBack(); else if (document.getElementById("drawer")) closeDrawer(); else document.body.classList.remove("nav-open"); });
   function toast(msg, bad) {
     let box = document.getElementById("toasts");
     if (!box) { box = document.createElement("div"); box.id = "toasts"; box.setAttribute("role", "status"); box.setAttribute("aria-live", "polite"); document.body.appendChild(box); }
@@ -903,7 +903,13 @@
   // The bot token never comes to the browser; the app only saves each person's chat ID.
   let tgStatus = { checked: false, ready: false, bot: "" };
   async function loadTelegramStatus() {
-    try { const { data, error } = await Store.client.rpc("telegram_status"); if (error) throw error; tgStatus = { checked: true, ready: !!(data && data.ready), bot: (data && data.bot) || "" }; }
+    // (v22) no answer within 15 seconds: say so (the card no longer shows "Checking…" for ever)
+    const late = new Promise((res) => setTimeout(() => res({ late: true }), 15000));
+    try {
+      const r = await Promise.race([Store.client.rpc("telegram_status"), late]);
+      if (r.late) { tgStatus = { checked: true, ready: false, bot: "", late: true }; return; }
+      const { data, error } = r; if (error) throw error; tgStatus = { checked: true, ready: !!(data && data.ready), bot: (data && data.bot) || "" };
+    }
     catch (e) { tgStatus = { checked: true, ready: false, bot: "", missing: true }; }
   }
   // Plain-language reasons for Telegram's error answers
@@ -1017,16 +1023,25 @@
   }
   window.addEventListener("storage", (e) => {
     if (e.key !== LS_KEY || !e.newValue || Store.mode !== "local") return;
-    try { const before = new Set(db.notifications.map((n) => n.id)); Object.assign(db, JSON.parse(e.newValue)); const fresh = db.notifications.filter((n) => n.to_id === state.user && !before.has(n.id)); if (!$("#modal")) render(); else updateBell(); announceNew(fresh); } catch (x) { /* ignore */ }
+    try { const before = new Set(db.notifications.map((n) => n.id)); Object.assign(db, JSON.parse(e.newValue)); const fresh = db.notifications.filter((n) => n.to_id === state.user && !before.has(n.id)); if (!$("#modal")) renderWhenFree(); else updateBell(); announceNew(fresh); } catch (x) { /* ignore */ }
   });
   setInterval(async () => {
     if (Store.mode !== "supabase" || !state.user) return;
     try {
       const { data } = await Store.client.from("notifications").select("id").eq("to_id", state.user).gt("at", lastNoteCheck).limit(50);
       lastNoteCheck = nowIso();
-      if (data && data.length) { const known = new Set(db.notifications.map((n) => n.id)); await Store.loadAllRemote(); const fresh = db.notifications.filter((n) => n.to_id === state.user && !known.has(n.id)); if (!$("#modal") && !$("#drawer")) render(); else updateBell(); announceNew(fresh); }
+      if (data && data.length) { const known = new Set(db.notifications.map((n) => n.id)); await Store.loadAllRemote(); const fresh = db.notifications.filter((n) => n.to_id === state.user && !known.has(n.id)); if (!$("#modal") && !$("#drawer")) renderWhenFree(); else updateBell(); announceNew(fresh); }
     } catch (e) { /* try again next time */ }
   }, 20000);
+
+  // (v22) Redraw for news from other people, but never under a finger, during a scroll or while typing: wait until the person is free
+  function renderWhenFree() {
+    clearTimeout(renderWhenFree.t);
+    const a = document.activeElement, typing = a && a !== document.body && a.matches && a.matches("input:not([type=checkbox]):not([type=radio]), textarea, [contenteditable]");
+    if (handsOn() || typing || document.querySelector("body > #badges, body > #lightbox")) { updateBell(); renderWhenFree.t = setTimeout(renderWhenFree, 1500); return; }
+    if ($("#modal") || $("#drawer")) { updateBell(); return; }
+    renderKeep();
+  }
 
   // ================= UI building blocks =================
   const badge = (s) => `<span class="badge b-${esc(String(s || "").toLowerCase().replace(/[^a-z]+/g, "-"))}">${esc(s)}</span>`;
@@ -1107,13 +1122,28 @@
   // The photo viewer sits above every window. Returns true when it was open.
   function closeLightbox() { const lb = document.getElementById("lightbox"); if (!lb) return false; lb.remove(); return true; }
   // Layers on top of the page: a window, the photo viewer, the alerts panel, the phone menu
-  const layerOpen = () => !!(document.querySelector("body > #modal, body > #lightbox, body > #drawer") || document.body.classList.contains("nav-open"));
+  const layerOpen = () => !!(document.querySelector("body > #modal, body > #lightbox, body > #drawer, body > #badges") || document.body.classList.contains("nav-open"));
   function pushLayer() { if (!(history.state && history.state.gidModal)) { try { history.pushState({ gidModal: true }, "", location.href); } catch (e) { /* ignore */ } } }
   // While a layer is open the page behind it does not scroll, and the phone's Back button closes the layer (one at a time) instead of leaving the screen
   let layersSeen = "";
+  // (v22) The page is locked only while a layer really is on screen. Checked on every change, every redraw and every new touch,
+  // so a lock (or an invisible menu backdrop) can never stay behind and freeze the page.
+  function syncLayers() {
+    document.documentElement.classList.toggle("lock-scroll", !!document.querySelector("body > #modal, body > #lightbox, body > #drawer, body > #badges"));
+    // the slide-out menu only exists on phones and tablets (900 px or less); on a wider screen its "open" state is invisible: clear it
+    if (document.body.classList.contains("nav-open") && !window.matchMedia("(max-width: 900px)").matches) document.body.classList.remove("nav-open");
+  }
+  // (v22) Is a finger on the screen, or did the page or a table just scroll? Then nothing is redrawn under the person's hand.
+  let TOUCHING = 0, lastScrollAt = 0;
+  document.addEventListener("touchstart", (e) => { TOUCHING = e.touches ? e.touches.length : 1; syncLayers(); }, { passive: true, capture: true });
+  const touchOff = (e) => { TOUCHING = e.touches ? e.touches.length : 0; lastScrollAt = Date.now(); };
+  document.addEventListener("touchend", touchOff, { passive: true, capture: true });
+  document.addEventListener("touchcancel", touchOff, { passive: true, capture: true });
+  window.addEventListener("scroll", () => { lastScrollAt = Date.now(); }, { passive: true, capture: true });
+  const handsOn = () => TOUCHING > 0 || Date.now() - lastScrollAt < 900;
   new MutationObserver(() => {
-    document.documentElement.classList.toggle("lock-scroll", !!document.querySelector("body > #modal, body > #lightbox, body > #drawer"));
-    const now = ["#lightbox", "#drawer"].filter((x) => document.querySelector("body > " + x)).concat(document.body.classList.contains("nav-open") ? ["nav"] : []).join(",");
+    syncLayers();
+    const now = ["#lightbox", "#drawer", "#badges"].filter((x) => document.querySelector("body > " + x)).concat(document.body.classList.contains("nav-open") ? ["nav"] : []).join(",");
     if (now === layersSeen) return;
     const opened = now.split(",").some((x) => x && !layersSeen.split(",").includes(x));
     layersSeen = now;
@@ -1125,7 +1155,7 @@
     if (!a || e.defaultPrevented || e.ctrlKey || e.metaKey || e.shiftKey || !(history.state && history.state.gidModal)) return;
     const h = a.getAttribute("href") || "#";
     e.preventDefault();
-    if (h === location.hash || (h === "#" && !location.hash)) { closeLightbox(); closeDrawer(); document.body.classList.remove("nav-open"); closeAllModals(); return; }
+    if (h === location.hash || (h === "#" && !location.hash)) { closeLightbox(); closeBadges(true); closeDrawer(); document.body.classList.remove("nav-open"); closeAllModals(); return; }
     location.replace(h);
   });
   // Keep the phone's back button in step with the windows
@@ -1134,14 +1164,15 @@
   }
   window.addEventListener("popstate", () => {
     if (POP_SKIP) { POP_SKIP--; return; }
-    // phone Back closes the top layer only: photo viewer, then alerts panel, then menu, then one window
+    // phone Back closes the top layer only: photo viewer, then the staff badges, then alerts panel, then menu, then one window
     let closed = closeLightbox();
+    if (!closed && badgesOnTop()) closed = closeBadges();
     if (!closed && $("#drawer")) { closeDrawer(); closed = true; }
     if (!closed && document.body.classList.contains("nav-open")) { document.body.classList.remove("nav-open"); closed = true; }
     if (closed) { if (layerOpen()) pushLayer(); return; }
     if ($("#modal")) {
       modalBack();
-      if ($("#modal")) { try { history.pushState({ gidModal: true }, "", location.href); } catch (e) { /* ignore */ } }
+      if (layerOpen()) pushLayer();
     }
   });
 
@@ -3346,21 +3377,87 @@
   }
   async function restoreStaff(s) { await patch("staff", s.id, { left_on: null }, "Staff restored: " + s.name); closeModal(); render(); toast(s.name + " is back in the staff list."); }
 
+  // ---------- (v22) staff profile: two hanging badges (front and back) that drop in from the top of the screen ----------
+  // Shows exactly what the old profile window showed (same permission checks). Back button, Escape and the phone's Back close it.
+  const staffNo = (s) => { const id = String(s.id || ""); return (/^s\d+$/i.test(id) ? id : id.slice(0, 8)).toUpperCase(); };
+  const STRAP_TXT = Array(14).fill("GREEN IN DESIGN").join(" · ");
+  const BADGE_CLIP = `<svg class="bdg-clip" viewBox="0 0 48 92" aria-hidden="true"><defs>
+      <linearGradient id="bdgm" x1="0" x2="1"><stop offset="0" stop-color="#8d9a92"/><stop offset=".35" stop-color="#f4f7f5"/><stop offset=".6" stop-color="#b9c4bd"/><stop offset="1" stop-color="#6d7a72"/></linearGradient>
+      <linearGradient id="bdgs" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2e8540"/><stop offset="1" stop-color="#1f5f30"/></linearGradient></defs>
+    <path d="M9 0h30v12q0 7-7 9H16q-7-2-7-9z" fill="url(#bdgs)"/>
+    <ellipse cx="24" cy="24" rx="11" ry="8" fill="none" stroke="url(#bdgm)" stroke-width="3.4"/>
+    <rect x="19" y="30" width="10" height="13" rx="3" fill="url(#bdgm)"/>
+    <rect x="21.5" y="43" width="5" height="5" fill="url(#bdgm)"/>
+    <path d="M24 47c-7 0-10 5-10 11v14c0 9 4 15 10 15s10-6 10-15v-6" fill="none" stroke="url(#bdgm)" stroke-width="3.6" stroke-linecap="round"/>
+    <path d="M34 66l-4-8" stroke="url(#bdgm)" stroke-width="3" stroke-linecap="round"/></svg>`;
+  let badgeFocus = null;
+  function badgeSide(cls, inner, label) {
+    return `<div class="bdg-hang ${cls}"><div class="bdg-strap" aria-hidden="true"><span>${STRAP_TXT}</span></div>${BADGE_CLIP}
+      <article class="bdg-card" aria-label="${esc(label)}"><i class="bdg-slot" aria-hidden="true"></i>${inner}</article></div>`;
+  }
   function openPerson(s) {
     const u = me(); const full = seesAll(u, "people") || s.id === u.id;
     const projects = db.projects.filter((p) => p.pm_id === s.id || db.project_members.some((m) => m.project_id === p.id && m.staff_id === s.id)).map((p) => p.code).join(", ");
     const lates = db.daily_reports.filter((d) => d.author_id === s.id && d.late);
     const tel = String(s.phone || "").replace(/[^\d+]/g, ""), tg = String(s.telegram_user || "").replace(/^@/, "");
-    detail(s.name, [["Title", esc(s.title)], ["Department", esc(groupsOf(s).map((g) => DEPT_NAME[g] || GROUPS[g]).join(", "))],
-      ["Phone", s.phone ? `<a href="tel:${esc(tel)}">${esc(s.phone)}</a>` : '<span class="muted">Not set</span>'],
-      tg ? ["Telegram", `<a href="https://t.me/${esc(tg)}" target="_blank" rel="noopener">@${esc(tg)}</a>`] : null, s.email ? ["Email", `<a href="mailto:${esc(s.email)}">${esc(s.email)}</a>`] : null,
-      s.start_date ? ["Start date", fmtDate(s.start_date)] : null, s.desk ? ["Desk / location", esc(s.desk)] : null, s.left_on ? ["Left on", '<span class="tag bad">' + esc(fmtDate(s.left_on)) + "</span>"] : null,
-      ["Projects", esc(projects)],
-      groupsOf(s).includes("SITE") ? ["Late morning reports", lates.length ? `<b class="late">${lates.length}</b> <small>(${lates.filter((d) => String(d.report_date).slice(0, 7) === today().slice(0, 7)).length} this month)</small>` : "0"] : null,
-      full ? ["Leave taken (approved days)", esc(leaveTaken(s.id))] : null, full ? ["System tags", esc(s.tags)] : null, full ? ["Telegram alerts", String(s.telegram_chat_id || "").trim() ? '<span class="tag ok">Linked</span>' : '<span class="muted">Not linked</span>'] : null],
-      canManageStaff(u) ? (s.left_on ? btn("Restore", () => restoreStaff(s), "primary") : btn("Remove", () => removeStaff(s), "danger") + btn("Edit", () => staffForm(s), "primary"))
-        : s.id === u.id ? btn("Edit my phone and Telegram", () => formModal("My contact details", [{ name: "phone", label: "Phone number", value: s.phone || "", required: true }, { name: "telegram_user", label: "Telegram username", value: s.telegram_user || "" }], async (v) => { await patch("staff", s.id, v, "Contact details updated: " + s.name); }), "primary") : "");
+    const depts = groupsOf(s).map((g) => DEPT_NAME[g] || GROUPS[g]).filter(Boolean);
+    // the same buttons (and the same rules) as before; a button that opens a window first puts the badges away
+    const off = (f) => () => { closeBadges(true); f(); };
+    const actions = canManageStaff(u) ? (s.left_on ? btn("Restore", off(() => restoreStaff(s)), "primary") : btn("Remove", off(() => removeStaff(s)), "danger") + btn("Edit", off(() => staffForm(s)), "primary"))
+      : s.id === u.id ? btn("Edit my phone and Telegram", off(() => formModal("My contact details", [{ name: "phone", label: "Phone number", value: s.phone || "", required: true }, { name: "telegram_user", label: "Telegram username", value: s.telegram_user || "" }], async (v) => { await patch("staff", s.id, v, "Contact details updated: " + s.name); })), "primary") : "";
+    const row = (k, v) => v === null ? "" : `<div class="bdg-row"><dt>${esc(k)}</dt><dd>${v === "" || v == null ? "—" : v}</dd></div>`;
+    const front = `<div class="bdg-mark" aria-hidden="true"><img src="img/logo-mark.png" alt=""></div>
+      <div class="bdg-top"><span class="bdg-co">GREEN IN DESIGN</span>${s.left_on ? `<span class="bdg-left">Left on ${esc(fmtDate(s.left_on))}</span>` : `<span class="bdg-kind">Staff</span>`}</div>
+      <div class="bdg-photo">${avatar(s, "bdg-ph")}</div>
+      <div class="bdg-who"><h2 class="bdg-name">${esc(s.name)}</h2>${s.short_name && s.short_name !== s.name ? `<p class="bdg-short">“${esc(s.short_name)}”</p>` : ""}</div>
+      <hr><div class="bdg-pos"><small>Position</small><b>${esc(s.title)}</b></div><hr>
+      <div class="bdg-foot"><span class="bdg-id"><small>Staff ID</small><b>${esc(staffNo(s))}</b></span><span class="bdg-dept"><small>Department</small><b>${depts.map((d) => `<span>${esc(d)}</span>`).join("")}</b></span></div>`;
+    const back = `<div class="bdg-brand"><img src="img/logo-mark.png" alt="GID"><span><b>Green In Design</b><small>Structure · Architecture · MEP · ELV</small></span></div>
+      <dl class="bdg-info">${[
+        row("Phone", s.phone ? `<a href="tel:${esc(tel)}">${esc(s.phone)}</a>` : '<span class="bdg-muted">Not set</span>'),
+        tg ? row("Telegram", `<a href="https://t.me/${esc(tg)}" target="_blank" rel="noopener">@${esc(tg)}</a>`) : "",
+        s.email ? row("Email", `<a href="mailto:${esc(s.email)}">${esc(s.email)}</a>`) : "",
+        s.start_date ? row("Start date", fmtDate(s.start_date)) : "", s.desk ? row("Desk / location", esc(s.desk)) : "",
+        s.left_on ? row("Left on", esc(fmtDate(s.left_on))) : "",
+        row("Projects", esc(projects)),
+        groupsOf(s).includes("SITE") ? row("Late morning reports", lates.length ? `<b class="late">${lates.length}</b> <small>(${lates.filter((d) => String(d.report_date).slice(0, 7) === today().slice(0, 7)).length} this month)</small>` : "0") : "",
+        full ? row("Leave taken (approved days)", esc(leaveTaken(s.id))) : "", full ? row("System tags", esc(s.tags)) : "",
+        full ? row("Telegram alerts", String(s.telegram_chat_id || "").trim() ? "Linked" : "Not linked") : ""].join("")}</dl>
+      <div class="bdg-foot bdg-foot-b"><span>Structure</span><span>Architecture</span><span>MEP</span><span>ELV</span></div>`;
+    const old = document.querySelector("body > #badges, body > #badges-out"); if (old) old.remove();
+    badgeFocus = document.activeElement;
+    const w = document.createElement("div"); w.id = "badges"; w.className = "bdg-wrap prep";
+    w.setAttribute("role", "dialog"); w.setAttribute("aria-modal", "true"); w.setAttribute("aria-label", "Staff badge · " + s.name);
+    w.innerHTML = `<button type="button" class="bdg-back" data-act="${act(() => closeBadges())}" aria-label="Back">${svgI("back")}<span>Back</span></button>
+      <div class="bdg-stage">${badgeSide("front", front, "Front of the badge")}${badgeSide("back", back, "Back of the badge")}</div>
+      <div class="bdg-dots" aria-hidden="true"><i class="on"></i><i></i></div><p class="bdg-hint">Swipe to see the back of the badge</p>
+      ${actions ? `<div class="bdg-actions">${actions}</div>` : ""}`;
+    w.addEventListener("click", (e) => { if (e.target === w || e.target.classList.contains("bdg-stage")) closeBadges(); });
+    document.body.appendChild(w);
+    if (typeof translateNow === "function") translateNow(w);
+    // the strap reaches from the top edge of the screen down to the clip; the swing turns around that top point
+    const stage = w.querySelector(".bdg-stage"), dots = w.querySelectorAll(".bdg-dots i");
+    w.querySelectorAll(".bdg-hang").forEach((h) => { h.style.setProperty("--sl", String(Math.max(40, Math.round(h.getBoundingClientRect().top)))); });
+    stage.addEventListener("scroll", () => { const i = stage.scrollLeft > stage.clientWidth / 2 ? 1 : 0; dots.forEach((d, k) => d.classList.toggle("on", k === i)); }, { passive: true });
+    w.classList.remove("prep"); w.classList.add("in");
+    try { w.querySelector(".bdg-back").focus({ preventScroll: true }); } catch (e) { /* ignore */ }
   }
+  // instant = true: remove at once (another window opens, the screen changes). Otherwise the badges are pulled up out of the screen.
+  function closeBadges(instant) {
+    const w = document.querySelector("body > #badges"); if (!w) return false;
+    w.id = "badges-out"; syncLayers(); // no longer counts as an open layer (phone Back and the scroll lock see that at once)
+    const done = () => { if (w.parentNode) w.remove(); };
+    const f = badgeFocus; badgeFocus = null;
+    if (instant) done();
+    else {
+      const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      w.classList.remove("in"); w.classList.add("out"); setTimeout(done, reduce ? 220 : 520);
+    }
+    if (f && f.isConnected && f.focus) try { f.focus({ preventScroll: true }); } catch (e) { /* ignore */ }
+    return true;
+  }
+  // The badges sit above the page; a window opened later sits above the badges. True when the badges are the top layer.
+  const badgesOnTop = () => { const b = document.querySelector("body > #badges"), m = $("#modal"); return !!b && !(m && (b.compareDocumentPosition(m) & Node.DOCUMENT_POSITION_FOLLOWING)); };
   // ================= organization charts (same look as the GID company org chart) =================
   // Departments in the order of the company chart: Administration, Finance, Quantity Surveyor, Engineering & Technical, Architect, Project
   const ORG_DEPTS = [["ADMIN", "Administration"], ["FIN", "Finance"], ["QS", "Quantity Surveyor"], ["ENG", "Engineering & Technical"], ["DESIGN", "Architect"], ["PROJECT", "Project"]];
@@ -3987,8 +4084,16 @@
       if (!editable) return `<td class="lv-${v}">${esc(v)}</td>`;
       return `<td class="pcell ${dirty ? "dirty" : custom ? "custom" : ""}"><select class="lv-${v}" data-perm="${m}|${g}" aria-label="${esc(MODULE_NAMES[m] + ", " + GROUPS[g])}">${LEVELS.map((l) => `<option value="${l}" ${l === v ? "selected" : ""}>${l}</option>`).join("")}</select></td>`;
     };
-    AFTER.push(() => document.querySelectorAll("[data-perm]").forEach((el) => el.addEventListener("change", () => { const [m, g] = el.dataset.perm.split("|"); permDraft[m][g] = el.value; renderKeep('[data-perm="' + el.dataset.perm + '"]'); })));
-    return `<section class="card"><div class="card-head"><h2>Permissions by user group</h2>${editable ? `<div class="quick">
+    // (v22) a change redraws only this card (not the whole page), keeping the table's sideways place and the chosen box
+    AFTER.push(() => document.querySelectorAll("[data-perm]").forEach((el) => el.addEventListener("change", () => {
+      const [m, g] = el.dataset.perm.split("|"); permDraft[m][g] = el.value;
+      const box = $(".main .permwrap"), sl = box ? box.scrollLeft : 0, st = box ? box.scrollTop : 0, y = window.scrollY;
+      swapCard(".permcard", () => permEditor(me()), true);
+      const nb = $(".main .permwrap"); if (nb) { nb.scrollLeft = sl; nb.scrollTop = st; }
+      window.scrollTo(window.scrollX, y);
+      const f = document.querySelector('[data-perm="' + el.dataset.perm + '"]'); if (f) try { f.focus({ preventScroll: true }); } catch (e) { /* ignore */ }
+    })));
+    return `<section class="card permcard"><div class="card-head"><h2>Permissions by user group</h2>${editable ? `<div class="quick">
         ${changed.length ? btn("Undo", () => { permDraft = null; render(); }) + btn("Save " + changed.length + " change" + (changed.length > 1 ? "s" : ""), () => savePerms(u, changed), "primary") : ""}
         ${!changed.length && diffStd ? btn("Back to standard", () => confirmAction("Back to the standard permissions", [{ name: "ok", label: "Type STANDARD to undo all " + diffStd + " custom settings", required: true }], async (v) => { if (String(v.ok).trim().toUpperCase() !== "STANDARD") throw new Error("Type STANDARD to confirm."); permDraft = JSON.parse(JSON.stringify(PERMS_STANDARD)); const ch = []; for (const m of Object.keys(cur)) for (const g of Object.keys(GROUPS)) if (permDraft[m][g] !== cur[m][g]) ch.push([m, g, cur[m][g], permDraft[m][g]]); await savePerms(u, ch, true); }, "Reset"), "danger") : ""}</div>` : ""}</div>
       <p class="muted small">${editable ? "Choose what each group can do in each module, then save. Changes apply to everyone straight away and are recorded in the activity log." : "Only the MD and the system administrator can change these."}
@@ -4031,13 +4136,13 @@
   // System health for the admin: database, Telegram bot, who has linked Telegram
   function healthCard() {
     const db_ = Store.mode === "supabase";
-    if (db_ && !tgStatus.checked) AFTER.push(() => loadTelegramStatus().then(() => { if (state.route === "admin") swapCard(".health", healthCard); }));
+    if (db_ && !tgStatus.checked && !healthCard.busy) AFTER.push(() => { healthCard.busy = true; loadTelegramStatus().finally(() => { healthCard.busy = false; if (state.route === "admin") swapCard(".health", healthCard); }); });
     const linkedN = staffNow().filter((s) => String(s.telegram_chat_id || "").trim()).length;
     const notLinked = staffNow().filter((s) => !String(s.telegram_chat_id || "").trim()).map((s) => s.name);
     const row = (ok, t, sub) => `<li class="${ok === true ? "ok" : ok === false ? "no" : "wait"}"><i>${ok === true ? "✓" : ok === false ? "✕" : "…"}</i><span><b>${t}</b>${sub ? `<small>${sub}</small>` : ""}</span></li>`;
     return `<section class="card health"><div class="card-head"><h2>System health</h2>${db_ ? btn("Check again", async () => { tgStatus.checked = false; await loadTelegramStatus(); swapCard(".health", healthCard); }) : ""}</div><ul class="tg-check">
       ${row(db_, db_ ? "Shared database connected" : "Shared database not connected", db_ ? "Everyone using this link sees the same data." : "config.js has no Supabase details, so data stays on each device and Telegram cannot send. SETUP.md, Steps 1 to 4.")}
-      ${!db_ ? row(null, "Telegram bot", "Checked after the database is connected") : !tgStatus.checked ? row(null, "Telegram bot", "Checking…") : tgStatus.missing ? row(false, "Telegram part missing in the database", "Run the new supabase/schema.sql, then telegram-setup.sql.") : tgStatus.ready ? row(true, "Telegram bot ready", "@" + esc(String(tgStatus.bot || "").replace(/^@/, ""))) : row(false, "Telegram bot not set up", "Run supabase/telegram-setup.sql with the token from @BotFather (SETUP.md, Step 5).")}
+      ${!db_ ? row(null, "Telegram bot", "Checked after the database is connected") : !tgStatus.checked ? row(null, "Telegram bot", "Checking…") : tgStatus.late ? row(null, "Telegram bot did not answer", "Check the internet connection, then press Check again.") : tgStatus.missing ? row(false, "Telegram part missing in the database", "Run the new supabase/schema.sql, then telegram-setup.sql.") : tgStatus.ready ? row(true, "Telegram bot ready", "@" + esc(String(tgStatus.bot || "").replace(/^@/, ""))) : row(false, "Telegram bot not set up", "Run supabase/telegram-setup.sql with the token from @BotFather (SETUP.md, Step 5).")}
       ${row(linkedN ? (linkedN === staffNow().length ? true : null) : false, linkedN + " of " + staffNow().length + " staff linked to Telegram", notLinked.length ? "Not linked yet: " + esc(notLinked.slice(0, 12).join(", ")) + (notLinked.length > 12 ? " and " + (notLinked.length - 12) + " more" : "") : "Everyone is linked.")}
     </ul></section>`;
   }
@@ -4190,17 +4295,22 @@
     devCheck(); setInterval(devCheck, 60000);
     document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") devCheck(); });
     // Settings open: refresh only the Devices card, and never while the person is using the page
-    setInterval(() => { if (state.route === "admin" && document.visibilityState === "visible" && !busyOnPage()) devLoad(true).then(() => { if (state.route === "admin") swapCard(".devices", () => devicesCard(me())); }); }, 60000);
-  }
-  // Someone is typing, choosing in a list or has a window open: do not redraw under their hands
-  function busyOnPage() {
-    const a = document.activeElement;
-    return !!($("#modal") || $("#lightbox") || (a && a !== document.body && a.matches && a.matches("input, select, textarea, [contenteditable]")));
+    setInterval(() => { if (state.route === "admin" && document.visibilityState === "visible" && !$("#modal") && !handsOn()) devLoad(true).then(() => { if (state.route === "admin") swapCard(".devices", () => devicesCard(me())); }); }, 60000);
   }
   // Replace one card on the page with fresh HTML (no full redraw: scroll, open lists and focus stay as they are)
+  // (v22) If the person is busy (finger on the screen, scrolling, a window open, or working inside this card), try again a moment later
+  // instead of giving up, so "Checking…" and the devices list always finish updating.
+  const SWAP_WAIT = {};
   function swapCard(sel, make, force) {
     const old = document.querySelector(".main " + sel); if (!old) return;
-    if (!force && (busyOnPage() || old.contains(document.activeElement))) return;
+    clearTimeout(SWAP_WAIT[sel]);
+    if (!force && ($("#modal") || $("#lightbox") || $("#badges") || handsOn() || old.contains(document.activeElement))) {
+      const route = state.route, tries = (SWAP_WAIT[sel + "#n"] || 0) + 1;
+      SWAP_WAIT[sel + "#n"] = tries;
+      if (tries < 400) SWAP_WAIT[sel] = setTimeout(() => { if (state.route === route) swapCard(sel, make); }, 1500);
+      return;
+    }
+    SWAP_WAIT[sel + "#n"] = 0;
     const keepAfter = AFTER.splice(0);
     const tmp = document.createElement("div"); tmp.innerHTML = make();
     const fresh = tmp.firstElementChild; if (!fresh) { AFTER.push(...keepAfter); return; }
@@ -4524,7 +4634,7 @@
   }
   function render() {
     // keep the buttons of an open window or the alerts panel working when the page behind is redrawn
-    const keepActs = new Map(); document.querySelectorAll("#modal [data-act], #drawer [data-act]").forEach((el) => { const f = ACTS.get(el.dataset.act); if (f) keepActs.set(el.dataset.act, f); });
+    const keepActs = new Map(); document.querySelectorAll("#modal [data-act], #drawer [data-act], #badges [data-act]").forEach((el) => { const f = ACTS.get(el.dataset.act); if (f) keepActs.set(el.dataset.act, f); });
     MSTACK.forEach((x) => x.acts.forEach((f, k) => keepActs.set(k, f)));
     ACTS = keepActs; AFTER.length = 0;
     applyUI(uiPref(me()));
@@ -4585,13 +4695,14 @@
     });
     $("#app").querySelectorAll("[data-change-tab]").forEach((el) => el.addEventListener("change", () => { state.tab[el.dataset.changeTab] = el.value; render(); }));
     document.body.classList.remove("nav-open");
+    syncLayers();
     setTabBadge(unread);
     AFTER.forEach((f) => f());
     translateNow();
   }
   document.documentElement.dataset.skin = "glass";
 
-  window.addEventListener("hashchange", () => { state.search = ""; closeLightbox(); closeDrawer(); closeAllModals(); render(); });
+  window.addEventListener("hashchange", () => { state.search = ""; closeLightbox(); closeBadges(true); closeDrawer(); closeAllModals(); render(); });
 
   // The app and its data load in the background while the sign-in screen is open; screens appear once the person is in
   const gateOpen = () => window.GID_GATE || Promise.resolve();

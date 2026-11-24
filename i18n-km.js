@@ -471,7 +471,14 @@ window.GID_KM = {
   "GID Management System · Demo": "ប្រព័ន្ធគ្រប់គ្រង GID · សាកល្បង",
   "PDF saved to your downloads.": "បានរក្សាទុក PDF ក្នុងថតទាញយក (Downloads)។",
   "Share PDF": "ចែករំលែក PDF",
-  "Share %": "ចំណែក %"
+  "Share %": "ចំណែក %",
+  // ---------- v22: settings scroll fix + staff badges ----------
+  "Position": "មុខតំណែង", "Staff ID": "លេខសម្គាល់បុគ្គលិក", "Staff": "បុគ្គលិក", "MEP": "MEP",
+  "Front of the badge": "ផ្នែកខាងមុខកាតបុគ្គលិក", "Back of the badge": "ផ្នែកខាងក្រោយកាតបុគ្គលិក",
+  "Swipe to see the back of the badge": "អូសទៅឆ្វេង ដើម្បីមើលខាងក្រោយកាត",
+  "Structure · Architecture · MEP · ELV": "រចនាសម្ព័ន្ធ · ស្ថាបត្យកម្ម · MEP · ELV",
+  "Telegram bot did not answer": "បូត Telegram មិនបានឆ្លើយតប",
+  "Check the internet connection, then press Check again.": "សូមពិនិត្យអ៊ីនធឺណិត រួចចុច «ពិនិត្យម្តងទៀត»។"
 };
 
 // Texts that contain numbers, names or dates
@@ -480,6 +487,10 @@ window.GID_KM = {
   const t = (x) => (window.I18N && window.I18N.t(x)) || x;
   const date = (s) => s.replace(/\b(\d{1,2}) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sept?|Oct|Nov|Dec) (\d{2,4})\b/g, (_, d, m, y) => d + " " + MON[m] + " " + y);
   window.GID_KM_PATTERNS = [
+    // v22 staff badges
+    [/^Left on (.+)$/, (m) => "ឈប់នៅ " + date(m[1])],
+    [/^Staff badge · (.+)$/, (m) => "កាតបុគ្គលិក · " + m[1]],
+    [/^\((\d+) this month\)$/, (m) => "(" + m[1] + " ក្នុងខែនេះ)"],
     // v21 Khmer review
     [/^(.+) \*$/, (m, tr) => { const x = tr(m[1]); return x == null ? null : x + " *"; }],
     [/^(.+) \(optional\)$/, (m, tr) => { const x = tr(m[1]); return x == null ? null : x + " (មិនចាំបាច់)"; }],

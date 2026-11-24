@@ -1415,6 +1415,7 @@ html:not([data-theme="dark"]) :is(.b-approved, .b-reviewed, .b-issued, .b-done, 
   .card .tabs { flex-wrap: wrap; border-radius: 18px; }
   /* permissions: no inner up/down scroll on phones (the page scrolls); the module column stays in view */
   .permwrap { max-height: none; }
+} /* (v22) this closing brace was missing: everything below was only applied on phones */
 /* org chart PDF made on a phone: keep the A4 landscape layout (the phone layout above stacks the teams) */
 @media (max-width: 900px) {
   html .oc-print.oc-print .oc { --ocgap: 26px; }
@@ -1429,4 +1430,127 @@ html:not([data-theme="dark"]) :is(.b-approved, .b-reviewed, .b-issued, .b-done, 
   html .oc-print.oc-print .ocn .ocp { width: 84px; height: 84px; }
   html .oc-print.oc-print .ocn.lead .ocp { width: 100px; height: 100px; }
   html .oc-print.oc-print .oc-r { gap: 10px 4px; }
+}
+
+/* v22: settings scroll fix + staff badges */
+/* Settings, permissions table: on phones, tablets and any touch screen the PAGE scrolls up and down; the table box only scrolls sideways.
+   (A box almost as tall as the screen that also scrolled up and down caught every swipe and made the page feel frozen.) */
+@media (max-width: 900px), (pointer: coarse) {
+  .permwrap { max-height: none; overflow-y: hidden; touch-action: pan-x pan-y; }
+  .card table.list.perm thead th { position: static; }
+  .card table.list.perm thead th:first-child { position: sticky; }
+}
+
+/* Staff profile: two hanging badges (front and back), GID colours. The overlay is the layer #badges (app.js openPerson). */
+.bdg-wrap { position: fixed; inset: 0; z-index: 50; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+  display: flex; flex-direction: column; align-items: center; padding: 0 16px calc(28px + env(safe-area-inset-bottom));
+  background: radial-gradient(900px 600px at 50% 0%, rgba(46, 133, 64, .55), transparent 70%), rgba(6, 24, 13, .9);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); color: #fff; animation: bdg-fade .3s ease both; }
+.bdg-wrap.out { animation: bdg-fade-out .45s ease .12s both; pointer-events: none; }
+.bdg-wrap.prep .bdg-hang { visibility: hidden; animation: none; }
+@keyframes bdg-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes bdg-fade-out { from { opacity: 1; } to { opacity: 0; } }
+.bdg-back { position: fixed; top: calc(14px + env(safe-area-inset-top)); left: 14px; z-index: 3; display: inline-flex; align-items: center; gap: 6px; min-height: 50px; padding: 0 18px 0 12px;
+  border-radius: 16px; border: 1px solid rgba(255, 255, 255, .28); background: rgba(255, 255, 255, .18); color: #fff; font: inherit; font-weight: 700; font-size: 15px; cursor: pointer;
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); box-shadow: 0 8px 24px rgba(0, 0, 0, .25); }
+.bdg-back svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.bdg-back:hover { background: rgba(255, 255, 255, .26); }
+.bdg-back:focus-visible { outline: 3px solid #8cc63f; outline-offset: 2px; }
+.bdg-stage { display: flex; justify-content: center; align-items: stretch; gap: clamp(24px, 6vw, 72px); width: 100%; max-width: 900px; padding-top: clamp(96px, 16vh, 170px); flex: none; }
+/* one badge with its strap and clip; --sl = strap length in px (top of the screen down to the clip), set by app.js */
+.bdg-hang { --sl: 120; position: relative; display: flex; flex-direction: column; align-items: center; width: min(310px, calc((100vw - 120px) / 2)); flex: none;
+  transform-origin: 50% calc(var(--sl) * -1px); animation: bdg-drop 1.15s both; }
+.bdg-hang.back { animation-delay: .16s; }
+.bdg-wrap.out .bdg-hang { animation: bdg-up .5s cubic-bezier(.55, 0, .9, .45) both; }
+.bdg-wrap.out .bdg-hang.back { animation-delay: .06s; }
+@keyframes bdg-drop {
+  0% { transform: translateY(calc(-100% - var(--sl) * 1px - 60px)) rotate(0deg); animation-timing-function: cubic-bezier(.45, 0, .9, .55); }
+  48% { transform: translateY(16px) rotate(-3deg); animation-timing-function: ease-out; }
+  62% { transform: translateY(-7px) rotate(2.4deg); animation-timing-function: ease-in-out; }
+  75% { transform: translateY(3px) rotate(-1.4deg); }
+  87% { transform: translateY(0) rotate(.7deg); }
+  100% { transform: translateY(0) rotate(0deg); }
+}
+@keyframes bdg-up {
+  0% { transform: translateY(0) rotate(0deg); }
+  22% { transform: translateY(12px) rotate(1deg); }
+  100% { transform: translateY(calc(-100% - var(--sl) * 1px - 80px)) rotate(-2deg); }
+}
+.bdg-strap { position: absolute; bottom: calc(100% - 14px); left: 50%; width: 34px; height: calc(var(--sl) * 1px + 90px); transform: translateX(-50%); transform-origin: 50% 100%; overflow: hidden;
+  border-radius: 3px 3px 6px 6px; animation: bdg-stretch 1.15s both; animation-delay: inherit;
+  background: repeating-linear-gradient(135deg, rgba(255, 255, 255, .07) 0 2px, transparent 2px 5px), linear-gradient(90deg, #1f5f30, #2e8540 30%, #3a9a4e 55%, #2e8540 75%, #1f5f30);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .18), 0 6px 18px rgba(0, 0, 0, .35); }
+.bdg-hang.back .bdg-strap { animation-delay: .16s; }
+.bdg-strap span { position: absolute; bottom: 6px; left: 50%; transform: translateX(-50%) rotate(180deg); writing-mode: vertical-rl; white-space: nowrap;
+  font-size: 9px; font-weight: 800; letter-spacing: .22em; color: rgba(255, 255, 255, .62); }
+@keyframes bdg-stretch { 0%, 40% { transform: translateX(-50%) scaleY(1); } 48% { transform: translateX(-50%) scaleY(1.04); } 62% { transform: translateX(-50%) scaleY(.99); } 100% { transform: translateX(-50%) scaleY(1); } }
+.bdg-clip { position: relative; z-index: 2; width: 46px; height: 88px; margin-bottom: -30px; filter: drop-shadow(0 4px 6px rgba(0, 0, 0, .45)); }
+/* the card: frosted glass in GID greens, light from the top corner, dark where the text sits */
+.bdg-card { position: relative; flex: 1; width: 100%; min-height: 460px; display: flex; flex-direction: column; padding: 46px 22px 20px; border-radius: 24px; overflow: hidden; isolation: isolate;
+  background: radial-gradient(130% 70% at 92% -4%, rgba(140, 198, 63, .95), rgba(140, 198, 63, 0) 62%), linear-gradient(170deg, #2e8540 0%, #1d6531 36%, #12442a 66%, #0b2c19 100%);
+  border: 1px solid rgba(255, 255, 255, .3); box-shadow: 0 30px 60px rgba(0, 0, 0, .45), inset 0 1px 0 rgba(255, 255, 255, .45), inset 0 -40px 80px rgba(0, 0, 0, .18); color: #fff; text-align: left; }
+.bdg-card::before { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background: linear-gradient(180deg, rgba(255, 255, 255, .2), rgba(255, 255, 255, 0) 38%), repeating-radial-gradient(circle at 30% 20%, rgba(255, 255, 255, .025) 0 1px, transparent 1px 3px); }
+.back .bdg-card { background: radial-gradient(90% 55% at 50% 22%, rgba(140, 198, 63, .6), rgba(140, 198, 63, 0) 70%), linear-gradient(170deg, #2b7d3d 0%, #1a5c2e 38%, #10402a 70%, #0b2c19 100%); }
+.bdg-slot { position: absolute; top: 14px; left: 50%; width: 46px; height: 12px; transform: translateX(-50%); border-radius: 999px; background: rgba(6, 24, 13, .88); box-shadow: inset 0 2px 3px rgba(0, 0, 0, .6), 0 1px 0 rgba(255, 255, 255, .35); }
+.bdg-mark { position: absolute; z-index: -1; right: -48px; top: 34px; width: 230px; opacity: .16; pointer-events: none; }
+.bdg-mark img { width: 100%; filter: brightness(1.6) saturate(.4); }
+.bdg-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 10.5px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: rgba(255, 255, 255, .85); }
+.bdg-kind, .bdg-left { padding: 3px 9px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, .45); letter-spacing: .1em; white-space: nowrap; }
+.bdg-left { background: rgba(220, 70, 60, .85); border-color: transparent; }
+.bdg-photo { margin: 18px 0 10px; }
+.bdg-ph { width: 104px; height: 104px; border-radius: 26px; object-fit: cover; display: grid; place-items: center; background: rgba(255, 255, 255, .2); color: #fff; font-size: 34px; font-weight: 800;
+  border: 3px solid rgba(255, 255, 255, .85); box-shadow: 0 10px 24px rgba(0, 0, 0, .35); }
+.bdg-who { margin-top: auto; min-width: 0; }
+.bdg-name { margin: 0; font-size: clamp(22px, 2.4vw, 30px); line-height: 1.08; font-weight: 800; letter-spacing: .01em; text-transform: uppercase; overflow-wrap: anywhere; color: #fff; }
+.bdg-short { margin: 4px 0 0; font-size: 13px; color: rgba(255, 255, 255, .8); overflow-wrap: anywhere; }
+.bdg-card hr { width: 100%; border: 0; border-top: 1.5px solid rgba(255, 255, 255, .55); margin: 12px 0; }
+.bdg-pos { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; min-width: 0; }
+.bdg-card small { display: block; font-size: 10.5px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: rgba(255, 255, 255, .72); }
+.bdg-pos small { flex: none; padding-top: 3px; }
+.bdg-pos b { min-width: 0; text-align: right; font-size: 17px; line-height: 1.15; font-weight: 800; text-transform: uppercase; overflow-wrap: anywhere; }
+.bdg-foot { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; min-width: 0; }
+.bdg-foot b { display: block; font-size: 13px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; overflow-wrap: anywhere; }
+.bdg-id { flex: none; }
+.bdg-dept { min-width: 0; text-align: right; }
+.bdg-dept b span { display: block; }
+.bdg-brand { display: flex; align-items: center; justify-content: center; gap: 12px; margin: 22px 0 18px; min-width: 0; }
+.bdg-brand img { width: 92px; height: auto; flex: none; filter: drop-shadow(0 6px 14px rgba(0, 0, 0, .35)) brightness(1.12); }
+.bdg-brand b { display: block; font-size: 17px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; line-height: 1.15; overflow-wrap: anywhere; }
+.bdg-brand span { min-width: 0; }
+.bdg-brand small { margin-top: 4px; letter-spacing: .06em; line-height: 1.35; }
+.bdg-info { margin: 0 0 12px; display: grid; gap: 0; border-top: 1.5px solid rgba(255, 255, 255, .5); }
+.bdg-row { display: grid; grid-template-columns: minmax(0, 42%) minmax(0, 1fr); gap: 10px; padding: 7px 0; border-bottom: 1px solid rgba(255, 255, 255, .16); }
+.bdg-row dt { font-size: 11.5px; color: rgba(255, 255, 255, .72); font-weight: 600; overflow-wrap: anywhere; }
+.bdg-row dd { margin: 0; font-size: 13px; font-weight: 700; text-align: right; overflow-wrap: anywhere; min-width: 0; }
+.bdg-row a { color: #d8f5b5; text-decoration: none; }
+.bdg-row a:hover { text-decoration: underline; }
+.bdg-row .late { color: #ffd2a6; }
+.bdg-muted { color: rgba(255, 255, 255, .6); font-weight: 500; }
+.bdg-foot-b { margin-top: auto; padding-top: 10px; border-top: 1.5px solid rgba(255, 255, 255, .5); font-size: 10.5px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: rgba(255, 255, 255, .85); flex-wrap: wrap; }
+.bdg-dots, .bdg-hint { display: none; }
+.bdg-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 26px; animation: bdg-fade .4s ease 1s both; }
+.bdg-actions .btn { min-height: 44px; }
+html[lang="km"] .bdg-name, html[lang="km"] .bdg-pos b, html[lang="km"] .bdg-foot b { text-transform: none; letter-spacing: 0; line-height: 1.4; }
+html[lang="km"] .bdg-card small, html[lang="km"] .bdg-top, html[lang="km"] .bdg-foot-b, html[lang="km"] .bdg-brand b, html[lang="km"] .bdg-brand small { letter-spacing: 0; }
+/* phones: one badge at a time, full width; swipe sideways to see the back */
+@media (max-width: 640px) {
+  .bdg-wrap { padding: 0 0 calc(24px + env(safe-area-inset-bottom)); }
+  .bdg-back { min-height: 46px; top: calc(10px + env(safe-area-inset-top)); left: 10px; }
+  .bdg-stage { justify-content: flex-start; gap: 0; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; scrollbar-width: none; padding-top: 104px; padding-bottom: 60px; margin-bottom: -46px; } /* room for the card shadow inside the sideways scroller */
+  .bdg-stage::-webkit-scrollbar { display: none; }
+  .bdg-hang { width: 100vw; padding: 0 max(24px, calc((100vw - 320px) / 2)); scroll-snap-align: center; scroll-snap-stop: always; }
+  .bdg-strap { width: 30px; }
+  .bdg-card { min-height: 440px; padding: 44px 18px 18px; }
+  .bdg-name { font-size: 25px; }
+  .bdg-dots { display: flex; justify-content: center; gap: 8px; margin-top: 14px; }
+  .bdg-dots i { width: 8px; height: 8px; border-radius: 50%; background: rgba(255, 255, 255, .35); transition: width .2s; }
+  .bdg-dots i.on { width: 22px; border-radius: 999px; background: #8cc63f; }
+  .bdg-hint { display: block; margin: 6px 16px 0; text-align: center; font-size: 13px; color: rgba(255, 255, 255, .75); }
+  .bdg-actions { margin: 16px 16px 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #badges .bdg-hang, #badges .bdg-strap, #badges-out .bdg-hang, #badges-out .bdg-strap { animation: none !important; }
+  #badges.bdg-wrap { animation: bdg-fade .2s ease both !important; }
+  #badges-out.bdg-wrap { animation: bdg-fade-out .2s ease both !important; }
 }
