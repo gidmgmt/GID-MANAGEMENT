@@ -106,6 +106,7 @@ alter table public.notifications add column if not exists amount text;    -- rea
 alter table public.notifications add column if not exists due text;       -- ready-to-show date or time, e.g. "28 Nov 2026" or "28 Nov 2026 09:00-10:30"
 alter table public.notifications add column if not exists title_km text;  -- Khmer title
 alter table public.notifications add column if not exists body_km text;   -- Khmer detail line(s)
+alter table public.staff add column if not exists staff_no text;          -- staff ID number shown on the badge (HR edits it)
 alter table public.notifications add column if not exists silent boolean;  -- true = in-app bell only, no Telegram (owner: drawing uploads, progress changes)
 
 -- Cut a text to n characters (… at the end) before it is escaped, so an HTML entity is never cut in half.
