@@ -93,7 +93,7 @@
       const res = await Promise.all(names.map((t) => this.client.from(t).select("*").limit(5000)));
       res.forEach(({ data, error }, i) => {
         // a table added in a newer version (for example site_visits) may not exist yet: start it empty instead of stopping the app
-        if (error && ["site_visits", "variations", "subcontractors", "sub_contracts", "sub_payments", "tests", "handover_items", "warranties", "events", "holidays"].includes(names[i])) { console.warn(names[i] + " table missing: run the newest supabase/update SQL"); db[names[i]] = names[i] === "holidays" ? HOLIDAYS_STD.map((h) => Object.assign({}, h)) : []; this.missing = (this.missing || []).concat(names[i]); return; }
+        if (error && ["site_visits", "variations", "subcontractors", "sub_contracts", "sub_payments", "tests", "handover_items", "warranties", "events", "holidays", "announcements"].includes(names[i])) { console.warn(names[i] + " table missing: run the newest supabase/update SQL"); db[names[i]] = names[i] === "holidays" ? HOLIDAYS_STD.map((h) => Object.assign({}, h)) : []; this.missing = (this.missing || []).concat(names[i]); return; }
         if (error) throw new Error("Could not read table '" + names[i] + "': " + error.message + ". Did you run schema.sql in Supabase?");
         db[names[i]] = data || [];
       });
@@ -112,6 +112,18 @@
       }
       db[t].push(r); if (this.mode === "local") this.writeLocal();
       return r;
+    },
+    // Many rows of one table in one request (for example one alert per person for an announcement)
+    async insertMany(t, rows) {
+      const list = rows.map((row) => { row.id = row.id || uid(); row.created_at = row.created_at || nowIso(); return this.clean(t, row); });
+      if (!list.length) return [];
+      if (this.mode === "supabase") {
+        const { data, error } = await this.client.from(t).insert(list).select();
+        if (error) throw new Error(error.message);
+        (data || []).forEach((d) => { const r = list.find((x) => x.id === d.id); if (r) Object.assign(r, d); });
+      }
+      db[t].push(...list); if (this.mode === "local") this.writeLocal();
+      return list;
     },
     async update(t, id, patch) {
       const cleanPatch = {}; for (const c of Object.keys(patch)) if (c in TABLES[t]) cleanPatch[c] = patch[c] === "" && TABLES[t][c] !== "text" ? null : patch[c];
@@ -739,9 +751,9 @@
   // Every save is logged. The people concerned by it get one notification per action (several saves from one tap are merged).
   const NOTE_MODULE = { requests: "requests", purchase_orders: "procurement", suppliers: "procurement", stock_moves: "stock", stock_items: "stock", stores: "stock", daily_reports: "daily",
     documents: "docs", tasks: "projects", projects: "projects", project_members: "projects", claims: "cost", cost_lines: "cost", monthly_costs: "cost", invoices: "finance",
-    defects: "qaqc", inspections: "qaqc", safety: "safety", site_visits: "svr", variations: "vo", subcontractors: "subs", sub_contracts: "subs", sub_payments: "subs", tests: "handover", handover_items: "handover", warranties: "handover", staff: "people", accounts: "people", app_settings: "admin", events: "schedule", holidays: "schedule" };
+    defects: "qaqc", inspections: "qaqc", safety: "safety", site_visits: "svr", variations: "vo", subcontractors: "subs", sub_contracts: "subs", sub_payments: "subs", tests: "handover", handover_items: "handover", warranties: "handover", staff: "people", accounts: "people", app_settings: "admin", events: "schedule", holidays: "schedule", announcements: "admin" };
   const NOTE_ICON = { requests: "requests", purchase_orders: "procurement", suppliers: "procurement", stock_moves: "stock", stock_items: "stock", stores: "stock", daily_reports: "daily", documents: "docs",
-    tasks: "projects", projects: "projects", project_members: "people", claims: "cost", cost_lines: "cost", monthly_costs: "cost", invoices: "finance", defects: "qaqc", inspections: "qaqc", safety: "safety", site_visits: "svr", variations: "vo", subcontractors: "subs", sub_contracts: "subs", sub_payments: "subs", tests: "handover", handover_items: "handover", warranties: "handover", staff: "people", accounts: "people", app_settings: "admin", events: "schedule", holidays: "schedule" };
+    tasks: "projects", projects: "projects", project_members: "people", claims: "cost", cost_lines: "cost", monthly_costs: "cost", invoices: "finance", defects: "qaqc", inspections: "qaqc", safety: "safety", site_visits: "svr", variations: "vo", subcontractors: "subs", sub_contracts: "subs", sub_payments: "subs", tests: "handover", handover_items: "handover", warranties: "handover", staff: "people", accounts: "people", app_settings: "admin", events: "schedule", holidays: "schedule", announcements: "megaphone" };
   const PREF_LABEL = { mine: "Only things for me", projects: "Everything on my projects", all: "Everything in the company" };
   function notifyPref(u) {
     const s = (db.app_settings || []).find((x) => x.key === "notify:" + u.id);
@@ -834,7 +846,7 @@
   }
   let noteQueue = [], noteTimer = null;
   function queueNotify(action, tbl, record_id, summary) {
-    if (["audit_log", "notifications"].includes(tbl) || (tbl === "app_settings" && String(record_id).startsWith("notify-"))) return;
+    if (["audit_log", "notifications", "announcements"].includes(tbl) || (tbl === "app_settings" && String(record_id).startsWith("notify-"))) return;
     noteQueue.push({ tbl, record_id, summary, actor: state.user });
     clearTimeout(noteTimer); noteTimer = setTimeout(flushNotify, 400);
   }
@@ -896,7 +908,7 @@
     const r = byId(tbl, id);
     const map = { requests: openRequest, purchase_orders: openPO, daily_reports: openDaily, documents: openDoc, tasks: openTask, claims: openClaim, invoices: openInvoice, defects: openDefect, safety: openSafety,
       inspections: openInspection, projects: openProject, staff: openPerson, stock_items: openItem, site_visits: openSvr,
-      variations: openVO, subcontractors: openSub, sub_payments: openPayment, tests: openTest, sub_contracts: (k) => openSub(byId("subcontractors", k.sub_id)), events: openEvent };
+      variations: openVO, subcontractors: openSub, sub_payments: openPayment, tests: openTest, sub_contracts: (k) => openSub(byId("subcontractors", k.sub_id)), events: openEvent, announcements: openAnnouncement };
     if (tbl === "welcome") { const st = byId("staff", id); if (st) return openPerson(st); }
     if (tbl === "accounts") { state.tab.people = "accounts"; ACC.loaded = false; if (state.route === "people" && (location.hash || "").replace(/^#\/?/, "") === "people") render(); else go("people"); return; }
     if (tbl === "stock_moves" && r) return openItem(byId("stock_items", r.item_id));
@@ -907,7 +919,7 @@
   }
   function noteItem(n, unreadable) {
     return `<li class="${n.read || unreadable ? "" : "unread"}" data-act="${act(async () => { closeDrawer(); if (!n.read && !unreadable) { await Store.update("notifications", n.id, { read: true }); updateBell(); } openRecord(n.tbl, n.record_id); })}">
-      <span class="nic">${svgI(NOTE_ICON[n.tbl] || "bell")}</span><span><b>${esc(n.title)}</b><small>${esc(n.body || "")}</small><em>${esc(staffName(n.actor_id))} · ${ago_(n.at)}</em></span></li>`;
+      <span class="nic">${svgI(NOTE_ICON[n.tbl] || "bell")}</span><span${n.tbl === "announcements" ? ' class="notr"' : ""}><b>${esc(n.title)}</b><small>${esc(n.tbl === "announcements" && String(n.body || "").length > 160 ? String(n.body).slice(0, 157) + "…" : n.body || "")}</small><em>${esc(staffName(n.actor_id))} · ${ago_(n.at)}</em></span></li>`;
   }
   // ---------- Telegram alerts ----------
   // The database sends each new notification to the person's Telegram (see supabase/schema.sql and telegram-setup.sql).
@@ -1320,6 +1332,7 @@
 
     return `<h1>Welcome in, ${esc(u.name.split(" ").slice(-1)[0])}</h1>
       <p class="muted">${esc(u.title)} · ${groupsOf(u).map((g) => GROUPS[g]).join(" + ")}${isSysAdmin(u) ? " · System administrator" : hasTag(u, "BACKUPADMIN") ? " · Backup administrator" : ""}</p>
+      ${annBanners(u)}
       <div class="quick">${quick.join("")}</div>
       ${missing.length ? `<div class="alert">You haven't sent today's ${dueSess.toLowerCase()} report for ${missing.map((p) => esc(p.code)).join(", ")}. ${btn("Send now", () => newSiteDaily(u), "small")}</div>` : ""}
       ${designMissing ? `<div class="alert">You haven't sent today's daily work report. ${btn("Send now", () => newDesignDaily(u), "small")}</div>` : ""}
@@ -3594,6 +3607,7 @@
     people: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5M16 4.5a3.5 3.5 0 0 1 0 7M18.5 14.8c1.6.8 2.7 2.5 3 5.2"/>',
     admin: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1 7 17M17 7l2.1-2.1"/>',
     money: '<circle cx="12" cy="12" r="9"/><path d="M15 9.5c-.5-1-1.6-1.5-3-1.5-1.7 0-3 .9-3 2.2 0 3 6 1.6 6 4.6 0 1.3-1.3 2.2-3 2.2-1.4 0-2.6-.6-3-1.6M12 6v2M12 16v2"/>',
+    megaphone: '<path d="M3 10v4a1 1 0 0 0 1 1h3l6 4V5L7 9H4a1 1 0 0 0-1 1z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/>',
     bell: '<path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/>',
     search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
     menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
@@ -3955,6 +3969,7 @@
         <ul class="rc-l">${dExp.map((x) => `<li class="${x.done ? "ok" : "no"}" ${x.done ? `data-act="${act(() => openDaily(x.done))}"` : ""}>${x.done ? "✓" : "–"} ${esc(x.s.name)} <small>${x.done ? sum(x.done.entries || [], (e) => e.hours) + " h · " + esc((x.done.entries || [])[0] ? x.done.entries[0].label.split(" ").slice(0, 3).join(" ") : "") : "not sent"}</small></li>`).join("")}</ul></div>`;
     const head = (title, route, extra) => `<div class="card-head"><h2>${esc(title)}</h2>${extra || ""}${route ? `<a class="link" href="#${route}">View all</a>` : ""}</div>`;
     return `<h1>Dashboard</h1><p class="muted">Welcome back, ${esc(u.name.split(" ").slice(-1)[0])}. Here's what is happening on ${hasTag(u, "MD") || !projectScope(u) ? "GID projects" : "your projects"} today.</p>
+      ${annBanners(u)}
       ${kpis}
       <div class="dash">
         <section class="card c8">${head("Site progress and latest reports", "daily")}${siteProgress}</section>
@@ -4156,11 +4171,11 @@
   }
 
   // ----- attendee picker: search, grouped by department, select a whole department -----
-  function peoplePicker(sel) {
+  function peoplePicker(sel, label) {
     const people = staffNow(), deptOf = (s) => { const g = groupsOf(s)[0]; return DEPT_ORDER.includes(g) ? g : "ADMIN"; };
     const groups = DEPT_ORDER.map((g) => [g, people.filter((s) => deptOf(s) === g).sort((a, b) => a.name.localeCompare(b.name))]).filter((x) => x[1].length);
     const kmD = (g) => (window.I18N && I18N.km ? I18N.km(DEPT_NAME[g]) || "" : "");
-    return `<div class="field pp" data-pp><span>Attendees</span>
+    return `<div class="field pp" data-pp><span>${esc(label || "Attendees")}</span>
       <div class="pp-top"><b class="pp-count" aria-live="polite"></b><button type="button" class="link pp-clear">Clear all</button></div>
       <div class="pp-chips"></div>
       <input type="search" class="pp-q" placeholder="Type to search: name, job or department" aria-label="Search people" autocomplete="off">
@@ -4658,10 +4673,142 @@
     if (typeof translateNow === "function") translateNow(fresh);
   }
 
+  // ================= v23 Announcements: a message from the System Admin to everyone or to chosen departments / people =================
+  // Only the System Admin and the backup admin write them. Each person gets one alert (and Telegram message through the
+  // notifications trigger); unread ones show as a banner on Dashboard and My work until the person taps "Got it".
+  const canAnnounce = (u) => !!u && (isSysAdmin(u) || hasTag(u, "BACKUPADMIN"));
+  const trTxt = (x) => (window.I18N && I18N.t && I18N.t(x)) || x; // Khmer for a browser confirm() question
+  const ANN_MAX = 2000;
+  const annDept = (s) => { const g = groupsOf(s)[0]; return DEPT_ORDER.includes(g) ? g : "ADMIN"; };
+  const annRecipients = (a) => (Array.isArray(a && a.recipients) ? a.recipients : []);
+  const annNotes = (a, to) => db.notifications.filter((n) => n.tbl === "announcements" && n.record_id === a.id && (!to || n.to_id === to));
+  const annReadCount = (a) => new Set(annNotes(a).filter((n) => n.read).map((n) => n.to_id)).size;
+  const annImportant = (a) => a.importance === "Important";
+  function annAudienceHtml(a) {
+    const au = (a && a.audience) || {};
+    if (au.all) return "<span>Everyone</span>";
+    const parts = (au.groups || []).map((g) => DEPT_NAME[g] || g), n = (au.staff || []).length;
+    if (n) parts.push(n === 1 ? "1 person" : n + " people");
+    return parts.length ? parts.map((p) => `<span>${esc(p)}</span>`).join(" · ") : "—";
+  }
+  // Announcements this person has not read yet and that still belong on the home screens
+  function annForMe(u) {
+    const t = today();
+    return (db.announcements || []).filter((a) => a.status === "Sent" && annRecipients(a).includes(u.id) && annNotes(a, u.id).some((n) => !n.read)
+      && (annImportant(a) || (a.pin_until && String(a.pin_until).slice(0, 10) >= t)))
+      .sort((a, b) => String(b.sent_at).localeCompare(String(a.sent_at)));
+  }
+  // The banner (also used for the preview while writing; preview = no working buttons)
+  function annBannerHtml(a, preview) {
+    const msg = String(a.message || ""), long = !preview && msg.length > 280;
+    const gotIt = preview ? `<button type="button" class="btn small primary" tabindex="-1">Got it</button>` : `<button class="btn small primary" data-act="${act(() => annGotIt(a))}">Got it</button>`;
+    return `<section class="annc${annImportant(a) ? " imp" : ""}" role="status" aria-label="Announcement"><span class="annc-ic">${svgI("megaphone")}</span>
+      <div class="annc-b"><div class="annc-h">${annImportant(a) ? chip("Important", "r") : ""}<b class="notr">${esc(a.title || "")}</b></div>
+        <p class="annc-m notr">${esc(long ? msg.slice(0, 270).replace(/\s+\S*$/, "") + "…" : msg)}</p>
+        <small class="annc-f"><span>Sent by</span> ${esc(staffName(a.sent_by))} · ${a.sent_at ? fmtDate(a.sent_at) + " " + timeOf(a.sent_at) : ""}</small></div>
+      <div class="annc-a">${long ? `<button class="btn small" data-act="${act(() => openAnnouncement(a))}">Read all</button>` : ""}${gotIt}</div></section>`;
+  }
+  function annBanners(u) {
+    const list = annForMe(u); if (!list.length) return "";
+    return `<div class="annc-list">${list.slice(0, 3).map((a) => annBannerHtml(a)).join("")}${list.length > 3 ? `<p class="muted small">${list.length - 3} more announcements in Alerts.</p>` : ""}</div>`;
+  }
+  async function annGotIt(a) { await markSeen("announcements", a.id); renderKeep(); }
+  function openAnnouncement(a) {
+    if (!a) return;
+    const u = me(), admin = canAnnounce(u), gone = a.status === "Withdrawn";
+    if (!admin && !isAdminPage(u) && a.sent_by !== u.id && !annRecipients(a).includes(u.id)) { toast("This announcement was not sent to you.", true); return; }
+    if (annNotes(a, u.id).some((n) => !n.read)) markSeen("announcements", a.id);
+    annNotes(a, u.id).forEach((n) => { n.read = true; }); // (saved by markSeen) so the banner behind the window goes away now
+    if (["home", "dashboard"].includes(state.route)) renderKeep();
+    const n = annRecipients(a).length;
+    detail("Announcement", [
+      ["Title", `<b class="notr">${esc(a.title)}</b>`],
+      gone && !admin ? ["Message", "This announcement was withdrawn."] : ["Message", `<div class="annc-m notr">${esc(a.message)}</div>`],
+      ["Importance", annImportant(a) ? chip("Important", "r") : chip("Normal", "n")],
+      ["Sent by", esc(staffName(a.sent_by))], ["Sent", a.sent_at ? fmtDate(a.sent_at) + " " + timeOf(a.sent_at) : ""],
+      admin ? ["Sent to", annAudienceHtml(a) + ` <small class="muted">(${n})</small>`] : null,
+      admin ? ["Read by", `${annReadCount(a)} / ${n}`] : null,
+      ["Status", gone ? chip("Withdrawn", "n") : chip("Sent", "g")]],
+      admin && !gone ? btn("Withdraw", () => annWithdraw(a), "danger") : "");
+  }
+  async function annWithdraw(a) {
+    if (!canAnnounce(me())) { toast("Only the System Admin can do this.", true); return; }
+    if (!confirm(trTxt("Withdraw this announcement? It disappears from everyone's Dashboard and My work. It stays in the history."))) return;
+    try {
+      await patch("announcements", a.id, { status: "Withdrawn" }, "Announcement withdrawn: " + a.title);
+      // the alerts of a withdrawn message no longer count as unread (one request for everyone)
+      if (Store.mode === "supabase") { const { error } = await Store.client.from("notifications").update({ read: true }).eq("tbl", "announcements").eq("record_id", a.id).eq("read", false); if (error) throw new Error(error.message); }
+      annNotes(a).forEach((x) => { x.read = true; }); if (Store.mode === "local") Store.writeLocal();
+    } catch (e) { toast(e.message || String(e), true); return; }
+    closeAllModals(); render(); updateBell(); toast("Announcement withdrawn");
+  }
+  function annCompose(u) {
+    if (!canAnnounce(u)) return;
+    formModal("New announcement", [
+      { name: "title", label: "Title", required: true, help: "Short, for example: Office closed on Friday" },
+      { name: "message", label: "Message", type: "textarea", required: true, help: "Line breaks are kept. Up to 2000 characters." },
+      { name: "importance", label: "Importance", type: "select", options: ["Normal", "Important"], help: "Important stays at the top of Dashboard and My work until each person taps Got it. Normal shows there until it is read or until the date below." },
+      { name: "pin_until", label: "Show on Dashboard and My work until", type: "date", value: isoAdd(today(), 3) },
+      { name: "audience", label: "Send to", type: "select", options: [["all", "Everyone"], ["some", "Chosen departments or people"]] }
+    ], async (v) => {
+      const title = String(v.title || "").trim(), msg = String(v.message || "").replace(/\r\n?/g, "\n").trim();
+      if (!title || !msg) throw new Error("Write a title and a message.");
+      if (msg.length > ANN_MAX) throw new Error("The message is too long: up to 2000 characters.");
+      const now_ = staffNow(); let ids, audience;
+      if (v.audience === "some") {
+        let sel = []; try { sel = JSON.parse(v.attendees || "[]"); } catch (x) { sel = []; }
+        const live = new Set(now_.map((s) => s.id)); sel = sel.filter((id) => live.has(id));
+        // a whole department ticked is saved as that department (the people list is fixed when the message is sent)
+        const groups = DEPT_ORDER.filter((g) => { const mem = now_.filter((s) => annDept(s) === g); return mem.length && mem.every((s) => sel.includes(s.id)); });
+        const inGroups = new Set(now_.filter((s) => groups.includes(annDept(s))).map((s) => s.id));
+        audience = { groups, staff: sel.filter((id) => !inGroups.has(id)) }; ids = sel;
+      } else { audience = { all: true }; ids = now_.map((s) => s.id); }
+      ids = [...new Set(ids)].filter((id) => id !== u.id);
+      if (!ids.length) throw new Error("Choose at least one person (other than you).");
+      if (!confirm(trTxt(ids.length === 1 ? "Send to 1 person?" : "Send to " + ids.length + " people?"))) return false;
+      const row = await save("announcements", { title: title.slice(0, 150), message: msg, importance: v.importance === "Important" ? "Important" : "Normal", audience, recipients: ids,
+        sent_by: u.id, sent_at: nowIso(), pin_until: v.pin_until || "", status: "Sent" }, "Announcement sent: " + title.slice(0, 150));
+      const at = nowIso();
+      try { await Store.insertMany("notifications", ids.map((to) => ({ to_id: to, actor_id: u.id, title: row.title, body: msg, tbl: "announcements", record_id: row.id, read: false, at }))); }
+      catch (e) { toast("The announcement was saved, but the alerts could not be sent: " + (e.message || e), true); return; }
+      updateBell(); toast(ids.length === 1 ? "Sent to 1 person" : "Sent to " + ids.length + " people");
+    }, "Send", {
+      extraHtml: `<div class="ann-pick" hidden>${peoplePicker([], "Departments and people")}</div>
+        <div class="ann-prev"><span class="ann-prev-h">Preview: how people will see it</span><div class="ann-prev-b"></div></div>`,
+      onReady: (m) => {
+        wirePeoplePicker(m);
+        const f = m.querySelector("#mform"), ta = f.querySelector('textarea[name="message"]'); ta.rows = 6; ta.maxLength = ANN_MAX; const ti = f.querySelector('input[name="title"]'), imp = f.querySelector('select[name="importance"]'); ti.maxLength = 150;
+        const pick = m.querySelector(".ann-pick"), aud = f.querySelector('select[name="audience"]'), prev = m.querySelector(".ann-prev-b");
+        const paint = () => {
+          pick.hidden = aud.value !== "some";
+          prev.innerHTML = annBannerHtml({ title: ti.value.trim() || "Title", message: ta.value.replace(/\r\n?/g, "\n").trim() || "Message", importance: imp.value, sent_by: u.id, sent_at: nowIso() }, true);
+          if (typeof translateNow === "function") translateNow(prev);
+        };
+        f.addEventListener("input", paint); f.addEventListener("change", paint); paint();
+      }
+    });
+  }
+  function annCard(u) {
+    const list = (db.announcements || []).slice().sort((a, b) => String(b.sent_at).localeCompare(String(a.sent_at))).slice(0, 40);
+    const missing = (Store.missing || []).includes("announcements");
+    return `<section class="card ann"><div class="card-head"><h2>Announcements</h2><div class="quick">${missing ? "" : btn("New announcement", () => annCompose(me()), "primary")}</div></div>
+      <p class="muted small">Write a message to everyone, or to chosen departments or people. It shows at the top of their Dashboard and My work, in Alerts, and on Telegram.</p>
+      ${missing ? '<p class="warnline">The announcements table is not in the database yet. Paste supabase/update-v23.sql into Supabase → SQL Editor and press Run.</p>' : ""}
+      <div class="tscroll">${table([
+        { label: "Sent", get: (a) => a.sent_at ? fmtDate(a.sent_at) + ` <small>${timeOf(a.sent_at)}</small>` : "" },
+        { label: "Title", get: (a) => `<b class="notr">${esc(a.title)}</b>${annImportant(a) ? " " + chip("Important", "r") : ""}` },
+        { label: "Sent by", get: (a) => esc(staffName(a.sent_by)) },
+        { label: "Sent to", get: (a) => annAudienceHtml(a) },
+        { label: "Read by", get: (a) => `${annReadCount(a)} / ${annRecipients(a).length}` },
+        { label: "Status", get: (a) => a.status === "Withdrawn" ? chip("Withdrawn", "n") : chip("Sent", "g") },
+        { label: "", get: (a) => a.status === "Sent" ? `<button class="btn danger small" data-act="${act(() => annWithdraw(a))}">Withdraw</button>` : "" }], list, openAnnouncement)}</div></section>`;
+  }
+
   SCREENS.admin = (u) => {
     const audit = db.audit_log.slice().sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 60);
     const sys = isAdminPage(u);
     return `<h1>Settings</h1><p class="muted">${canManagePerms(u) ? "Control who can see and do what, and check the activity log." : "System settings and activity log."}</p>
+      ${canAnnounce(u) ? annCard(u) : ""}
       ${isAdminPage(u) ? healthCard() : ""}
       ${isAdminPage(u) ? devicesCard(u) : ""}
       ${permEditor(u)}
@@ -4778,6 +4925,7 @@
   function openAccountMenu() {
     const u = me(), A = AUTH();
     openModal("My account", `<div class="acct-me">${avatar(u, "av lg")}<span><b>${esc(u.name)}</b><small>${esc(u.title)}</small>${A.login ? `<small class="notr">${esc(A.login)}</small>` : ""}</span></div>
+      ${untilTxt() ? `<p class="acct-until">${svgI("clock")}<span>${esc(untilTxt())}</span></p>` : ""}
       <div class="acct-menu">${btn("My profile", () => { closeAllModals(); openPerson(u); })}${btn("Change password", openChangePassword)}${btn("Sign out", () => signOut(), "danger")}</div>`);
   }
   // Before the app opens: check a saved sign-in, and ask for a new password when needed.
@@ -4792,23 +4940,63 @@
         catch (e) { await netScreen(e.message); continue; }
         if (!r.ok) { if (window.GID_SHOW_GATE) { window.GID_SHOW_GATE(r.error === "no_session" ? SIGNED_OUT_MSG : r.error === "disabled" || r.error === "rejected" ? "This account cannot sign in. Ask HR." : SIGNED_OUT_MSG); continue; } dropSession(); location.reload(); return new Promise(() => {}); }
         Object.assign(A, { staff_id: r.staff_id, name: r.name, account_id: r.account_id, login: r.login, must_change_password: !!r.must_change_password, verified: true });
+        if (r.expires_at) A.expires_at = r.expires_at;
       }
       if (A.must_change_password) await mustChangeScreen();
       return;
     }
   }
-  // While the app is open: check the sign-in every 5 minutes and when the app comes back to the screen
+  // ---------- v23: sign in every day ----------
+  // A sign-in (account or demo passkey) lasts until 03:00 the next morning, Phnom Penh time. index.html keeps the day stamp
+  // (window.GID_SESSION_END); the server also refuses account sessions after that time. The offline report queue is kept.
+  const DAILY_MSG = "Please sign in again for today.";
+  const signInEnds = () => { try { return window.GID_SESSION_END ? Number(window.GID_SESSION_END()) || 0 : 0; } catch (e) { return 0; } };
+  const dayOver = () => { const e = signInEnds(); return !!e && Date.now() >= e; };
+  function untilTxt() { const e = signInEnds(); if (!e) return ""; return "Signed in until " + timeOf(e) + (dateInPP(e) === dateInPP(Date.now()) ? " today" : " tomorrow"); }
+  // A window with a form is open: warn first and give the person time to save (up to 30 minutes), then sign out
+  const formOpen = () => { const m = $("#modal"); return !!(m && m.querySelector("form, textarea")); };
+  let dayEndWarned = 0;
+  function endForToday() {
+    if (signOut.busy) return;
+    clearTimeout(endForToday.t);
+    if (formOpen() && (!dayEndWarned || Date.now() - dayEndWarned < 30 * 60000)) {
+      if (!dayEndWarned) { dayEndWarned = Date.now(); dayEndBar(); }
+      endForToday.t = setTimeout(endForToday, 20000);
+      return;
+    }
+    signOut(DAILY_MSG);
+  }
+  function dayEndBar() {
+    if ($("#dayend")) return;
+    const d = document.createElement("div"); d.id = "dayend"; d.className = "dayend"; d.setAttribute("role", "alert");
+    d.innerHTML = `${svgI("clock")}<span><b>Your sign-in for today has ended.</b> <span>Save your work now. You will be asked to sign in again when you close this window.</span></span>`;
+    document.body.appendChild(d); if (typeof translateNow === "function") translateNow(d);
+  }
+  // true when the day is over (the person is being signed out, or will be once the internet is back)
+  function dayCheck() {
+    if (!dayOver()) return false;
+    // account mode with no internet: signing in again is impossible, so wait until the signal is back (the report queue keeps working)
+    if (!(accountMode() && !navigator.onLine)) endForToday();
+    return true;
+  }
+  // While the app is open: check the day every minute, and the account sign-in every 5 minutes and when the app comes back to the screen
   function sessionWatch() {
-    if (!accountMode()) return;
     let last = Date.now();
     const check = async () => {
+      if (dayCheck()) return;
       if (!accountMode() || offlineNow()) return; last = Date.now();
       let r; try { r = await authRpc("gid_session", { p_token: AUTH().token }); } catch (e) { return; /* no internet: try again later */ }
-      if (!r.ok || (r.staff_id && r.staff_id !== state.user)) signOut(SIGNED_OUT_MSG);
+      if (r.ok && r.expires_at) AUTH().expires_at = r.expires_at;
+      // the server ended the day's session (its clock may be a little ahead of this phone)
+      if (!r.ok && (r.error === "expired" || (r.error === "no_session" && signInEnds() && Date.now() >= signInEnds() - 15 * 60000))) endForToday();
+      else if (!r.ok || (r.staff_id && r.staff_id !== state.user)) signOut(SIGNED_OUT_MSG);
       else if (r.must_change_password) { AUTH().must_change_password = true; closeAllModals(); await mustChangeScreen(); render(); }
     };
     setInterval(check, 5 * 60000);
-    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && Date.now() - last > 30000) check(); });
+    setInterval(dayCheck, 60000);
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState !== "visible") return; if (dayCheck()) return; if (Date.now() - last > 30000) check(); });
+    window.addEventListener("online", () => setTimeout(check, 2000));
+    window.addEventListener("pageshow", () => dayCheck());
   }
 
   // ---------- People → Accounts (HR, System Admin, backup admin, MD) ----------
@@ -5003,7 +5191,8 @@
         <div class="rail-sub"><span class="demo">DEMO</span>${isAdminPage(u) ? `<button class="resetbtn" title="Put the demo back to its starting data" data-act="${act(resetDemo)}">${svgI("reset")}<span>Reset demo</span></button>` : `<span class="rs-name">Management system</span>`}${accountMode() ? `<button class="lockbtn" title="Sign out" aria-label="Sign out" data-act="${act(() => signOut())}">${svgI("lock")}</button>` : `<button class="lockbtn" title="Lock the demo on this device" aria-label="Lock the demo on this device" data-act="${act(lockThisDevice)}">${svgI("lock")}</button>`}</div>
         <div class="rail-label">Menu</div>
         <nav class="nav">${nav}</nav>
-        <button class="me-card" data-act="${act(() => openPerson(u))}" aria-label="My profile">${avatar(u, "av lg")}<span><b>${esc(u.name)}</b><small>${esc(u.title)}</small></span></button></aside>
+        <button class="me-card" data-act="${act(() => openPerson(u))}" aria-label="My profile">${avatar(u, "av lg")}<span><b>${esc(u.name)}</b><small>${esc(u.title)}</small></span></button>
+        ${untilTxt() ? `<p class="rail-until">${svgI("clock")}<span>${esc(untilTxt())}</span></p>` : ""}</aside>
       <div class="scrim" data-act="${act(() => document.body.classList.remove("nav-open"))}"></div>
       <main class="main">
         <header class="head"><button class="icon menu-btn" aria-label="Open menu" data-act="${act(() => document.body.classList.toggle("nav-open"))}">${svgI("menu")}</button>
