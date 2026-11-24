@@ -106,6 +106,7 @@ alter table public.notifications add column if not exists amount text;    -- rea
 alter table public.notifications add column if not exists due text;       -- ready-to-show date or time, e.g. "28 Nov 2026" or "28 Nov 2026 09:00-10:30"
 alter table public.notifications add column if not exists title_km text;  -- Khmer title
 alter table public.notifications add column if not exists body_km text;   -- Khmer detail line(s)
+alter table public.notifications add column if not exists silent boolean;  -- true = in-app bell only, no Telegram (owner: drawing uploads, progress changes)
 
 -- Cut a text to n characters (… at the end) before it is escaped, so an HTML entity is never cut in half.
 create or replace function private.tg_cut(p text, n int) returns text
@@ -163,6 +164,7 @@ declare
   md record; icon text; kind_en text; kind_km text;
   t text; t_km text; foot text; a_title text; a_msg text; a_imp text; full_len int; proj text;
 begin
+  if coalesce(new.silent, false) then return new; end if;  -- bell only
   select value into tok from private.settings where key = 'telegram_bot_token';
   if coalesce(btrim(tok), '') = '' or tok like 'PASTE%' then return new; end if;
   select telegram_chat_id into chat from public.staff where id = new.to_id;
