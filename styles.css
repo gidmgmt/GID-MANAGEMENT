@@ -272,11 +272,12 @@ table.list .n { text-align: right; white-space: nowrap; }
 .donut-c { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; pointer-events: none; padding: 44px; }
 .donut-c b { font-size: 20px; font-weight: 800; letter-spacing: -.02em; white-space: nowrap; }
 .donut-c small, .donut-c span { color: var(--ink-2); font-size: 12px; line-height: 1.2; }
-.legend { width: 100%; display: grid; gap: 2px; }
-.lg { display: grid; grid-template-columns: 12px 1fr auto; gap: 10px; align-items: center; width: 100%; border: 0; background: none; text-align: left; padding: 8px 10px; border-radius: 10px; cursor: pointer; font-size: 13.5px; min-height: 40px; }
-.lg:hover, .lg.on { background: var(--bg); }
-.lg i { width: 12px; height: 12px; border-radius: 50%; }
-.lg b { font-weight: 700; white-space: nowrap; }
+.donut-wrap .legend { width: 100%; display: grid; gap: 2px; }
+.donut-wrap .lg { display: grid; grid-template-columns: 12px 1fr auto; gap: 10px; align-items: center; width: 100%; border: 0; background: none; text-align: left; padding: 8px 10px; border-radius: 10px; cursor: pointer; font-size: 13.5px; min-height: 40px; }
+.donut-wrap .lg:hover, .donut-wrap .lg.on { background: var(--bg); }
+.donut-wrap .lg i { width: 12px; height: 12px; border-radius: 50%; }
+.donut-wrap .lg span { overflow-wrap: anywhere; }
+.donut-wrap .lg b { font-weight: 700; white-space: nowrap; }
 
 .stock-t { width: 100%; border-collapse: collapse; font-size: 13.5px; }
 .stock-t th { text-align: left; font-size: 12px; font-weight: 700; color: var(--muted); padding: 0 8px 10px; }
@@ -376,7 +377,7 @@ table.list .n { text-align: right; white-space: nowrap; }
 .line-top .unit { font-size: 12.5px; color: var(--muted); min-width: 34px; }
 .line-top .x { width: 32px; height: 32px; font-size: 18px; }
 .avail { font-size: 12.5px; color: var(--ink-2); }
-.tag { display: inline-block; font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
+.tag { display: inline-block; font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
 .tag.ok { background: var(--good-l); color: var(--good); }
 .tag.order { background: var(--accent-l); color: var(--accent-ink); }
 .summary { display: grid; gap: 6px; background: var(--bg); border-radius: 14px; padding: 12px; font-size: 13.5px; margin-top: 4px; }
@@ -467,8 +468,18 @@ iframe.pdf { width: 100%; height: 420px; border: 1px solid var(--line); border-r
 .perm td.dirty select { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); background: var(--accent-l); }
 .lvkey { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 6px 16px; font-size: 12.5px; color: var(--ink-2); margin-top: 12px; }
 .lvkey b { display: inline-block; min-width: 62px; }
-.perm { table-layout: fixed; min-width: 980px; }
-.perm th:first-child { width: 170px; }
+/* permissions table: headers wrap onto two lines, the module column and the header row stay in view,
+   and the box has its own height so the sideways scrollbar is always on screen */
+.perm { table-layout: fixed; min-width: 1070px; }
+table.list.perm { overflow: visible; }
+.perm th:first-child { width: 190px; }
+.matrix.perm th { white-space: normal; overflow-wrap: break-word; line-height: 1.25; vertical-align: bottom; }
+.matrix.perm td:first-child { white-space: normal; }
+.permwrap { max-height: min(72vh, 760px); overflow: auto; overscroll-behavior-x: contain; border-radius: 12px; border: 1px solid var(--line); }
+.card table.list.perm thead th { position: sticky; top: 0; z-index: 2; background: var(--card-solid); padding-top: 10px; }
+.card table.list.perm th:first-child, .card table.list.perm td:first-child { position: sticky; left: 0; z-index: 1; background: var(--card-solid); box-shadow: inset -1px 0 0 var(--line); }
+.card table.list.perm thead th:first-child { z-index: 3; }
+@media (max-width: 640px) { .perm { min-width: 960px; } .perm th:first-child { width: 120px; } }
 .lvkey span { display: grid; grid-template-columns: 70px 1fr; gap: 6px; }
 
 /* site report sessions, trades, captions */
@@ -698,7 +709,6 @@ select, input, textarea { border-color: rgba(31, 77, 43, .16); background: rgba(
 }
 .drawer .tabs .dot { background: var(--badge); }
 .tab, .seg button, .sessions button { flex: none; }
-@media (max-width: 900px) { .head .htitle p { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; } }
 @media (max-width: 640px) { .tiles { grid-template-columns: 1fr 1fr; gap: 10px; } .tile { padding: 14px; } .tile b { font-size: 24px; } }
 
 /* ================= passkey screen + Telegram settings (round 8) ================= */
@@ -761,8 +771,7 @@ body::before {
   .tabbar { background: rgba(255, 255, 255, .95); }
   .card, .tile, .kpi, table.list:not(.matrix) tr { box-shadow: 0 4px 14px rgba(31, 77, 43, .06); }
 }
-/* long pages: the browser skips drawing cards that are far off screen */
-.grid2 > .card, .people-wrap > .card, section.card { content-visibility: auto; contain-intrinsic-size: auto 420px; }
+/* (v21) cards are always drawn: skipping far-off cards made the page height jump while scrolling */
 /* Telegram check list and system health (round 10) */
 .tg-check { list-style: none; margin: 4px 0 12px; padding: 0; display: grid; gap: 8px; }
 .tg-check li { display: grid; grid-template-columns: 28px 1fr; gap: 10px; align-items: start; padding: 10px 12px; border-radius: 14px; background: rgba(238, 246, 239, .8); }
@@ -796,10 +805,11 @@ body::before {
 /* ================= round 12: today card, location check, evidence, team picker ================= */
 .today-card .card-head { flex-wrap: wrap; gap: 8px 16px; }
 .today-card h2 { font-size: 17px; }
-.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12.5px; color: var(--ink-2); }
-.legend span { display: inline-flex; align-items: center; gap: 6px; }
-.lg { width: 12px; height: 12px; border-radius: 4px; display: inline-block; }
-.lg.ok { background: var(--good); } .lg.no { background: var(--bad); } .lg.late { background: #d08a00; }
+/* today card legend (own class names so they never clash with the donut legend buttons) */
+.klegend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12.5px; color: var(--ink-2); }
+.klegend span { display: inline-flex; align-items: center; gap: 6px; }
+.kdot { flex: none; width: 12px; height: 12px; border-radius: 4px; display: inline-block; }
+.kdot.ok { background: var(--good); } .kdot.no { background: var(--bad); } .kdot.late { background: #d08a00; }
 .who-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .who-list .pill { display: inline-grid; gap: 1px; padding: 7px 12px; border-radius: 14px; font-size: 13px; line-height: 1.35; border: 1px solid transparent; }
 .who-list .pill b { font-weight: 700; }
@@ -835,7 +845,6 @@ body::before {
 .pick b { display: block; font-weight: 600; } .pick small { color: var(--muted); font-size: 11.5px; }
 .av.sm { width: 30px; height: 30px; font-size: 11px; }
 @media (max-width: 640px) { .locrow { flex-wrap: wrap; } .locrow .btn { width: 100%; justify-content: center; } }
-.legend .lg, .today-card .legend .lg { flex: none; width: 12px !important; height: 12px !important; min-height: 0 !important; padding: 0 !important; display: inline-block; align-self: center; }
 
 /* ================= DARK THEME (round 12) =================
    html[data-theme="dark"] is set by the app from each person's choice: Light, Dark or System. */
@@ -1327,3 +1336,76 @@ html[data-theme="dark"] .gseg-b.on { background: rgba(58, 160, 79, .28); color: 
 @media (max-width: 640px) { .acc-acts { justify-content: flex-start; } }
 #cpform { display: grid; gap: 12px; text-align: left; }
 #cpform .gate-err:empty { min-height: 0; margin: 0; }
+
+/* ===== v21: layout fixes from the desktop visual audit ===== */
+/* windows: at most the screen height; the title bar and the Save / Cancel buttons stay in view, only the middle scrolls */
+html.lock-scroll { overflow: hidden; scrollbar-gutter: stable; }
+.modal-wrap { overscroll-behavior: contain; }
+.modal { display: flex; flex-direction: column; max-height: calc(100vh - 64px); max-height: calc(100dvh - 64px); }
+.modal-head { flex: none; position: relative; z-index: 3; }
+.modal-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; padding-bottom: 0; }
+.modal-body::after { content: ""; display: block; height: 22px; } /* bottom space inside the scroll area, so nothing shows under the sticky buttons */
+.modal-body .form-actions { position: sticky; bottom: 0; z-index: 2; padding: 12px 0; background: #fbfdfb !important; box-shadow: -22px 0 0 #fbfdfb, 22px 0 0 #fbfdfb, 0 -1px 0 var(--line); }
+html[data-theme="dark"] .modal-body .form-actions { background: #142018 !important; box-shadow: -22px 0 0 #142018, 22px 0 0 #142018, 0 -1px 0 var(--line); }
+@media (max-width: 640px) {
+  .modal { overflow: hidden !important; max-height: 94vh; max-height: 94dvh; padding-bottom: 0; }
+  .modal-body::after { height: calc(16px + env(safe-area-inset-bottom)); }
+  .modal-body .form-actions { padding: 12px 0 calc(8px + env(safe-area-inset-bottom)); }
+}
+
+/* menu header: the DEMO chip keeps its size, a long "Reset demo" (Khmer) wraps inside its own button */
+.rail-sub { flex-wrap: nowrap; gap: 4px; padding-left: 4px; padding-right: 2px; }
+.rail-sub .resetbtn + .lockbtn { margin-left: 0; }
+.rail-sub .demo { flex: none; white-space: nowrap; }
+.rail-sub .resetbtn { flex: 0 1 auto; min-width: 0; white-space: normal; line-height: 1.2; text-align: left; padding: 5px 9px; gap: 5px; }
+.rail-sub .resetbtn svg { flex: none; }
+.rail-sub .lockbtn { flex: none; }
+
+/* dark mode: grey status badges (Draft, To do, Superseded, Adjust) and the purple Overtime badge */
+html[data-theme="dark"] .b-superseded, html[data-theme="dark"] .b-draft, html[data-theme="dark"] .b-to-do, html[data-theme="dark"] .b-adjust { background: rgba(255, 255, 255, .1); color: #d3dfd6; }
+html[data-theme="dark"] .b-overtime { background: rgba(167, 139, 250, .18); color: #cdbdff; }
+
+/* org chart team labels: darker green so the white text is readable (the PDF copy keeps its own colours) */
+.oc-l:not(.oc-print .oc-l) { background: #3f7d20; }
+
+/* header search: the full hint fits on a computer */
+@media (min-width: 901px) {
+  .gsearch input { font-size: 14px; }
+  .gsearch label { width: 330px; }
+}
+@media (min-width: 901px) and (max-width: 1280px) { .gsearch label { width: 310px; } .gsearch input { font-size: 13.5px; } }
+html[data-theme="dark"] .gsearch input { background: none; border: 0; box-shadow: none; }
+
+/* phones: every button is at least 40 px tall (easy to tap with a thumb) */
+@media (max-width: 640px) {
+  .tab, .seg button, .mseg button, .mchip, .btn.small, .resetbtn, h4.ochead .btn, .ptabs button, .gseg-b { min-height: 40px; }
+  .lockbtn, .tools #uibtn, .mzoom button { width: 40px; height: 40px; }
+  .x, .trade .x, .line-top .x, .voline .rm, .tgrid .rm { width: 40px; height: 40px; min-width: 40px; }
+  .trade { grid-template-columns: minmax(0, 1fr) 84px 40px; }
+  .gallery .rm, .capgrid .rm { width: 32px; height: 32px; }
+  .seg button, .mseg button { padding: 6px 12px; }
+  .perm select, .sp-head, .sp-txt { min-height: 40px; }
+}
+html[lang="km"] .rail-sub .resetbtn svg { display: none; } /* the longer Khmer label needs the room */
+html[lang="km"] .rail-sub .resetbtn { padding: 4px 9px; font-size: 12px; }
+html[lang="km"] .rail-sub { gap: 4px; }
+/* a button with an icon directly inside a form field (Site visit photo log): normal icon size, not full width */
+.field > label.btn { align-self: flex-start; }
+.field > .btn svg, .field > label.btn svg { width: 18px; height: 18px; flex: none; }
+/* light mode: green status badges a touch darker for 4.5:1 contrast */
+html:not([data-theme="dark"]) :is(.b-approved, .b-reviewed, .b-issued, .b-done, .b-delivered, .b-paid, .b-passed, .b-closed, .b-active, .b-fixed, .b-md-approved, .b-invoiced, .b-low, .b-ok, .b-receive, .b-client-approved, .b-in-claim, .b-pm-approved, .b-pass, .b-handed-over, .b-completed) { color: #156b37; }
+/* phone menu in dark mode: solid, because the frosted blur is switched off on phones */
+@media (max-width: 900px) { html[data-theme="dark"] .rail { background: #121e16; } }
+/* small labels above the boxes of the VO price lines and test sheets: shown on phones, where the column titles are hidden */
+.cl { display: block; min-width: 0; }
+.cl-t { display: none; }
+@media (max-width: 640px) {
+  .cl-t { display: block; font-size: 11.5px; font-weight: 600; color: var(--muted); margin: 0 0 2px 2px; line-height: 1.3; }
+  .voline { grid-template-columns: 1fr 1fr 1fr 40px; align-items: end; }
+  .voline > .cl:first-child { grid-column: 1 / -1; }
+  .tgrid .tr { align-items: end; }
+  /* tabs inside a card wrap onto a second line instead of running off the screen */
+  .card .tabs { flex-wrap: wrap; border-radius: 18px; }
+  /* permissions: no inner up/down scroll on phones (the page scrolls); the module column stays in view */
+  .permwrap { max-height: none; }
+}

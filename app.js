@@ -34,7 +34,8 @@
     try { fn(e, el); } finally { OPENER = null; }
   });
 
-  document.addEventListener("keydown", (e) => { if (e.key !== "Escape") return; if (document.getElementById("modal")) modalBack(); else if (document.getElementById("drawer")) document.getElementById("drawer").remove(); });
+  // Escape closes the top layer only: the photo viewer first, then the window, then the alerts panel
+  document.addEventListener("keydown", (e) => { if (e.key !== "Escape") return; if (closeLightbox()) { e.preventDefault(); return; } if (document.getElementById("modal")) modalBack(); else if (document.getElementById("drawer")) closeDrawer(); else document.body.classList.remove("nav-open"); });
   function toast(msg, bad) {
     let box = document.getElementById("toasts");
     if (!box) { box = document.createElement("div"); box.id = "toasts"; box.setAttribute("role", "status"); box.setAttribute("aria-live", "polite"); document.body.appendChild(box); }
@@ -223,6 +224,9 @@
   // ================= approval engine =================
   const STEP_LABEL = { PM: "Project Manager approves", QS: "QS checks budget", MD: "MD approves (USD 500 or more)",
     PROC: "Procurement issues PO", FIN: "Finance pays", HEAD: "Line manager approves", HR: "HR records", STORE: "Store releases stock to site", LINE: "Line manager approves (MD and HR informed)" };
+  // Who acts at each step, in plain words (the short codes PM, QS, HEAD… are never shown to people)
+  const STEP_WHO = { PM: "Project Manager", QS: "Quantity surveyor", MD: "Managing Director", PROC: "Procurement", STORE: "Store", FIN: "Finance", HEAD: "Line manager", LINE: "Line manager", HR: "HR" };
+  const stepWho = (step) => (step && (STEP_WHO[step.role] || step.label || step.role)) || "";
   const REQUEST_TYPES = ["Material", "Purchase", "Payment", "Petty cash", "Leave", "Overtime"];
   const MONEY_TYPES = ["Material", "Purchase", "Payment", "Petty cash"];
 
@@ -880,7 +884,7 @@
   function table(cols, rows, onOpen) {
     if (!rows.length) return empty("Nothing here yet.");
     return `<table class="list"><thead><tr>${cols.map((c) => `<th>${esc(c.label)}</th>`).join("")}</tr></thead><tbody>${rows.map((r) =>
-      `<tr ${onOpen ? `data-act="${act(() => onOpen(r))}" class="click"` : ""}>${cols.map((c) => `<td data-label="${esc(c.label)}">${c.get(r)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+      `<tr ${onOpen ? `data-act="${act(() => onOpen(r))}" class="click"` : ""}>${cols.map((c) => `<td data-label="${esc(c.label)}"><span class="tdv">${c.get(r)}</span></td>`).join("")}</tr>`).join("")}</tbody></table>`;
   }
 
   function tabs(key, list) {
@@ -946,13 +950,42 @@
     if (!$("#modal")) { prev.acts.forEach((f, k) => ACTS.set(k, f)); document.body.appendChild(prev.node); }
   }
   function dropModal() { const m = $("#modal"); if (m) m.remove(); }
-  function closeAllModals() { MSTACK.length = 0; const m = $("#modal"); if (m) m.remove(); syncHistory(); }
+  function closeAllModals() { closeLightbox(); MSTACK.length = 0; const m = $("#modal"); if (m) m.remove(); syncHistory(); }
+  // The photo viewer sits above every window. Returns true when it was open.
+  function closeLightbox() { const lb = document.getElementById("lightbox"); if (!lb) return false; lb.remove(); return true; }
+  // Layers on top of the page: a window, the photo viewer, the alerts panel, the phone menu
+  const layerOpen = () => !!(document.querySelector("body > #modal, body > #lightbox, body > #drawer") || document.body.classList.contains("nav-open"));
+  function pushLayer() { if (!(history.state && history.state.gidModal)) { try { history.pushState({ gidModal: true }, "", location.href); } catch (e) { /* ignore */ } } }
+  // While a layer is open the page behind it does not scroll, and the phone's Back button closes the layer (one at a time) instead of leaving the screen
+  let layersSeen = "";
+  new MutationObserver(() => {
+    document.documentElement.classList.toggle("lock-scroll", !!document.querySelector("body > #modal, body > #lightbox, body > #drawer"));
+    const now = ["#lightbox", "#drawer"].filter((x) => document.querySelector("body > " + x)).concat(document.body.classList.contains("nav-open") ? ["nav"] : []).join(",");
+    if (now === layersSeen) return;
+    const opened = now.split(",").some((x) => x && !layersSeen.split(",").includes(x));
+    layersSeen = now;
+    if (opened) pushLayer(); else if (!layerOpen()) syncHistory();
+  }).observe(document.body, { childList: true, attributes: true, attributeFilter: ["class"] });
+  // A link tapped while a layer is open replaces the layer's Back step, so Back later returns to the screen before
+  document.addEventListener("click", (e) => {
+    const a = e.target.closest && e.target.closest('a[href^="#"]');
+    if (!a || e.defaultPrevented || e.ctrlKey || e.metaKey || e.shiftKey || !(history.state && history.state.gidModal)) return;
+    const h = a.getAttribute("href") || "#";
+    e.preventDefault();
+    if (h === location.hash || (h === "#" && !location.hash)) { closeLightbox(); closeDrawer(); document.body.classList.remove("nav-open"); closeAllModals(); return; }
+    location.replace(h);
+  });
   // Keep the phone's back button in step with the windows
   function syncHistory() {
-    setTimeout(() => { if (!$("#modal") && history.state && history.state.gidModal) { POP_SKIP++; history.back(); } }, 0);
+    setTimeout(() => { if (!layerOpen() && history.state && history.state.gidModal) { POP_SKIP++; history.back(); } }, 0);
   }
   window.addEventListener("popstate", () => {
     if (POP_SKIP) { POP_SKIP--; return; }
+    // phone Back closes the top layer only: photo viewer, then alerts panel, then menu, then one window
+    let closed = closeLightbox();
+    if (!closed && $("#drawer")) { closeDrawer(); closed = true; }
+    if (!closed && document.body.classList.contains("nav-open")) { document.body.classList.remove("nav-open"); closed = true; }
+    if (closed) { if (layerOpen()) pushLayer(); return; }
     if ($("#modal")) {
       modalBack();
       if ($("#modal")) { try { history.pushState({ gidModal: true }, "", location.href); } catch (e) { /* ignore */ } }
@@ -1764,7 +1797,7 @@
   function todayStrip(title, list) {
     const done = list.filter((x) => x.done).length;
     return `<section class="card today-card"><div class="card-head"><h2>${esc(title)}: ${done} of ${list.length} sent</h2>
-      <div class="legend"><span><i class="lg ok"></i>Sent</span><span><i class="lg no"></i>Not sent yet</span><span><i class="lg late"></i>Late morning report (after ${LATE_AT})</span></div></div>
+      <div class="klegend"><span><i class="kdot ok"></i>Sent</span><span><i class="kdot no"></i>Not sent yet</span><span><i class="kdot late"></i>Late morning report (after ${LATE_AT})</span></div></div>
       ${bar(list.length ? Math.round(done / list.length * 100) : 0)}
       <div class="who-list">${list.map((x) => `<span class="pill ${x.done ? (x.late ? "late" : "ok") : "no"}"><b>${x.done ? "✓ " : ""}${esc(x.label)}</b><small>${x.proj ? esc(x.proj) + " · " : ""}${esc(x.sub)}</small></span>`).join("") || '<span class="muted">No one is assigned yet.</span>'}</div></section>`;
   }
@@ -2626,7 +2659,7 @@
   }
   function priceVO(v) {
     let lines = (v.lines || []).map((l) => Object.assign({}, l)); if (!lines.length) lines = [{ item: "", qty: 1, unit: "lot", rate: 0 }];
-    const rowsHtml = () => lines.map((l, i) => `<div class="voline" data-i="${i}"><input class="l-item" placeholder="Item" value="${esc(l.item)}"><input class="l-qty num" type="number" step="any" inputmode="decimal" value="${esc(l.qty)}" aria-label="Quantity" placeholder="Qty"><input class="l-unit" value="${esc(l.unit)}" aria-label="Unit" placeholder="Unit"><input class="l-rate num" type="number" step="any" inputmode="decimal" value="${esc(l.rate)}" aria-label="Rate USD" placeholder="Rate $"><b class="l-amt"></b><button type="button" class="rm" data-rm="${i}" aria-label="Remove line">×</button></div>`).join("");
+    const rowsHtml = () => lines.map((l, i) => `<div class="voline" data-i="${i}"><label class="cl"><span class="cl-t">Item</span><input class="l-item" placeholder="Item" value="${esc(l.item)}"></label><label class="cl"><span class="cl-t">Qty</span><input class="l-qty num" type="number" step="any" inputmode="decimal" value="${esc(l.qty)}" aria-label="Quantity" placeholder="Qty"></label><label class="cl"><span class="cl-t">Unit</span><input class="l-unit" value="${esc(l.unit)}" aria-label="Unit" placeholder="Unit"></label><label class="cl"><span class="cl-t">Rate $</span><input class="l-rate num" type="number" step="any" inputmode="decimal" value="${esc(l.rate)}" aria-label="Rate USD" placeholder="Rate $"></label><b class="l-amt"></b><button type="button" class="rm" data-rm="${i}" aria-label="Remove line">×</button></div>`).join("");
     openModal("Price · " + v.vo_no, `<form id="voform"><p class="muted small">${esc(v.title)}</p><div class="voline head"><span>Item</span><span>Qty</span><span>Unit</span><span>Rate $</span><span>Amount</span><span></span></div><div id="vo-lines">${rowsHtml()}</div>
       <button type="button" class="btn small" id="vo-add">+ Add line</button>
       <div class="grid3f" style="margin-top:12px"><label class="field"><span>Overhead & profit %</span><input id="vo-mk" type="number" step="any" value="${esc(v.markup_pct == null ? 5 : v.markup_pct)}"></label><label class="field"><span>Extra time (days)</span><input id="vo-days" type="number" value="${esc(v.time_days || 0)}"></label><div class="field"><span>Total variation</span><b id="vo-total" class="vo-total"></b></div></div>
@@ -2885,7 +2918,7 @@
     const cell = (r, i, [k, l, ty]) => ty === "yn" ? `<select data-r="${i}" data-k="${k}" aria-label="${esc(l)}"><option value="">${esc(l)}</option>${["Yes", "No"].map((o) => `<option ${r[k] === o ? "selected" : ""}>${o}</option>`).join("")}</select>`
       : ty === "pf" ? `<select data-r="${i}" data-k="${k}" aria-label="${esc(l)}"><option value="">${esc(l)}</option>${["Pass", "Fail"].map((o) => `<option ${r[k] === o ? "selected" : ""}>${o}</option>`).join("")}</select>`
       : `<input data-r="${i}" data-k="${k}" ${ty === "n" ? 'type="number" step="any" inputmode="decimal"' : ""} value="${esc(r[k] == null ? "" : r[k])}" aria-label="${esc(l)}" placeholder="${esc(l)}">`;
-    const grid = () => `<div class="tgrid" style="--tc:${T.cols.length}"><div class="th">${T.cols.map(([, l]) => `<span>${esc(l)}</span>`).join("")}<span>Result</span><span></span></div>${t.rows.map((r, i) => { const ps = rowPass(t, r); return `<div class="tr ${ps === false ? "bad" : ps ? "good" : ""}">${T.cols.map((c) => cell(r, i, c)).join("")}<span class="res">${ps == null ? "—" : ps ? chip("Pass", "g") : chip("Fail", "r")}</span><button type="button" class="rm" data-rmr="${i}" aria-label="Remove line">×</button></div>`; }).join("")}</div>`;
+    const grid = () => `<div class="tgrid" style="--tc:${T.cols.length}"><div class="th">${T.cols.map(([, l]) => `<span>${esc(l)}</span>`).join("")}<span>Result</span><span></span></div>${t.rows.map((r, i) => { const ps = rowPass(t, r); return `<div class="tr ${ps === false ? "bad" : ps ? "good" : ""}">${T.cols.map((c) => `<label class="cl"><span class="cl-t">${esc(c[1])}</span>${cell(r, i, c)}</label>`).join("")}<span class="res">${ps == null ? "—" : ps ? chip("Pass", "g") : chip("Fail", "r")}</span><button type="button" class="rm" data-rmr="${i}" aria-label="Remove line">×</button></div>`; }).join("")}</div>`;
     const calibWarn = () => t.calib_until && t.calib_until < (t.test_date || today()) ? '<div class="alert warn">The instrument calibration has expired. Results may not be accepted by the client.</div>' : "";
     const body = () => `<form id="tform"><p class="muted small">${esc(projLabel(t.project_id))} · ${esc(T.system)} · ${esc(t.location)}</p>
       <div class="grid3f"><label class="field"><span>Instrument</span><input data-f="instrument" value="${esc(t.instrument || "")}"></label><label class="field"><span>Serial no.</span><input data-f="instrument_sn" value="${esc(t.instrument_sn || "")}"></label><label class="field"><span>Calibrated until</span><input type="date" data-f="calib_until" value="${esc(t.calib_until || "")}"></label></div>
@@ -3035,7 +3068,7 @@
       odDef.slice(0, 4).map((f) => [chip("QA/QC", "r"), defectNo(f) + " " + f.description, f.location + (f.due_date < today() ? " · overdue" : " · fix by " + fmtDate(f.due_date)), () => openDefect(f)]),
       openSafe.map((s) => [chip("Safety", "r"), s.rec_type + ": " + s.description, s.severity + " · " + fmtDate(s.rec_date), () => openSafety(s)]),
       voWait.map((v) => [chip("Variation", "w"), v.vo_no + " " + v.title, v.status + (v.amount ? " · " + money(v.amount) : ""), () => openVO(v)]),
-      reqs.slice(0, 3).map((r) => [chip("Request", "w"), r.ref_no + " " + r.title, "Waiting for " + ((r.steps || [])[r.step_index] || {}).role, () => openRequest(r)]),
+      reqs.slice(0, 3).map((r) => [chip("Request", "w"), r.ref_no + " " + r.title, "Waiting for " + stepWho((r.steps || [])[r.step_index]), () => openRequest(r)]),
       failT.map((t) => [chip("Test", "r"), t.test_no + " " + TT[t.test_type].name + " failed", t.location, () => openTest(t)]),
       exp.map((x) => [chip("Report", "n"), x.s ? x.s.name : staffName(x.m.staff_id), "Morning report not sent yet", null]));
     const lastReps = db.daily_reports.filter((d) => d.kind !== "Design" && d.project_id === p.id).sort((a, b) => String(b.submitted_at || b.report_date).localeCompare(String(a.submitted_at || a.report_date))).slice(0, 3);
@@ -3584,7 +3617,7 @@
     // Recent requests
     const recent = db.requests.filter((r) => !r.project_id || pids.has(r.project_id)).slice().sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))).slice(0, 5);
     const stCls = (r) => (r.status === "Pending" ? "st-wait" : r.status === "Approved" ? (db.purchase_orders.some((p) => p.request_id === r.id) ? "st-po" : "st-ok") : "st-bad");
-    const stTxt = (r) => (r.status === "Pending" ? "Waiting · " + (r.steps[r.step_index] || {}).role : r.status === "Approved" && db.purchase_orders.some((p) => p.request_id === r.id) ? "PO " + db.purchase_orders.find((p) => p.request_id === r.id).status.toLowerCase() : r.status);
+    const stTxt = (r) => (r.status === "Pending" ? "Waiting · " + stepWho((r.steps || [])[r.step_index]) : r.status === "Approved" && db.purchase_orders.some((p) => p.request_id === r.id) ? "PO " + db.purchase_orders.find((p) => p.request_id === r.id).status.toLowerCase() : r.status);
     const reqIcon = (t) => (["Material", "Purchase"].includes(t) ? "stock" : ["Payment", "Petty cash"].includes(t) ? "money" : "clock");
     const recentHtml = `<ul class="ship">${recent.map((r) => `<li data-act="${act(() => openRequest(r))}"><span class="ic">${svgI(reqIcon(r.type))}</span><span><b>${esc(r.ref_no)} ${esc(r.title)}</b><small><span class="st ${stCls(r)}">${esc(stTxt(r))}</span> · ${esc(projLabel(r.project_id) || "Office")} · ${fmtDate(r.created_at)}</small></span></li>`).join("")}</ul>`;
 
@@ -3796,13 +3829,13 @@
       if (!editable) return `<td class="lv-${v}">${esc(v)}</td>`;
       return `<td class="pcell ${dirty ? "dirty" : custom ? "custom" : ""}"><select class="lv-${v}" data-perm="${m}|${g}" aria-label="${esc(MODULE_NAMES[m] + ", " + GROUPS[g])}">${LEVELS.map((l) => `<option value="${l}" ${l === v ? "selected" : ""}>${l}</option>`).join("")}</select></td>`;
     };
-    AFTER.push(() => document.querySelectorAll("[data-perm]").forEach((el) => el.addEventListener("change", () => { const [m, g] = el.dataset.perm.split("|"); permDraft[m][g] = el.value; render(); })));
+    AFTER.push(() => document.querySelectorAll("[data-perm]").forEach((el) => el.addEventListener("change", () => { const [m, g] = el.dataset.perm.split("|"); permDraft[m][g] = el.value; renderKeep('[data-perm="' + el.dataset.perm + '"]'); })));
     return `<section class="card"><div class="card-head"><h2>Permissions by user group</h2>${editable ? `<div class="quick">
         ${changed.length ? btn("Undo", () => { permDraft = null; render(); }) + btn("Save " + changed.length + " change" + (changed.length > 1 ? "s" : ""), () => savePerms(u, changed), "primary") : ""}
         ${!changed.length && diffStd ? btn("Back to standard", () => confirmAction("Back to the standard permissions", [{ name: "ok", label: "Type STANDARD to undo all " + diffStd + " custom settings", required: true }], async (v) => { if (String(v.ok).trim().toUpperCase() !== "STANDARD") throw new Error("Type STANDARD to confirm."); permDraft = JSON.parse(JSON.stringify(PERMS_STANDARD)); const ch = []; for (const m of Object.keys(cur)) for (const g of Object.keys(GROUPS)) if (permDraft[m][g] !== cur[m][g]) ch.push([m, g, cur[m][g], permDraft[m][g]]); await savePerms(u, ch, true); }, "Reset"), "danger") : ""}</div>` : ""}</div>
       <p class="muted small">${editable ? "Choose what each group can do in each module, then save. Changes apply to everyone straight away and are recorded in the activity log." : "Only the MD and the system administrator can change these."}
         ${ps ? " Last changed by " + esc(staffName(ps.updated_by)) + " on " + fmtDate(ps.updated_at) + "." : ""} ${diffStd ? `<b>${diffStd}</b> setting${diffStd > 1 ? "s differ" : " differs"} from the standard (outlined).` : "All settings are standard."}</p>
-      <div class="scroll"><table class="list matrix perm"><thead><tr><th>Module</th>${Object.keys(GROUPS).map((g) => `<th>${esc(GROUPS[g])}</th>`).join("")}</tr></thead><tbody>
+      <div class="scroll permwrap"><table class="list matrix perm"><thead><tr><th>Module</th>${Object.keys(GROUPS).map((g) => `<th>${esc(GROUPS[g])}</th>`).join("")}</tr></thead><tbody>
         ${Object.keys(cur).map((m) => `<tr><td><b>${esc(MODULE_NAMES[m] || m)}</b></td>${Object.keys(GROUPS).map((g) => cell(m, g)).join("")}</tr>`).join("")}</tbody></table></div>
       <div class="lvkey">${LEVELS.map((l) => `<span><b class="lv-${l}">${l}</b> ${esc(LEVEL_HELP[l])}</span>`).join("")}</div>
       <p class="muted small">Special roles set on a person in People still apply on top of the group (for example HR, Procurement, Document Engineer, QA/QC). The system administrator always has full access. Approval routes follow the job roles (PM, QS, MD, Procurement, Finance).</p></section>`;
@@ -3840,11 +3873,11 @@
   // System health for the admin: database, Telegram bot, who has linked Telegram
   function healthCard() {
     const db_ = Store.mode === "supabase";
-    if (db_ && !tgStatus.checked) AFTER.push(() => loadTelegramStatus().then(() => { if (state.route === "admin" && !$("#modal")) render(); }));
+    if (db_ && !tgStatus.checked) AFTER.push(() => loadTelegramStatus().then(() => { if (state.route === "admin") swapCard(".health", healthCard); }));
     const linkedN = staffNow().filter((s) => String(s.telegram_chat_id || "").trim()).length;
     const notLinked = staffNow().filter((s) => !String(s.telegram_chat_id || "").trim()).map((s) => s.name);
     const row = (ok, t, sub) => `<li class="${ok === true ? "ok" : ok === false ? "no" : "wait"}"><i>${ok === true ? "✓" : ok === false ? "✕" : "…"}</i><span><b>${t}</b>${sub ? `<small>${sub}</small>` : ""}</span></li>`;
-    return `<section class="card"><div class="card-head"><h2>System health</h2>${db_ ? btn("Check again", async () => { tgStatus.checked = false; await loadTelegramStatus(); render(); }) : ""}</div><ul class="tg-check">
+    return `<section class="card health"><div class="card-head"><h2>System health</h2>${db_ ? btn("Check again", async () => { tgStatus.checked = false; await loadTelegramStatus(); swapCard(".health", healthCard); }) : ""}</div><ul class="tg-check">
       ${row(db_, db_ ? "Shared database connected" : "Shared database not connected", db_ ? "Everyone using this link sees the same data." : "config.js has no Supabase details, so data stays on each device and Telegram cannot send. SETUP.md, Steps 1 to 4.")}
       ${!db_ ? row(null, "Telegram bot", "Checked after the database is connected") : !tgStatus.checked ? row(null, "Telegram bot", "Checking…") : tgStatus.missing ? row(false, "Telegram part missing in the database", "Run the new supabase/schema.sql, then telegram-setup.sql.") : tgStatus.ready ? row(true, "Telegram bot ready", "@" + esc(String(tgStatus.bot || "").replace(/^@/, ""))) : row(false, "Telegram bot not set up", "Run supabase/telegram-setup.sql with the token from @BotFather (SETUP.md, Step 5).")}
       ${row(linkedN ? (linkedN === staffNow().length ? true : null) : false, linkedN + " of " + staffNow().length + " staff linked to Telegram", notLinked.length ? "Not linked yet: " + esc(notLinked.slice(0, 12).join(", ")) + (notLinked.length > 12 ? " and " + (notLinked.length - 12) + " more" : "") : "Everyone is linked.")}
@@ -3971,8 +4004,8 @@
       mine ? '<p class="muted small">This is the device you are using now. Use the lock button in the menu to sign it out.</p>' : "");
   }
   function devicesCard(u) {
-    if (!DEV.loaded) AFTER.push(() => devLoad().then(() => { if (state.route === "admin" && !$("#modal")) render(); }));
-    if (DEV.missing) return `<section class="card"><h2>Devices</h2><p class="warnline">The devices table is not in the database yet. Paste supabase/update-v18.sql into Supabase → SQL Editor and press Run.</p></section>`;
+    if (!DEV.loaded && !DEV.tried) AFTER.push(() => { DEV.tried = true; devLoad().then(() => { if (state.route === "admin") swapCard(".devices", () => devicesCard(me())); }, () => { /* offline: the minute timer tries again */ }); });
+    if (DEV.missing) return `<section class="card devices"><h2>Devices</h2><p class="warnline">The devices table is not in the database yet. Paste supabase/update-v18.sql into Supabase → SQL Editor and press Run.</p></section>`;
     const can_ = canEndDevices(u), me_ = deviceId();
     const all = DEV.list.slice().sort((a, b) => String(b.last_seen || "").localeCompare(String(a.last_seen || "")));
     const act_ = all.filter((d) => d.status === "active"), online = act_.filter((d) => minsAgo(d.last_seen) <= ONLINE_MIN);
@@ -3983,7 +4016,7 @@
     const rows = (T.cur === "on" ? act_ : T.cur === "live" ? online : all.filter((d) => d.status !== "active"))
       .filter((d) => !q || [d.label, d.device_name, staffName(d.staff_id)].join(" ").toLowerCase().includes(q));
     const others = act_.filter((d) => d.id !== me_);
-    return `<section class="card devices"><div class="card-head"><h2>Devices</h2><div class="quick">${btn("Refresh", async () => { await devLoad(true); render(); })}${can_ && others.length ? btn("Sign out all other devices", () => endOthers(others), "danger") : ""}</div></div>
+    return `<section class="card devices"><div class="card-head"><h2>Devices</h2><div class="quick">${btn("Refresh", async () => { await devLoad(true); swapCard(".devices", () => devicesCard(me()), true); })}${can_ && others.length ? btn("Sign out all other devices", () => endOthers(others), "danger") : ""}</div></div>
       <p class="muted small">Every phone or computer that unlocked the app. Online now = used in the last ${ONLINE_MIN} minutes. ${can_ ? "Tap a device to rename it or sign it out." : "Only the System Admin can sign devices out."}</p>
       ${kpis5([["Signed-in devices", String(act_.length), people + " people"], ["Online now", String(online.length), "", online.length ? "g" : ""], ["Phones & tablets", String(phones), (act_.length - phones) + " computers"], ["Signed out (30 days)", String(ended30)]])}
       ${T.html}
@@ -3998,7 +4031,24 @@
   function devStart() {
     devCheck(); setInterval(devCheck, 60000);
     document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") devCheck(); });
-    setInterval(() => { if (state.route === "admin" && !$("#modal") && document.visibilityState === "visible") devLoad(true).then(() => { if (state.route === "admin" && !$("#modal")) render(); }); }, 60000);
+    // Settings open: refresh only the Devices card, and never while the person is using the page
+    setInterval(() => { if (state.route === "admin" && document.visibilityState === "visible" && !busyOnPage()) devLoad(true).then(() => { if (state.route === "admin") swapCard(".devices", () => devicesCard(me())); }); }, 60000);
+  }
+  // Someone is typing, choosing in a list or has a window open: do not redraw under their hands
+  function busyOnPage() {
+    const a = document.activeElement;
+    return !!($("#modal") || $("#lightbox") || (a && a !== document.body && a.matches && a.matches("input, select, textarea, [contenteditable]")));
+  }
+  // Replace one card on the page with fresh HTML (no full redraw: scroll, open lists and focus stay as they are)
+  function swapCard(sel, make, force) {
+    const old = document.querySelector(".main " + sel); if (!old) return;
+    if (!force && (busyOnPage() || old.contains(document.activeElement))) return;
+    const keepAfter = AFTER.splice(0);
+    const tmp = document.createElement("div"); tmp.innerHTML = make();
+    const fresh = tmp.firstElementChild; if (!fresh) { AFTER.push(...keepAfter); return; }
+    old.replaceWith(fresh);
+    AFTER.splice(0).forEach((f) => f()); AFTER.push(...keepAfter);
+    if (typeof translateNow === "function") translateNow(fresh);
   }
 
   SCREENS.admin = (u) => {
@@ -4015,7 +4065,8 @@
         { label: "Who", get: (a) => esc(staffName(a.actor_id)) }, { label: "Action", get: (a) => esc(a.action) }, { label: "Details", get: (a) => esc(a.summary) }], audit)}</section>`;
   };
 
-  function go(route) { location.hash = "#" + route; }
+  // From inside a window or panel: take the place of its Back step, so Back returns to the screen before
+  function go(route) { if (history.state && history.state.gidModal && location.hash !== "#" + route) location.replace("#" + route); else location.hash = "#" + route; }
   function routeFromHash() {
     const u = me(); const def = can(u, "dashboard", "view") ? "dashboard" : "home"; let r = (location.hash || "").replace(/^#\/?/, "") || def;
     // a project page: #projects/<id>
@@ -4304,6 +4355,15 @@
       <p class="muted small">Saved for ${esc(me().name)} and used on every phone or computer. System follows the phone's light or dark setting.</p></div>`);
   }
 
+  // Redraw the page but keep where the person was: page scroll, sideways scroll of tables, and the focused control
+  function renderKeep(focusSel) {
+    const boxes = () => [...document.querySelectorAll(".main .scroll, .main .tscroll, .main .week-scroll")];
+    const sx = boxes().map((e) => [e.scrollLeft, e.scrollTop]), y = window.scrollY;
+    render();
+    boxes().forEach((e, i) => { if (sx[i]) { e.scrollLeft = sx[i][0]; e.scrollTop = sx[i][1]; } });
+    window.scrollTo(window.scrollX, y);
+    if (focusSel) { const f = document.querySelector(focusSel); if (f) try { f.focus({ preventScroll: true }); } catch (e) { /* ignore */ } }
+  }
   function render() {
     // keep the buttons of an open window or the alerts panel working when the page behind is redrawn
     const keepActs = new Map(); document.querySelectorAll("#modal [data-act], #drawer [data-act]").forEach((el) => { const f = ACTS.get(el.dataset.act); if (f) keepActs.set(el.dataset.act, f); });
@@ -4373,7 +4433,7 @@
   }
   document.documentElement.dataset.skin = "glass";
 
-  window.addEventListener("hashchange", () => { state.search = ""; closeAllModals(); render(); });
+  window.addEventListener("hashchange", () => { state.search = ""; closeLightbox(); closeDrawer(); closeAllModals(); render(); });
 
   // The app and its data load in the background while the sign-in screen is open; screens appear once the person is in
   const gateOpen = () => window.GID_GATE || Promise.resolve();

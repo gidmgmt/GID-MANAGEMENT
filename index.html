@@ -147,10 +147,13 @@
         '</div></main>';
       var card = document.getElementById("gcard");
       function shake() { card.classList.remove("shake"); void card.offsetWidth; card.classList.add("shake"); }
+      // Put the cursor in a box only on computers (mouse): on phones it would pop up the keyboard over the screen
+      var FINE = (function () { try { return window.matchMedia("(pointer: fine)").matches && !window.matchMedia("(pointer: coarse)").matches; } catch (e) { return true; } })();
+      function autoFocus(el) { if (el && FINE) el.focus(); }
       function pick(k, focus) {
         tab = k;
         ["in", "up", "pk"].forEach(function (x) { var b = document.getElementById("t-" + x), p = document.getElementById("p-" + x); b.classList.toggle("on", x === k); b.setAttribute("aria-selected", x === k ? "true" : "false"); b.tabIndex = x === k ? 0 : -1; p.hidden = x !== k; });
-        if (focus !== false) { var f = document.querySelector("#p-" + k + " input:not([type=checkbox])"); if (f) f.focus(); }
+        if (focus !== false) autoFocus(document.querySelector("#p-" + k + " input:not([type=checkbox])"));
       }
       card.addEventListener("click", function (e) {
         var t = e.target.closest("[data-tab],[data-goto]"); if (t) { pick(t.dataset.tab || t.dataset.goto); return; }
@@ -161,7 +164,7 @@
         if (e.key === "ArrowRight" || e.key === "ArrowLeft") { e.preventDefault(); var n = order[(i + (e.key === "ArrowRight" ? 1 : 2)) % 3]; pick(n, false); document.getElementById("t-" + n).focus(); }
       });
       pick(tab, false);
-      var first = document.querySelector("#p-" + tab + " input:not([type=checkbox])"); if (first) first.focus();
+      autoFocus(document.querySelector("#p-" + tab + " input:not([type=checkbox])"));
 
       // Show a message in a form, with a Retry button when the server could not be reached
       function say(el, text, retryForm) {
@@ -251,7 +254,7 @@
       };
     }
     // When the intro finishes, put the cursor in the first box of the open tab
-    window.addEventListener("gid:splash-done", function () { var p = document.querySelector(".gate-pane:not([hidden]) input:not([type=checkbox])"); if (p) p.focus(); });
+    window.addEventListener("gid:splash-done", function () { var fine = false; try { fine = matchMedia("(pointer: fine)").matches && !matchMedia("(pointer: coarse)").matches; } catch (e) { /* ignore */ } var p = document.querySelector(".gate-pane:not([hidden]) input:not([type=checkbox])"); if (p && fine) p.focus(); });
     // A saved account sign-in is checked by app.js (gid_session) before the app opens; a saved passkey opens straight away.
     if (SHARED && store(SESSION_KEY)) { window.GID_AUTH = { mode: "account", token: store(SESSION_KEY), verified: false, remember: (function () { try { return !!localStorage.getItem(SESSION_KEY); } catch (e) { return false; } })() }; openGate(); }
     else if (savedPass() === PASS_HASH) { window.GID_AUTH = { mode: "passkey" }; openGate(); }
