@@ -1,0 +1,3 @@
+tests/.libs/
+*.png
+__pycache__/

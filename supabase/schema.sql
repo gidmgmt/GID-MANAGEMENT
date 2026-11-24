@@ -722,6 +722,7 @@ begin
 end $$;
 drop trigger if exists daily_reports_server_time on public.daily_reports;
 create trigger daily_reports_server_time before insert on public.daily_reports for each row execute function public.daily_report_server_time();
+
 -- GID Management System - update for version 18: Devices (who is signed in on which phone or computer). Safe to run; keeps all data.
 create table if not exists public.device_sessions (
   id text primary key,
