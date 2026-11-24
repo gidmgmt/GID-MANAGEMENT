@@ -101,7 +101,7 @@ where revoked_at is null and (expires_at is null or expires_at > private.gid_nex
 alter table public.notifications add column if not exists kind text;      -- action | approved | rejected | reminder | announcement | info | welcome
 alter table public.notifications add column if not exists module text;    -- requests, procurement, stock, daily, docs, projects, cost, finance, qaqc, safety, svr, vo, subs, handover, people, admin, schedule, announcements
 alter table public.notifications add column if not exists ref text;       -- reference number, e.g. REQ-0012, PO-0007, VO-101-003
-alter table public.notifications add column if not exists project text;   -- ready-to-show project, e.g. "DEMO-101 Riverside Villa"
+alter table public.notifications add column if not exists project text;   -- project number and name, e.g. "DEMO-101 · Tower A Office Fit-out" (a bare code or project id is completed from public.projects)
 alter table public.notifications add column if not exists amount text;    -- ready-to-show amount, e.g. "$650"
 alter table public.notifications add column if not exists due text;       -- ready-to-show date or time, e.g. "28 Nov 2026" or "28 Nov 2026 09:00-10:30"
 alter table public.notifications add column if not exists title_km text;  -- Khmer title
@@ -161,7 +161,7 @@ declare
   nl constant text := E'\n';
   k text := lower(btrim(coalesce(new.kind, '')));
   md record; icon text; kind_en text; kind_km text;
-  t text; t_km text; foot text; a_title text; a_msg text; a_imp text; full_len int;
+  t text; t_km text; foot text; a_title text; a_msg text; a_imp text; full_len int; proj text;
 begin
   select value into tok from private.settings where key = 'telegram_bot_token';
   if coalesce(btrim(tok), '') = '' or tok like 'PASTE%' then return new; end if;
@@ -222,10 +222,20 @@ begin
       if t_km is not null and position(btrim(new.ref) in t_km) = 0 then t_km := btrim(new.ref) || ' · ' || t_km; end if;
     end if;
 
+    -- Project: always number AND name ("DEMO-101 · Tower A Office Fit-out"). If the app sent only the code or the project id, add the name.
+    proj := nullif(btrim(coalesce(new.project, '')), '');
+    if proj is not null then
+      select p.code || ' · ' || p.name into proj
+      from public.projects p
+      where (p.code = proj or p.id = proj) and coalesce(btrim(p.name), '') <> ''
+      order by (p.code = proj) desc limit 1;
+      if proj is null then proj := btrim(new.project); end if;
+    end if;
+
     msg := icon || ' <b>' || tg_esc(kind_en) || ' · ' || tg_esc(md.en) || '</b>'
       || nl || '<b>' || tg_esc(private.tg_cut(t, 250)) || '</b>'
       || case when coalesce(btrim(new.body), '') <> '' then nl || tg_esc(private.tg_cut(btrim(new.body), 1200)) else '' end
-      || case when coalesce(btrim(new.project), '') <> '' then nl || 'Project / គម្រោង: ' || tg_esc(private.tg_cut(btrim(new.project), 150)) else '' end
+      || case when proj is not null then nl || 'Project / គម្រោង: ' || tg_esc(private.tg_cut(proj, 150)) else '' end
       || case when coalesce(btrim(new.amount), '') <> '' then nl || 'Amount / ទឹកប្រាក់: <b>' || tg_esc(private.tg_cut(btrim(new.amount), 60)) || '</b>' else '' end
       || case when coalesce(btrim(new.due), '') <> '' then nl || 'Date / កាលបរិច្ឆេទ: ' || tg_esc(private.tg_cut(btrim(new.due), 80)) else '' end
       -- Khmer: always at least the kind and module in Khmer, then the Khmer title and text when the app sent them

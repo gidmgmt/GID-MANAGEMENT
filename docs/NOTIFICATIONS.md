@@ -28,7 +28,7 @@ The database part (the Telegram sender) is ready in `supabase/update-v23.sql`. T
 ⚠️ ACTION NEEDED · Requests                  ← kind + module (bold)
 REQ-0012 · Petty cash waiting for your approval   ← what happened, with the reference (bold)
 Water pump repair, Block B                   ← one short detail line
-Project / គម្រោង: DEMO-101 Riverside Villa    ← only the lines that apply
+Project / គម្រោង: DEMO-101 · Riverside Villa    ← only the lines that apply
 Amount / ទឹកប្រាក់: $650
 Date / កាលបរិច្ឆេទ: needed by 28 Nov 2026
 
@@ -50,7 +50,7 @@ Long texts are cut safely (Telegram's limit is 4,096 characters). Announcements 
 
 ## 3. Every alert, one row each
 
-Placeholders: `{ref}` reference number · `{project}` project code and name · `{amount}` amount in USD · `{person}` who did it · `{date}` a date · `{type}` request type · `{title}` the item's own title · `{step}` approval step · `{reason}` the comment typed by the person who rejected or returned it. Khmer words for types, steps and statuses come from the app's Khmer list (`i18n-km.js`), shown here as `{type_km}`, `{step_km}`.
+Placeholders: `{ref}` reference number · `{project}` project number and name, always written `{code} · {name}` (for example `DEMO-101 · Tower A Office Fit-out`), never the number alone · `{amount}` amount in USD · `{person}` who did it · `{date}` a date · `{type}` request type · `{title}` the item's own title · `{step}` approval step · `{reason}` the comment typed by the person who rejected or returned it. Khmer words for types, steps and statuses come from the app's Khmer list (`i18n-km.js`), shown here as `{type_km}`, `{step_km}`.
 
 "Today" quotes the current text; "Problem" says what is wrong with it.
 
@@ -87,8 +87,8 @@ Placeholders: `{ref}` reference number · `{project}` project code and name · `
 
 | # | Kind | When | Who gets it | New title (EN) / (KM) | Detail lines | Today · Problem |
 |---|---|---|---|---|---|---|
-| D1 | ℹ️ | Site report sent on time | PM, Site Manager; site team when it lists an issue | `{project code} · {Morning / End of day / Overtime} report from {person}` / `{project code} · របាយការណ៍{ពេលព្រឹក / ចុងថ្ងៃ / ថែមម៉ោង} ពី {person}` | "{n} workers · {n} photos" · "Issue: {issue}" · Project · Date: `{date}` | "DEMO-101 end of day report" / "26 workers · 3 photos · issue: gypsum board ru…" · Issue cut at 60 characters; no author. |
-| D2 | ℹ️ (marked) | Morning report late, or sent away from site / without location | Same as D1 **plus MD** | `{project code} · LATE morning report ({n} min) from {person}` or `· report sent AWAY FROM SITE ({distance})` / `{project code} · របាយការណ៍ពេលព្រឹក យឺត ({n} នាទី) ពី {person}` / `· ផ្ញើក្រៅការដ្ឋាន` | Location note · workers · Project | Same text as D1 · **MD is alerted because it is late, but the text does not say it is late.** |
+| D1 | ℹ️ | Site report sent on time | PM, Site Manager; site team when it lists an issue | `{Morning / End of day / Overtime} report from {person}` / `របាយការណ៍{ពេលព្រឹក / ចុងថ្ងៃ / ថែមម៉ោង} ពី {person}` | "{n} workers · {n} photos" · "Issue: {issue}" · Project · Date: `{date}` | "DEMO-101 end of day report" / "26 workers · 3 photos · issue: gypsum board ru…" · Issue cut at 60 characters; no author. |
+| D2 | ℹ️ (marked) | Morning report late, or sent away from site / without location | Same as D1 **plus MD** | `LATE morning report ({n} min) from {person}` or `· report sent AWAY FROM SITE ({distance})` / `របាយការណ៍ពេលព្រឹក យឺត ({n} នាទី) ពី {person}` / `· ផ្ញើក្រៅការដ្ឋាន` | Location note · workers · Project | Same text as D1 · **MD is alerted because it is late, but the text does not say it is late.** |
 | D3 | ℹ️ | Design daily work sent | Head of Design, PMs of the projects listed | `Daily work from {person}: {hours} hours` / `ការងារប្រចាំថ្ងៃពី {person}៖ {hours} ម៉ោង` | projects and drawings worked on | "Sok sent daily work" / "7.5 hours" · OK, English only. |
 | D4 | ✅ | A report is marked reviewed | The author | `Your {session} report of {date} was reviewed by {person}` / `របាយការណ៍{session_km} ថ្ងៃ {date} របស់អ្នក ត្រូវបានពិនិត្យដោយ {person}` | Project | **Bug:** same title as D1 ("DEMO-101 end of day report"), so it looks like a new report; and the author is not in the list. |
 
@@ -107,11 +107,11 @@ Placeholders: `{ref}` reference number · `{project}` project code and name · `
 
 | # | Kind | When | Who gets it | New title (EN) / (KM) | Detail lines | Today · Problem |
 |---|---|---|---|---|---|---|
-| PJ1 | ℹ️ | New project (also from a won site visit) | All PMs, MD | `New project {code}: {name}` / `គម្រោងថ្មី {code}៖ {name}` | client · PM · "From site visit {svr}" | "New project DEMO-104" · No name or client. |
-| PJ2 | ℹ️ | PM changed | New PM, PMs, MD | `{code}: {person} is now Project Manager` / `{code}៖ {person} ជាប្រធានគម្រោងថ្មី` | Project | "DEMO-101 Project Manager: Sok" · OK, English only. |
-| PJ3 | ℹ️ | Added to / removed from a project team | The person, PM | `You were added to {code} {name}` / `You were removed from {code}` (KM `អ្នកត្រូវបានបញ្ចូលក្នុងគម្រោង {code}` / `…ដកចេញពីគម្រោង {code}`) | role | "Assigned Sok to DEMO-101" · The person reads their own name in the third person. |
-| PJ4 | ℹ️ | Progress updated | PM, PMs, MD (by preference) | `{code} progress now {p}%` / `{code} វឌ្ឍនភាពឥឡូវ {p}%` | per scope (Architecture 50%, MEP 30%) | OK, English only. |
-| PJ5 | ℹ️ | Site location or handover date set | PM, PMs, MD | `{code}: site location saved` / `{code}: handover date {date}` (KM `បានរក្សាទុកទីតាំងការដ្ឋាន` / `ថ្ងៃប្រគល់ {date}`) | defects period | "DEMO-101 handover date 2026-12-01" · Raw computer date. |
+| PJ1 | ℹ️ | New project (also from a won site visit) | All PMs, MD | `New project {project}` / `គម្រោងថ្មី {project}` | client · PM · "From site visit {svr}" | "New project DEMO-104" · No name or client. |
+| PJ2 | ℹ️ | PM changed | New PM, PMs, MD | `{project}: {person} is now Project Manager` / `{project}៖ {person} ជាប្រធានគម្រោងថ្មី` | Project | "DEMO-101 Project Manager: Sok" · OK, English only. |
+| PJ3 | ℹ️ | Added to / removed from a project team | The person, PM | `You were added to {project}` / `You were removed from {project}` (KM `អ្នកត្រូវបានបញ្ចូលក្នុងគម្រោង {project}` / `…ដកចេញពីគម្រោង {project}`) | role | "Assigned Sok to DEMO-101" · The person reads their own name in the third person. |
+| PJ4 | ℹ️ | Progress updated | PM, PMs, MD (by preference) | `{project} progress now {p}%` / `{project} វឌ្ឍនភាពឥឡូវ {p}%` | per scope (Architecture 50%, MEP 30%) | OK, English only. |
+| PJ5 | ℹ️ | Site location or handover date set | PM, PMs, MD | `{project}: site location saved` / `{project}: handover date {date}` (KM `បានរក្សាទុកទីតាំងការដ្ឋាន` / `ថ្ងៃប្រគល់ {date}`) | defects period | "DEMO-101 handover date 2026-12-01" · Raw computer date. |
 | PJ6 | ⚠️ | New task assigned | The person assigned | `New task for you: {task}` / `កិច្ចការថ្មីសម្រាប់អ្នក៖ {task}` | Project · Date: due `{date}` · priority | "New task: Fix door" · No due date or project. |
 | PJ7 | ℹ️ (✅ when done) | Task started, done, reopened or changed | Creator, assignee, PM | `Task done: {task}` / `started` / `reopened` / `changed` (KM `កិច្ចការរួចរាល់៖` / `បានចាប់ផ្តើម` / `បានបើកឡើងវិញ` / `បានកែប្រែ`) | Project · by `{person}` | OK, English only. |
 
@@ -119,10 +119,10 @@ Placeholders: `{ref}` reference number · `{project}` project code and name · `
 
 | # | Kind | When | Who gets it | New title (EN) / (KM) | Detail lines | Today · Problem |
 |---|---|---|---|---|---|---|
-| C1 | ℹ️ | New IPC draft | PM, QS | `{code} IPC {n} started` / `{code} IPC {n} បានចាប់ផ្តើម` | period · Amount claimed | "DEMO-101 IPC 3 · draft" · Status code. |
-| C2 | ⚠️ next person · ℹ️ others | IPC moves a step (QS checked, PM verified, MD approved, Invoiced) | The next person (PM to verify, MD to approve, Finance to invoice / collect), QS, PM | `{code} IPC {n} waiting for your {step}` / `{code} IPC {n} រង់ចាំ{step_km}របស់អ្នក` | "{previous step} by {person}" · Amount certified · Project | "DEMO-101 IPC 3 · qs checked" / "md approved" · Lower-case internal codes; nobody is told to act. |
-| C3 | ✅ | Client paid the IPC | PM, QS, Finance, MD | `{code} IPC {n} paid by the client` / `{code} IPC {n} ម្ចាស់គម្រោងបានបង់ប្រាក់` | Amount · invoice `{inv}` | "IPC paid" (or "DEMO-101 IPC 3 · paid") · No amount. |
-| C4 | ℹ️ | Cost line actual changed | PM, QS | `{code} {category}: actual cost now {amount}` / `{code} {category}៖ ចំណាយជាក់ស្តែងឥឡូវ {amount}` | budget | OK, English only. |
+| C1 | ℹ️ | New IPC draft | PM, QS | `{project} IPC {n} started` / `{project} IPC {n} បានចាប់ផ្តើម` | period · Amount claimed | "DEMO-101 IPC 3 · draft" · Status code. |
+| C2 | ⚠️ next person · ℹ️ others | IPC moves a step (QS checked, PM verified, MD approved, Invoiced) | The next person (PM to verify, MD to approve, Finance to invoice / collect), QS, PM | `{project} IPC {n} waiting for your {step}` / `{project} IPC {n} រង់ចាំ{step_km}របស់អ្នក` | "{previous step} by {person}" · Amount certified · Project | "DEMO-101 IPC 3 · qs checked" / "md approved" · Lower-case internal codes; nobody is told to act. |
+| C3 | ✅ | Client paid the IPC | PM, QS, Finance, MD | `{project} IPC {n} paid by the client` / `{project} IPC {n} ម្ចាស់គម្រោងបានបង់ប្រាក់` | Amount · invoice `{inv}` | "IPC paid" (or "DEMO-101 IPC 3 · paid") · No amount. |
+| C4 | ℹ️ | Cost line actual changed | PM, QS | `{project} {category}: actual cost now {amount}` / `{project} {category}៖ ចំណាយជាក់ស្តែងឥឡូវ {amount}` | budget | OK, English only. |
 
 ### Finance (`finance`)
 
@@ -148,9 +148,9 @@ Placeholders: `{ref}` reference number · `{project}` project code and name · `
 
 | # | Kind | When | Who gets it | New title (EN) / (KM) | Detail lines | Today · Problem |
 |---|---|---|---|---|---|---|
-| SF1 | ⚠️ | High-severity incident or near miss | Reporter, PM, Site Manager, MD, all PMs | `HIGH severity {type} on {code}` / `{type_km} កម្រិតធ្ងន់ធ្ងរខ្ពស់ នៅ {code}` | what happened · Project · Date: `{date}` | "Safety: Near miss (High)" · **No project**, no description. |
-| SF2 | ℹ️ | Other safety record (toolbox talk, observation, low/medium incident) | Reporter, PM, Site Manager | `{type} on {code}` / `{type_km} នៅ {code}` | short description · Project | "Safety: Toolbox talk" · No project. |
-| SF3 | ✅ | Safety record closed | Reporter, PM, Site Manager | `Safety {type} closed on {code}` / `បានបិទ{type_km} នៅ {code}` | correction · Project | "Safety record closed: Near miss" · No project. |
+| SF1 | ⚠️ | High-severity incident or near miss | Reporter, PM, Site Manager, MD, all PMs | `HIGH severity {type} on {project}` / `{type_km} កម្រិតធ្ងន់ធ្ងរខ្ពស់ នៅ {project}` | what happened · Project · Date: `{date}` | "Safety: Near miss (High)" · **No project**, no description. |
+| SF2 | ℹ️ | Other safety record (toolbox talk, observation, low/medium incident) | Reporter, PM, Site Manager | `{type} on {project}` / `{type_km} នៅ {project}` | short description · Project | "Safety: Toolbox talk" · No project. |
+| SF3 | ✅ | Safety record closed | Reporter, PM, Site Manager | `Safety {type} closed on {project}` / `បានបិទ{type_km} នៅ {project}` | correction · Project | "Safety record closed: Near miss" · No project. |
 
 ### Site visits – SVR (`svr`)
 
@@ -158,7 +158,7 @@ Placeholders: `{ref}` reference number · `{project}` project code and name · `
 |---|---|---|---|---|---|---|
 | V1 | ℹ️ | New site visit report | MD, PMs, visitors, action owners | `{svr} · Site visit: {client}` / `{svr} · ការចុះពិនិត្យទីតាំង៖ {client}` | location · scopes · Date: `{date}` | "SVR-0004 site visit: ABC" · OK, English only. |
 | V2 | ✅ | MD approves the report | Author, visitors | `{svr} · Report approved by {person}` / `{svr} · របាយការណ៍បានអនុម័តដោយ {person}` | client | "SVR-0004 approved by Sok" · OK, English only. |
-| V3 | ℹ️ (✅ when won) | Quoted, won, lost or back to lead | MD, PMs, author | `{svr} · Quotation sent` / `Won: project {code}` / `Lost` (KM `បានផ្ញើសម្រង់តម្លៃ` / `ឈ្នះ៖ គម្រោង {code}` / `មិនបានឈ្នះ`) | Amount · "Reason: {reason}" when lost | "SVR-0004 lost: price" · OK-ish. |
+| V3 | ℹ️ (✅ when won) | Quoted, won, lost or back to lead | MD, PMs, author | `{svr} · Quotation sent` / `Won: project {project}` / `Lost` (KM `បានផ្ញើសម្រង់តម្លៃ` / `ឈ្នះ៖ គម្រោង {project}` / `មិនបានឈ្នះ`) | Amount · "Reason: {reason}" when lost | "SVR-0004 lost: price" · OK-ish. |
 | V4 | ⚠️ | An action from a visit is given to someone | The action owner | `{svr} · Action for you: {action}` / `{svr} · សកម្មភាពសម្រាប់អ្នក៖ {action}` | client · Date: due `{date}` | Only "SVR-0004 updated" · Owner does not know what to do. |
 
 ### Variations – VO (`vo`)
@@ -184,7 +184,7 @@ Placeholders: `{ref}` reference number · `{project}` project code and name · `
 | SB3 | ⚠️ Finance · ℹ️ MD | PM approved (bill created) | Finance (to pay), MD | `{pc} · {sub} approved: bill {inv} to pay` / `{pc} · បានអនុម័ត៖ វិក្កយបត្រ {inv} ត្រូវបង់` | Net amount · Project · Date: due `{date}` | "ABC PC-02: PM approved (+1 more)" · Finance not clearly asked. |
 | SB4 | ✅ | Paid | PM, QS | `{pc} · {sub} paid` / `{pc} · បានបង់ប្រាក់ {sub}` | Amount · Project | "ABC PC-02: Paid" · No amount. |
 | SB5 | ⚠️ | Retention released | Finance (to pay), PM | `Retention to pay: {sub}` / `ប្រាក់ធានាត្រូវបង់៖ {sub}` | Amount · Project · Date: due `{date}` | "ABC retention released: $900" · Finance not asked. |
-| SB6 | ℹ️ | Subcontractor / contract added or changed, rating saved | People following the project | `{sub}: new contract on {code}` / `contract changed` / `rated` (KM `កិច្ចសន្យាថ្មី` / `បានកែប្រែ` / `បានវាយតម្លៃ`) | Amount · Project | OK, English only. |
+| SB6 | ℹ️ | Subcontractor / contract added or changed, rating saved | People following the project | `{sub}: new contract on {project}` / `contract changed` / `rated` (KM `កិច្ចសន្យាថ្មី` / `បានកែប្រែ` / `បានវាយតម្លៃ`) | Amount · Project | OK, English only. |
 
 ### Testing & Handover (`handover`)
 
@@ -245,7 +245,7 @@ Placeholders: `{ref}` reference number · `{project}` project code and name · `
 ⚠️ ACTION NEEDED · Requests
 REQ-0012 · Petty cash request waiting for your approval
 Water pump repair, Block B · Approved by Chan Lina (QS check)
-Project / គម្រោង: DEMO-101 Riverside Villa
+Project / គម្រោង: DEMO-101 · Riverside Villa
 Amount / ទឹកប្រាក់: $650
 Date / កាលបរិច្ឆេទ: needed by 28 Nov 2026
 
@@ -262,7 +262,7 @@ Chan Lina · 25 Nov 2026 14:05
 ❌ REJECTED / RETURNED · Documents
 A-101 rev 2 · Returned with comments by Heng Vibol
 Comments: Door schedule does not match the plan; please update D3 and D4.
-Project / គម្រោង: DEMO-102 Office Tower
+Project / គម្រោង: DEMO-102 · Office Tower
 
 បានបដិសេធ / បញ្ជូនត្រឡប់ · ឯកសារ
 A-101 rev 2 · បញ្ជូនត្រឡប់ជាមួយមតិយោបល់ដោយ Heng Vibol
@@ -274,13 +274,13 @@ Heng Vibol · 25 Nov 2026 10:42
 **3. A late morning report (MD)**
 ```
 ℹ️ FOR YOUR INFORMATION · Daily reports
-DEMO-101 · LATE morning report (35 min) from Chomreon Vathanak
+LATE morning report (35 min) from Chomreon Vathanak
 24 workers · 4 photos
-Project / គម្រោង: DEMO-101 Riverside Villa
+Project / គម្រោង: DEMO-101 · Riverside Villa
 Date / កាលបរិច្ឆេទ: 25 Nov 2026
 
 សម្រាប់ជាព័ត៌មាន · របាយការណ៍ប្រចាំថ្ងៃ
-DEMO-101 · របាយការណ៍ពេលព្រឹក យឺត (35 នាទី) ពី Chomreon Vathanak
+របាយការណ៍ពេលព្រឹក យឺត (35 នាទី) ពី Chomreon Vathanak
 
 Chomreon Vathanak · 25 Nov 2026 09:35
 [ Open in GID / បើកក្នុង GID ]
@@ -290,7 +290,7 @@ Chomreon Vathanak · 25 Nov 2026 09:35
 ```
 ✅ APPROVED / DONE · Subcontractors
 PC-02 · ABC Painting paid
-Project / គម្រោង: DEMO-103 Sunrise School
+Project / គម្រោង: DEMO-103 · Sunrise School
 Amount / ទឹកប្រាក់: $2,850
 
 បានអនុម័ត / រួចរាល់ · អ្នកម៉ៅការបន្ត
@@ -329,7 +329,7 @@ Sok Dara · 25 Nov 2026 08:00
 | `kind` | `action`, `approved`, `rejected`, `reminder`, `announcement`, `info`, `welcome`. **Per recipient**: `action` only for the person who must act now (e.g. in `approversFor(r)` for a Pending request, the Finance group for a new bill); everyone else gets `info` (or `approved` / `rejected` when it is their own item). Empty = old message look. | `action` |
 | `module` | Module code: `requests`, `procurement`, `stock`, `daily`, `docs`, `projects`, `cost`, `finance`, `qaqc`, `safety`, `svr`, `vo`, `subs`, `handover`, `people`, `admin`, `schedule`, `announcements`. Use `NOTE_MODULE[tbl]`. Empty = worked out from `tbl`. | `requests` |
 | `ref` | The record's own number. Put it in the title too; if it is missing from a title the database adds `ref · ` in front. | `REQ-0012`, `PO-0007`, `A-101 rev 2`, `VO-101-003`, `PC-02` |
-| `project` | Ready to show: project code and name. Empty when there is no project. | `DEMO-101 Riverside Villa` |
+| `project` | Project number **and** name, written `code · name` (the owner's rule: never the number alone). Empty when there is no project. If the app sends only the code (`DEMO-101`) or the project id, the database looks up `public.projects` and shows `code · name` itself; any other text is shown as sent. | `DEMO-101 · Tower A Office Fit-out` |
 | `amount` | Ready to show, `money()` format. Empty when there is none. | `$650` |
 | `due` | Ready to show date / time, `fmtDate()` style, with a word in front when helpful. Never `2026-11-28`. | `needed by 28 Nov 2026`, `28 Nov 2026 09:00–10:00` |
 | `title_km` | Khmer title (same meaning as `title`). Use `i18n-km.js` words for types, steps and statuses. | `សំណើសាច់ប្រាក់តូចតាច រង់ចាំការអនុម័តរបស់អ្នក` |
@@ -340,6 +340,7 @@ Sok Dara · 25 Nov 2026 08:00
 ### Rules
 - One alert per action, as now. When several saves are merged (`flushNotify`), do not add "(+N more)"; describe the main action (for example R4 says "PO-0007 issued to ABC Co").
 - No internal codes in text: no lower-case statuses ("qs checked"), no `YYYY-MM-DD`, no permission levels ("own").
+- Projects: wherever a project appears (title, body, `project` column, Khmer too) write the number **and** the name, `DEMO-101 · Tower A Office Fit-out`, never the number alone (owner's decision). Helper idea: `projFull(id) = code + " · " + name`.
 - Talk to the reader: "waiting for **your** approval", "You were added to…".
 - Every rejected / returned / cancelled alert shows the reason the person typed.
 - Telegram limits are handled by the database (title 250, body 1,200, Khmer 250 + 1,200, announcement message 3,300 characters). The bell may still cut `body` to 300.
