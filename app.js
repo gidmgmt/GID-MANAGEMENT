@@ -429,18 +429,48 @@
       ot: "ការងារថែមម៉ោង", otTime: "ម៉ោងធ្វើការថែម", materials: "សម្ភារៈប្រើប្រាស់ថ្ងៃនេះ", issued: "បញ្ចេញ", received: "ទទួល", none: "គ្មាន", safety: "សុវត្ថិភាព", safetyNote: "ការណែនាំសុវត្ថិភាពពេលព្រឹក", prepared: "រៀបចំដោយ",
       reviewed: "ត្រួតពិនិត្យដោយ", waiting: "រង់ចាំការត្រួតពិនិត្យ", inSystem: "បានដាក់ជូនក្នុងប្រព័ន្ធ GID", fills: "បំពេញនៅពេលរបាយការណ៍ត្រូវបានត្រួតពិនិត្យ", sitePhotos: "រូបថតការដ្ឋាន", generated: "បង្កើតដោយប្រព័ន្ធគ្រប់គ្រង GID ·",
       page: (a, b) => "ទំព័រ " + a + "/" + b, cont: "បន្ត", nPhotos: (n) => "រូបថត " + n + " សន្លឹក", yes: "មាន", no2: "គ្មាន",
-      sessions: { Morning: "ពេលព្រឹក", "End of day": "ចុងថ្ងៃ", Overtime: "ថែមម៉ោង" }, sessionLong: { Morning: "របាយការណ៍ពេលព្រឹក", "End of day": "របាយការណ៍ចុងថ្ងៃ (ម៉ោង ៥ ល្ងាច)", Overtime: "របាយការណ៍ថែមម៉ោង" },
+      sessions: { Morning: "ពេលព្រឹក", "End of day": "ចុងថ្ងៃ", Overtime: "ថែមម៉ោង" }, sessionLong: { Morning: "របាយការណ៍ពេលព្រឹក", "End of day": "របាយការណ៍ចុងថ្ងៃ (ម៉ោង 5 ល្ងាច)", Overtime: "របាយការណ៍ថែមម៉ោង" },
       weatherMap: { "Sunny": "មេឃស្រឡះ", "Cloudy": "មេឃស្រទំ", "Rain (morning)": "ភ្លៀងពេលព្រឹក", "Rain (afternoon)": "ភ្លៀងពេលរសៀល", "Rain (all day)": "ភ្លៀងពេញមួយថ្ងៃ" }, unit: " នាក់",
       locCheck: "ពិនិត្យទីតាំង", locMap: { "On site": "នៅការដ្ឋាន", "Away from site": "ក្រៅការដ្ឋាន", "No location": "គ្មានទីតាំង", "No site pin": "គម្រោងមិនទាន់កំណត់ទីតាំង" }, late: "យឺត", fromPin: "ពីចំណុចការដ្ឋាន" }
   };
   const KM_DAYS = ["អាទិត្យ", "ចន្ទ", "អង្គារ", "ពុធ", "ព្រហស្បតិ៍", "សុក្រ", "សៅរ៍"];
   const KM_MONTHS = ["មករា", "កុម្ភៈ", "មីនា", "មេសា", "ឧសភា", "មិថុនា", "កក្កដា", "សីហា", "កញ្ញា", "តុលា", "វិច្ឆិកា", "ធ្នូ"];
+  const EN_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  // One date format per PDF language, always the Phnom Penh date and Arabic digits: "24 Nov 2026" / "24 វិច្ឆិកា 2026"
   const rDate = (iso, lang) => {
-    const d = new Date(String(iso).length === 10 ? iso + "T00:00:00" : iso);
-    if (lang === "km") return "ថ្ងៃ" + KM_DAYS[d.getDay()] + " ទី " + d.getDate() + " ខែ" + KM_MONTHS[d.getMonth()] + " ឆ្នាំ " + d.getFullYear();
-    return d.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+    if (!iso) return "";
+    const day = String(iso).length > 10 ? dateInPP(iso) : String(iso);
+    const m = day.match(/^(\d{4})-(\d{2})-(\d{2})$/); if (!m) return String(iso);
+    const d = Number(m[3]), mo = Number(m[2]) - 1;
+    return lang === "km" ? d + " " + KM_MONTHS[mo] + " " + m[1] : d + " " + EN_MONTHS[mo] + " " + m[1];
   };
-  const rTime = (iso) => (iso ? new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "");
+  const rTime = (iso) => (iso ? timeOf(iso) : "");
+  const rDT = (iso, lang) => (iso ? rDate(iso, lang) + (String(iso).length > 10 ? " " + timeOf(iso) : "") : "");
+  // Khmer for words that come from the data (statuses, scopes, job titles, test columns...) in Khmer PDFs, whatever
+  // language the app is showing. The shared dictionary (i18n-km.js) wins; PDF_KM only fills gaps until the
+  // Khmer specialist adds the word there. Every word asked for is listed in window.__gidKmAsked (for the word list).
+  const PDF_KM = {
+    "Circuit": "សៀគ្វី", "Circuit / RCD": "សៀគ្វី / RCD", "Electrode / location": "បង្គោលដី / ទីតាំង", "Reading (Ω)": "តម្លៃវាស់ (Ω)", "Rating (mA)": "កម្រិត (mA)",
+    "Trip time (ms)": "រយៈពេលផ្តាច់ (ms)", "Pipe section": "ផ្នែកបំពង់", "Test pressure (bar)": "សម្ពាធតេស្ត (bar)", "Start (bar)": "ចាប់ផ្តើម (bar)", "End (bar)": "បញ្ចប់ (bar)",
+    "Time (min)": "រយៈពេល (នាទី)", "Camera": "កាមេរ៉ា", "Image clear": "រូបភាពច្បាស់", "Night vision": "មើលឃើញពេលយប់", "Recording on NVR": "ថតចូល NVR", "Point ID": "លេខចំណុច",
+    "Length (m)": "ប្រវែង (m)", "Tester result": "លទ្ធផលឧបករណ៍តេស្ត", "Pass if every reading is at least (MΩ)": "ជាប់ បើតម្លៃវាស់នីមួយៗយ៉ាងតិច (MΩ)",
+    "Pass if the reading is at most (Ω)": "ជាប់ បើតម្លៃវាស់មិនលើស (Ω)", "Pass if trip time is at most (ms)": "ជាប់ បើរយៈពេលផ្តាច់មិនលើស (ms)",
+    "Allowed pressure drop (bar)": "ការធ្លាក់សម្ពាធអនុញ្ញាត (bar)", "Maximum length (m)": "ប្រវែងអតិបរមា (m)"
+  };
+  const KM_ASKED = (window.__gidKmAsked = window.__gidKmAsked || {});
+  const arabicDigits = (x) => String(x).replace(/[០-៩]/g, (c) => String(c.charCodeAt(0) - 0x17E0));
+  function kmText(x) {
+    if (x == null) return "";
+    const k = String(x).replace(/\s+/g, " ").trim();
+    if (!k || !/[A-Za-z]/.test(k)) return arabicDigits(x);
+    const d = window.I18N && I18N.km ? I18N.km(k) : null, out = d != null ? d : Object.prototype.hasOwnProperty.call(PDF_KM, k) ? PDF_KM[k] : null;
+    KM_ASKED[k] = d != null ? "dictionary" : out != null ? "temporary Khmer in app.js PDF_KM" : "MISSING";
+    return arabicDigits(out != null ? out : k);
+  }
+  // Translator for one PDF: Khmer PDFs translate, English PDFs keep the word
+  const pdfTr = (lang) => (x) => (lang === "km" ? kmText(x) : String(x == null ? "" : x));
+  // Khmer titles: break only between phrases (at spaces), never inside a Khmer word
+  const kmTitle = (t, lang) => lang === "km" ? String(t).split(/ +/).map((w) => `<span class="rp-kw">${w}</span>`).join(" ") : t;
   const lines = (t) => String(t || "").split(/\n+/).map((x) => x.trim()).filter(Boolean);
   function reportNo(d) { const p = byId("projects", d.project_id) || {}; return "DR-" + String(p.code || "").replace(/\D/g, "") + "-" + String(d.report_date).slice(2).replace(/-/g, "") + "-" + (d.session || "End of day")[0]; }
 
@@ -452,20 +482,20 @@
     const moves = db.stock_moves.filter((m) => m.project_id === d.project_id && m.move_date === d.report_date && ["Issue", "Receive"].includes(m.move_type));
     const safety = db.safety.filter((x) => x.project_id === d.project_id && x.rec_date === d.report_date);
     const openIssues = (d.issues ? 1 : 0) + db.defects.filter((x) => x.project_id === d.project_id && x.status === "Open").length + db.safety.filter((x) => x.project_id === d.project_id && x.status === "Open").length;
-    const blocks = [];
+    const blocks = [], T = pdfTr(lang);
     blocks.push(`<div class="rp-info">
       <div><span>${L.project}</span><b>${esc(p.code)} ${esc(p.name)}</b></div><div><span>${L.date}</span><b>${esc(rDate(d.report_date, lang))}</b></div>
       <div><span>${L.client}</span>${esc(p.client)}</div><div><span>${L.session}</span>${esc(L.sessionLong[s])}${s === "Overtime" ? " · " + esc(d.ot_start) + "–" + esc(d.ot_end) : ""}</div>
       <div><span>${L.location}</span>${esc(p.location)}</div><div><span>${L.weather}</span>${w(d.weather)}</div>
-      <div><span>${L.by}</span>${esc(who.name)}, ${esc(who.title)}</div><div><span>${L.pm}</span>${esc(staffName(p.pm_id))}</div>
-      ${d.loc_status ? `<div class="wide"><span>${L.locCheck}</span><p><b class="${d.loc_status === "On site" ? "okc" : "badc"}">${esc(L.locMap[d.loc_status] || d.loc_status)}</b>${d.distance_m != null && d.distance_m !== "" ? " · " + esc(fmtDist(d.distance_m)) + " " + L.fromPin : ""}${d.late ? ` · <b class="badc">${L.late} ${rTime(d.submitted_at)}</b>` : ""}${d.loc_note ? " · " + esc(d.loc_note) : ""}</p></div>` : ""}</div>`);
+      <div><span>${L.by}</span>${esc(who.name)}, ${esc(T(who.title))}</div><div><span>${L.pm}</span>${esc(staffName(p.pm_id))}</div>
+      ${d.loc_status ? `<div class="rp-wide"><span>${L.locCheck}</span><p><b class="${d.loc_status === "On site" ? "rp-ok" : "rp-bad"}">${esc(L.locMap[d.loc_status] || d.loc_status)}</b>${d.distance_m != null && d.distance_m !== "" ? " · " + esc(fmtDist(d.distance_m)) + " " + L.fromPin : ""}${d.late ? ` · <b class="rp-bad">${L.late} ${rTime(d.submitted_at)}</b>` : ""}${d.loc_note ? " · " + esc(d.loc_note) : ""}</p></div>` : ""}</div>`);
     blocks.push(`<div class="rp-kpis"><div><small>${s === "Morning" ? L.workersM : s === "Overtime" ? L.workersO : L.workers}</small><b>${esc(d.manpower)}</b></div>
       <div><small>${L.progress}</small><b>${esc(p.progress)}%</b><div class="rp-bar"><i style="width:${Number(p.progress) || 0}%"></i></div></div>
-      <div><small>${L.photos}</small><b>${ph.length}</b></div><div><small>${L.issuesK}</small><b class="${openIssues ? "red" : ""}">${openIssues}</b></div></div>`);
-    const tradesT = (d.trades || []).length ? `<div><h2>${L.trades}</h2><table><thead><tr><th>${L.trade}</th><th class="n">${L.count}</th></tr></thead><tbody>${d.trades.map((t) => `<tr><td>${esc(t.trade)}</td><td class="n">${esc(t.workers)}</td></tr>`).join("")}<tr><td><b>${L.total}</b></td><td class="n"><b>${sum(d.trades, (t) => t.workers)}</b></td></tr></tbody></table></div>` : "";
-    const side = s === "End of day" ? `<div><h2>${L.morning}</h2><table><tbody>${morning ? `<tr><td>${L.subm}</td><td class="n">${rTime(morning.submitted_at)}</td></tr><tr><td>${L.arrived}</td><td class="n">${esc(morning.manpower)}</td></tr><tr><td>${L.planned}</td><td>${esc(morning.plan)}</td></tr>` : `<tr><td colspan="2">${L.none}</td></tr>`}
-        <tr><td>${L.otTonight}</td><td class="n">${ot ? esc(ot.ot_start) + "–" + esc(ot.ot_end) : L.no2}</td></tr></tbody></table></div>`
-      : s === "Overtime" ? `<div><h2>${L.ot}</h2><table><tbody><tr><td>${L.otTime}</td><td class="n">${esc(d.ot_start)} – ${esc(d.ot_end)}</td></tr><tr><td>${L.workersO}</td><td class="n">${esc(d.manpower)}${L.unit}</td></tr></tbody></table></div>` : "";
+      <div><small>${L.photos}</small><b>${ph.length}</b></div><div><small>${L.issuesK}</small><b class="${openIssues ? "rp-red" : ""}">${openIssues}</b></div></div>`);
+    const tradesT = (d.trades || []).length ? `<div><h2>${L.trades}</h2><table><thead><tr><th>${L.trade}</th><th class="rp-n">${L.count}</th></tr></thead><tbody>${d.trades.map((t) => `<tr><td>${esc(t.trade)}</td><td class="rp-n">${esc(t.workers)}</td></tr>`).join("")}<tr><td><b>${L.total}</b></td><td class="rp-n"><b>${sum(d.trades, (t) => t.workers)}</b></td></tr></tbody></table></div>` : "";
+    const side = s === "End of day" ? `<div><h2>${L.morning}</h2><table><tbody>${morning ? `<tr><td>${L.subm}</td><td class="rp-n">${rTime(morning.submitted_at)}</td></tr><tr><td>${L.arrived}</td><td class="rp-n">${esc(morning.manpower)}</td></tr><tr><td>${L.planned}</td><td>${esc(morning.plan)}</td></tr>` : `<tr><td colspan="2">${L.none}</td></tr>`}
+        <tr><td>${L.otTonight}</td><td class="rp-n">${ot ? esc(ot.ot_start) + "–" + esc(ot.ot_end) : L.no2}</td></tr></tbody></table></div>`
+      : s === "Overtime" ? `<div><h2>${L.ot}</h2><table><tbody><tr><td>${L.otTime}</td><td class="rp-n">${esc(d.ot_start)} – ${esc(d.ot_end)}</td></tr><tr><td>${L.workersO}</td><td class="rp-n">${esc(d.manpower)}${L.unit}</td></tr></tbody></table></div>` : "";
     if (tradesT || side) blocks.push(`<div class="rp-two">${tradesT || "<div></div>"}${side || "<div></div>"}</div>`);
     if (s === "Morning") {
       blocks.push(`<h2>${L.planD}</h2><ul>${lines(d.plan).map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`);
@@ -476,73 +506,198 @@
       if (s === "Overtime") blocks.push(`<h2>${L.reason}</h2><p>${esc(d.plan)}</p>`);
       else blocks.push(`<h2>${L.issues}</h2>${d.issues ? `<div class="rp-issue">${lines(d.issues).map(esc).join("<br>")}</div>` : `<p>${L.noIssues}</p>`}`);
     }
-    const mat = `<div><h2>${L.materials}</h2><table><tbody>${moves.length ? moves.map((m) => { const it = byId("stock_items", m.item_id) || {}; return `<tr><td>${m.move_type === "Issue" ? L.issued : L.received}</td><td>${esc(it.name)}${m.ref ? " (" + esc(m.ref) + ")" : ""}</td><td class="n">${Math.abs(m.qty)} ${esc(it.unit)}</td></tr>`; }).join("") : `<tr><td>${L.none}</td></tr>`}</tbody></table></div>`;
+    const mat = `<div><h2>${L.materials}</h2><table><tbody>${moves.length ? moves.map((m) => { const it = byId("stock_items", m.item_id) || {}; return `<tr><td>${m.move_type === "Issue" ? L.issued : L.received}</td><td>${esc(it.name)}${m.ref ? " (" + esc(m.ref) + ")" : ""}</td><td class="rp-n">${Math.abs(m.qty)} ${esc(it.unit)}</td></tr>`; }).join("") : `<tr><td>${L.none}</td></tr>`}</tbody></table></div>`;
     if (s === "End of day") blocks.push(`<div class="rp-two"><div><h2>${L.planT}</h2>${d.plan ? `<ul>${lines(d.plan).map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : `<p>${L.none}</p>`}</div>${mat}</div>`);
     else blocks.push(mat);
     const sNote = d.safety_note || (morning && morning.safety_note) || "";
-    blocks.push(`<h2>${L.safety}</h2><table><tbody>${sNote ? `<tr><td>${esc(sNote)}</td></tr>` : ""}${safety.map((x) => `<tr><td>${esc(x.rec_type)}: ${esc(x.description)}</td><td class="n">${esc(x.action || x.status)}</td></tr>`).join("")}${!sNote && !safety.length ? `<tr><td>${L.none}</td></tr>` : ""}</tbody></table>`);
+    blocks.push(`<h2>${L.safety}</h2><table><tbody>${sNote ? `<tr><td>${esc(sNote)}</td></tr>` : ""}${safety.map((x) => `<tr><td>${esc(T(x.rec_type))}: ${esc(x.description)}</td><td>${esc(x.action || T(x.status))}</td></tr>`).join("")}${!sNote && !safety.length ? `<tr><td>${L.none}</td></tr>` : ""}</tbody></table>`);
     const rv = byId("staff", d.reviewed_by);
-    blocks.push(`<div class="rp-sign"><div><span>${L.prepared}</span><b>${esc(who.name)}</b><br>${esc(who.title)} · ${esc(fmtDate(d.report_date))} ${rTime(d.submitted_at || d.created_at)}<em>${L.inSystem}</em></div>
-      <div><span>${L.reviewed}</span>${rv ? `<b>${esc(rv.name)}</b><br>${esc(rv.title)}` : `<b>${esc((withTag("SITEMGR")[0] || {}).name || "")}</b><br><span class="pend">${L.waiting}</span>`}<em>${rv ? L.inSystem : L.fills}</em></div></div>`);
+    blocks.push(`<div class="rp-sign"><div><span>${L.prepared}</span><b>${esc(who.name)}</b><br>${esc(T(who.title))} · ${esc(rDate(d.report_date, lang))} ${rTime(d.submitted_at || d.created_at)}<em>${L.inSystem}</em></div>
+      <div><span>${L.reviewed}</span>${rv ? `<b>${esc(rv.name)}</b><br>${esc(T(rv.title))}` : `<b>${esc((withTag("SITEMGR")[0] || {}).name || "")}</b><br><span class="rp-pend">${L.waiting}</span>`}<em>${rv ? L.inSystem : L.fills}</em></div></div>`);
     return blocks;
   }
 
   let LOGO_DATA = "";
   try { fetch("img/logo-landscape.png").then((r) => r.ok ? r.blob() : null).then((b) => { if (!b) return; const fr = new FileReader(); fr.onload = () => { LOGO_DATA = fr.result; }; fr.readAsDataURL(b); }).catch(() => {}); } catch (e) { /* use the file path */ }
-  const RP_CSS = `.rp-host{position:fixed;left:-12000px;top:0;width:794px;z-index:-1}
-  .rp-page{width:794px;height:1123px;padding:53px 53px 60px;position:relative;background:#fff;color:#121a2c;font:13px/1.45 "Plus Jakarta Sans",Arial,sans-serif;overflow:hidden;box-sizing:border-box}
-  .rp-page.km{font-family:"Noto Sans Khmer","Plus Jakarta Sans",Arial,sans-serif;line-height:1.5}.rp-page.km h2{margin:11px 0 4px}.rp-page.km .rp-kpis small{font-size:10.5px;font-weight:400}
-  .rp-page *{box-sizing:border-box}.rp-top{display:flex;align-items:center;gap:12px;border-bottom:3px solid #2e8540;padding-bottom:10px}
-  .rp-logo{height:44px;width:auto;display:block}.rp-co{border-left:1px solid #dfe3ea;padding-left:12px}.rp-mark{width:40px;height:40px;border-radius:9px;background:#1f4d2b;display:flex;align-items:center;justify-content:center}.rp-mark i{width:15px;height:15px;background:#2e8540;transform:rotate(45deg);border-radius:2px;display:block}
-  .rp-co b{display:block;font-size:16px;letter-spacing:.5px}.rp-co small{color:#6b7488;font-size:11px}.rp-title{margin-left:auto;text-align:right}.rp-title h1{margin:0;font-size:20px;font-weight:800}
-  .rp-title small{color:#6b7488;font-size:11px;display:block}.rp-sess{display:inline-block;background:#1f4d2b;color:#fff;font-weight:700;font-size:11px;padding:4px 11px;border-radius:999px;margin-top:4px}
-  .rp-info{display:grid;grid-template-columns:1fr 1fr;border:1px solid #dfe3ea;border-radius:7px;margin-top:12px}.rp-info div{padding:6px 11px;border-bottom:1px solid #eef0f4;display:grid;grid-template-columns:118px 1fr;font-size:12px}
-  .rp-info div:nth-child(odd){border-right:1px solid #eef0f4}.rp-info div:nth-last-child(-n+2){border-bottom:0}.rp-info span{color:#6b7488}
+  const RP_FONT = `"Plus Jakarta Sans","GID Khmer",Arial,sans-serif`;
+  const RP_CSS = `.rp-host{position:fixed;left:-12000px;top:0;width:794px;z-index:-1;color-scheme:light}
+  .rp-page{width:794px;height:1123px;padding:53px 53px 60px;position:relative;background:#fff;color:#121a2c;font:13px/1.45 ${RP_FONT};box-sizing:border-box;text-align:left}
+  .rp-page *{box-sizing:border-box}.rp-blk{display:flow-root}
+  .rp-top{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:18px;align-items:start;border-bottom:3px solid #2e8540;padding-bottom:10px}
+  .rp-brand{display:flex;flex-direction:column;gap:3px;padding-top:2px}.rp-logo{height:44px;width:auto;display:block}.rp-co{color:#6b7488;font-size:10.5px;white-space:nowrap;padding-left:2px}
+  .rp-title{text-align:right;min-width:0}.rp-title h1{margin:0;font-size:20px;font-weight:800;line-height:1.25;display:block;color:#121a2c}.rp-kw{white-space:nowrap}
+  .rp-title small{color:#6b7488;font-size:11px;display:block;margin-top:2px}.rp-sess{display:inline-block;background:#1f4d2b;color:#fff;font-weight:700;font-size:11px;padding:4px 11px;border-radius:999px;margin-top:4px}
+  .rp-info{display:grid;grid-template-columns:1fr 1fr;border:1px solid #dfe3ea;border-radius:7px;margin-top:12px}.rp-info>div{padding:6px 11px;border-bottom:1px solid #eef0f4;display:grid;grid-template-columns:118px 1fr;font-size:12px}
+  .rp-info>div:nth-child(odd){border-right:1px solid #eef0f4}.rp-info>div:nth-last-child(-n+2){border-bottom:0}.rp-info span{color:#6b7488}
   .rp-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;margin-top:11px}.rp-kpis>div{background:#f1f7f1;border-radius:7px;padding:9px 11px}.rp-kpis small{display:block;color:#6b7488;font-size:10px;font-weight:700;letter-spacing:.4px}
-  .rp-kpis b{font-size:21px}.rp-kpis b.red{color:#c0362c}.rp-bar{height:7px;background:#dfe3ea;border-radius:4px;margin-top:4px}.rp-bar i{display:block;height:7px;background:#2e8540;border-radius:4px}
-  .rp-page h2{font-size:13px;margin:14px 0 5px;padding-bottom:4px;border-bottom:1px solid #dfe3ea;text-transform:uppercase;letter-spacing:.5px;color:#1f4d2b}.rp-page.km h2{text-transform:none;letter-spacing:0}
-  .rp-page ul{margin:0;padding-left:18px}.rp-page li{margin:1px 0}.rp-page p{margin:0}.rp-page table{width:100%;border-collapse:collapse;font-size:12px}
-  .rp-page th{text-align:left;font-size:10px;color:#6b7488;font-weight:700;padding:4px 7px;border-bottom:1px solid #dfe3ea;text-transform:uppercase}.rp-page td{padding:4px 7px;border-bottom:1px solid #eef0f4;vertical-align:top}.rp-two td:first-child{white-space:nowrap}
-  .rp-page .n{text-align:right;white-space:nowrap}.rp-issue{background:#fdeceb;border-left:3px solid #c0362c;padding:8px 11px;border-radius:0 7px 7px 0;color:#7a1f18}
-  .rp-two{display:grid;grid-template-columns:1fr 1fr;gap:16px}.rp-sign{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px}
-  .rp-sign>div{border:1px solid #dfe3ea;border-radius:7px;padding:8px 11px;height:84px;font-size:11.5px;position:relative}.rp-sign span{color:#6b7488;font-size:10px;text-transform:uppercase;font-weight:700;display:block}
-  .rp-sign .pend{color:#a15c00;text-transform:none;font-size:11.5px}.rp-sign em{position:absolute;bottom:8px;left:11px;right:11px;border-top:1px dotted #b8bfcc;padding-top:3px;font-style:normal;color:#8a93a6;font-size:10px}
-  .rp-foot{position:absolute;left:53px;right:53px;bottom:26px;display:flex;justify-content:space-between;font-size:10px;color:#8a93a6;border-top:1px solid #eef0f4;padding-top:5px}
-  .rp-mini{display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #2e8540;padding-bottom:8px;font-size:12px}.rp-mini b{font-size:15px}
+  .rp-kpis b{font-size:21px}.rp-kpis b.rp-red{color:#c0362c}.rp-bar{height:7px;background:#dfe3ea;border-radius:4px;margin-top:4px}.rp-bar i{display:block;height:7px;background:#2e8540;border-radius:4px}
+  .rp-page h2{display:block;font-size:13px;font-weight:700;margin:14px 0 5px;padding-bottom:4px;border-bottom:1px solid #dfe3ea;text-transform:uppercase;letter-spacing:.5px;color:#1f4d2b;line-height:1.45}
+  .rp-page ul{margin:0;padding-left:18px}.rp-page li{margin:1px 0}.rp-page li.rp-cli{list-style:none}.rp-page p{margin:0}.rp-page table{width:100%;border-collapse:collapse;font-size:12px}
+  .rp-page th{text-align:left;font-size:10px;color:#6b7488;font-weight:700;padding:4px 7px;border-bottom:1px solid #dfe3ea;text-transform:uppercase;vertical-align:top}.rp-page td{padding:4px 7px;border-bottom:1px solid #eef0f4;vertical-align:top}.rp-two td:first-child{white-space:nowrap}
+  .rp-page .rp-n{text-align:right;white-space:nowrap}.rp-issue{background:#fdeceb;border-left:3px solid #c0362c;padding:8px 11px;border-radius:0 7px 7px 0;color:#7a1f18}
+  .rp-two{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start}.rp-sign{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:12px}
+  .rp-sign>div{border:1px solid #dfe3ea;border-radius:7px;padding:7px 11px;min-height:80px;font-size:11.5px;display:flex;flex-direction:column}.rp-sign span{color:#6b7488;font-size:10px;text-transform:uppercase;font-weight:700;display:block}
+  .rp-sgb{padding-bottom:20px}.rp-sign .rp-pend{color:#a15c00;text-transform:none;font-size:11.5px;font-weight:400}.rp-sign em{margin-top:auto;display:block;border-top:1px dotted #b8bfcc;padding-top:3px;font-style:normal;color:#8a93a6;font-size:10px}
+  .rp-foot{position:absolute;left:53px;right:53px;bottom:26px;display:flex;justify-content:space-between;gap:12px;font-size:10px;color:#8a93a6;border-top:1px solid #eef0f4;padding-top:5px}.rp-foot span:last-child{white-space:nowrap}
+  .rp-mini{display:flex;justify-content:space-between;align-items:center;gap:12px;border-bottom:3px solid #2e8540;padding-bottom:8px;font-size:12px;white-space:nowrap}
+  .rp-mini>span{overflow:hidden;text-overflow:ellipsis;min-width:0}.rp-mini>span:first-child{flex:1 1 auto}.rp-mini>span:last-child{flex-shrink:0}.rp-mini b{font-size:15px}
   .rp-grid{display:grid;grid-template-columns:1fr 1fr;gap:11px 13px;margin-top:11px}.rp-fig{border:1px solid #dfe3ea;border-radius:7px;overflow:hidden}
-  .rp-fig .img{width:100%;height:232px;background:#eef0f4 center/cover no-repeat}.rp-fig div.cap{display:grid;grid-template-columns:22px 1fr;gap:7px;padding:6px 9px;font-size:11.5px;min-height:34px}
-  .rp-fig div.cap b{background:#2e8540;color:#fff;border-radius:4px;text-align:center;font-size:11px;height:18px;line-height:18px}
-  .rp-info div.wide{grid-column:1/-1;border-right:0;border-top:1px solid #eef0f4}.okc{color:#1a7f42}.badc{color:#c0362c}
-  .rp-page.km,.rp-page.km *{font-family:"Plus Jakarta Sans","GID Khmer",Arial,sans-serif!important;letter-spacing:0!important;text-transform:none!important;font-variant:normal!important}
-  .rp-page.km{font-size:13.5px;line-height:1.75}.rp-page.km h1{font-size:21px;font-weight:700;line-height:1.6}.rp-page.km h2{font-size:14px;font-weight:700;line-height:1.7}
-  .rp-page.km b,.rp-page.km strong,.rp-page.km th,.rp-page.km .rp-sess{font-weight:700}.rp-page.km .rp-kpis small{font-size:11.5px;font-weight:400;line-height:1.6}
-  .rp-page.km .rp-info div{grid-template-columns:132px 1fr;line-height:1.75;padding:5px 11px}.rp-page.km td,.rp-page.km th{line-height:1.7}.rp-page.km th{font-size:11.5px}
+  .rp-fig .rp-img{width:100%;height:232px;background:#f3f5f8 center/contain no-repeat}.rp-fig .rp-cap{display:grid;grid-template-columns:22px 1fr;gap:7px;padding:6px 9px;font-size:11.5px;min-height:34px}
+  .rp-fig .rp-cap b{background:#2e8540;color:#fff;border-radius:4px;text-align:center;font-size:11px;height:18px;line-height:18px}
+  .rp-info>div.rp-wide{grid-column:1/-1;border-right:0;border-top:1px solid #eef0f4}.rp-ok{color:#1a7f42}.rp-bad{color:#c0362c}
+  .rp-page.km,.rp-page.km *{font-family:${RP_FONT}!important;letter-spacing:0!important;text-transform:none!important;font-variant:normal!important;font-style:normal!important}
+  .rp-page.km{font-size:13.5px;line-height:1.58}.rp-page.km h1{font-size:21px;font-weight:700;line-height:1.5}.rp-page.km h2{font-size:14px;font-weight:700;line-height:1.55;margin:9px 0 3px;padding-bottom:3px}
+  .rp-page.km b,.rp-page.km strong,.rp-page.km th,.rp-page.km .rp-sess{font-weight:700}.rp-page.km .rp-kpis small{font-size:11.5px;font-weight:400;line-height:1.5}.rp-page.km .rp-kpis{margin-top:9px}.rp-page.km .rp-kpis>div{padding:6px 11px}.rp-page.km .rp-kpis b{line-height:1.25}.rp-page.km td{padding:3px 7px}
+  .rp-page.km .rp-info>div{grid-template-columns:132px 1fr;line-height:1.55;padding:4px 11px}.rp-page.km td,.rp-page.km th{line-height:1.5}.rp-page.km th{font-size:11.5px}.rp-page.km li{margin:0}
   .rp-page.km .rp-sign span{font-size:11.5px}.rp-page.km .rp-sess{padding:3px 12px 5px;font-size:12px}.rp-page.km .rp-foot{font-size:10.5px}`;
+  const pdfCss = () => { if (!document.getElementById("rp-css")) { const st = document.createElement("style"); st.id = "rp-css"; st.textContent = RP_CSS; document.head.appendChild(st); } };
+
+  // ---- Page breaking: a block that does not fit is split (lists by item, tables by row with the header row repeated,
+  // text by line); only blocks that must stay whole (sign-off, photos, key figures) move to the next page.
+  const PDF_WHOLE = ["rp-sign", "sf-sign", "rp-kpis", "rp-info", "sf-ba", "sf-mx", "svconv", "rp-fig", "rp-grid"];
+  const INLINE_TAGS = new Set(["B", "I", "EM", "SPAN", "BR", "SMALL", "A", "STRONG", "U", "S"]);
+  const rectBottom = (n) => { if (n.nodeType === 3) { const r = document.createRange(); r.selectNodeContents(n); const rs = [...r.getClientRects()]; return rs.length ? Math.max(...rs.map((x) => x.bottom)) : -Infinity; } return n.getBoundingClientRect().bottom; };
+  const pdfShell = (el, cont) => { const c = el.cloneNode(false); if (cont) c.classList.add("rp-contd"); return c; };
+  function pdfSplit(el, Y) {
+    if (el.nodeType !== 1 || PDF_WHOLE.some((c) => el.classList.contains(c)) || /^H[1-6]$/.test(el.tagName)) return null;
+    if (el.tagName === "TABLE") return splitTable(el, Y);
+    if (el.classList.contains("rp-two") || el.classList.contains("sf-two")) return splitCols(el, Y);
+    const inline = [...el.childNodes].some((n) => (n.nodeType === 3 && n.nodeValue.trim()) || (n.nodeType === 1 && INLINE_TAGS.has(n.tagName)));
+    return inline ? splitText(el, Y) : splitKids(el, Y);
+  }
+  // Tries a split on a copy put in the node's place, so a split that fails half-way never changes (or loses) the original
+  function trySplit(node, Y) {
+    const copy = node.cloneNode(true); node.replaceWith(copy);
+    const parts = pdfSplit(copy, Y);
+    if (!parts) { copy.replaceWith(node); return null; }
+    copy.replaceWith(parts[0]); parts.undo = () => parts[0].replaceWith(node);
+    return parts;
+  }
+  function splitKids(el, Y) {
+    const kids = [...el.children], k = kids.findIndex((c) => c.getBoundingClientRect().bottom > Y + 0.5);
+    if (k < 0) return null;
+    const sub = trySplit(kids[k], Y);
+    let head, tail;
+    if (sub) { head = kids.slice(0, k).concat(sub[0]); tail = [sub[1]].concat(kids.slice(k + 1)); }
+    else { let j = k; while (j > 0 && /^H[1-6]$/.test(kids[j - 1].tagName)) j--; if (j === 0) return null; head = kids.slice(0, j); tail = kids.slice(j); }
+    const a = pdfShell(el), b = pdfShell(el, true);
+    head.forEach((n) => a.appendChild(n)); tail.forEach((n) => b.appendChild(n));
+    return [a, b];
+  }
+  function splitCols(el, Y) {
+    const cols = [...el.children], plan = [], undo = [];
+    let any = false;
+    for (const c of cols) {
+      if (c.getBoundingClientRect().bottom <= Y + 0.5) { plan.push([c, pdfShell(c)]); any = true; continue; }
+      const top = c.getBoundingClientRect().top, sub = trySplit(c, Y);
+      if (sub) { plan.push([sub[0], sub[1]]); undo.push(sub.undo); any = true; }
+      else if (top >= Y - 40) plan.push([pdfShell(c), c]);
+      else { undo.reverse().forEach((f) => f()); return null; }
+    }
+    if (!any) { undo.reverse().forEach((f) => f()); return null; }
+    const a = pdfShell(el), b = pdfShell(el, true);
+    plan.forEach(([x, y]) => { a.appendChild(x); b.appendChild(y); });
+    return [a, b];
+  }
+  function splitTable(t, Y) {
+    const rows = [...t.rows];
+    let nh = 0; while (nh < rows.length && (rows[nh].parentElement.tagName === "THEAD" || (rows[nh].cells.length > 1 && [...rows[nh].cells].every((c) => c.tagName === "TH")))) nh++;
+    const k = rows.findIndex((r) => r.getBoundingClientRect().bottom > Y + 0.5);
+    if (k <= nh) return null;
+    const a = pdfShell(t), b = pdfShell(t, true), ta = document.createElement("tbody"), tb = document.createElement("tbody");
+    rows.forEach((r, i) => { if (i < nh) { ta.appendChild(r.cloneNode(true)); tb.appendChild(r.cloneNode(true)); } else if (r.parentElement.tagName !== "TFOOT") (i < k ? ta : tb).appendChild(r.cloneNode(true)); });
+    a.appendChild(ta); b.appendChild(tb); if (t.tFoot) b.appendChild(t.tFoot.cloneNode(true));
+    return [a, b];
+  }
+  // Text: split at the last whole word (or Khmer syllable) that still fits above the line Y
+  function splitText(el, Y) {
+    const nodes = [...el.childNodes], k = nodes.findIndex((n) => rectBottom(n) > Y + 0.5);
+    if (k < 0) return null;
+    let cut = 0; const n = nodes[k];
+    if (n.nodeType === 3) {
+      const txt = n.nodeValue, r = document.createRange(); let lo = 0, hi = txt.length;
+      const fits = (o) => { r.setStart(n, 0); r.setEnd(n, o); const rs = [...r.getClientRects()]; return !rs.length || Math.max(...rs.map((x) => x.bottom)) <= Y + 0.5; };
+      while (lo < hi) { const mid = Math.ceil((lo + hi) / 2); if (fits(mid)) lo = mid; else hi = mid - 1; }
+      const ws = Math.max(txt.lastIndexOf(" ", lo), txt.lastIndexOf("\n", lo), txt.lastIndexOf("​", lo));
+      cut = ws > 0 ? ws : lo; while (cut > 0 && cut < txt.length && /[ា-៓៝‌‍]/.test(txt[cut])) cut--;
+    }
+    const headText = nodes.slice(0, k).map((x) => x.textContent).join("") + (n.nodeType === 3 ? n.nodeValue.slice(0, cut) : "");
+    if (!headText.trim()) return null;
+    const a = pdfShell(el), b = pdfShell(el, true);
+    nodes.slice(0, k).forEach((x) => a.appendChild(x));
+    if (n.nodeType === 3 && cut > 0) { a.appendChild(document.createTextNode(n.nodeValue.slice(0, cut))); b.appendChild(document.createTextNode(n.nodeValue.slice(cut).replace(/^[ \n​]+/, ""))); }
+    else b.appendChild(n);
+    nodes.slice(k + 1).forEach((x) => b.appendChild(x));
+    while (b.firstChild && b.firstChild.nodeName === "BR") b.firstChild.remove();
+    if (b.tagName === "LI") b.classList.add("rp-cli");
+    return [a, b];
+  }
+  // Sign-off boxes: the text sits in its own wrapper so the signature line always stays below it, at the bottom of the box
+  const signWrap = (root) => root.querySelectorAll(".rp-sign > div, .sf-sign > div").forEach((box) => {
+    const em = box.querySelector(":scope > em"); if (!em || box.querySelector(":scope > .rp-sgb")) return;
+    const w = document.createElement("div"); w.className = "rp-sgb"; [...box.childNodes].forEach((c) => { if (c !== em) w.appendChild(c); }); box.insertBefore(w, em);
+  });
+
+  // Phones and tablets cannot show a PDF inside the app (an iframe stays blank on Android Chrome, or downloads again)
+  function isPhoneView() { return !!(window.matchMedia && window.matchMedia("(max-width: 640px), (pointer: coarse)").matches); }
+  // Saves the finished PDF with one download. Computer: a preview is shown as well. Phone: no preview; one
+  // "Open PDF" button (and "Share" where the phone supports it) in case the download is not opened automatically.
+  function pdfDeliver(blob, fileName) {
+    const url = URL.createObjectURL(blob);
+    try { const a = document.createElement("a"); a.href = url; a.download = fileName; document.body.appendChild(a); a.click(); a.remove(); } catch (e) { /* the button below still works */ }
+    const close = `<button class="btn" data-act="${act(modalBack)}">Close</button>`;
+    if (!isPhoneView()) {
+      openModal(fileName, `<iframe class="pdf" src="${url}" title="PDF preview"></iframe><div class="form-actions"><a class="btn primary" href="${url}" download="${esc(fileName)}">Download</a>${close}</div>`);
+      return;
+    }
+    const file = typeof File === "function" ? new File([blob], fileName, { type: "application/pdf" }) : null;
+    const canShare = !!(file && navigator.canShare && navigator.share && navigator.canShare({ files: [file] }));
+    openModal(fileName, `<p>PDF saved to your downloads.</p><p class="muted small">${esc(fileName)}</p><div class="form-actions"><a class="btn primary" href="${url}" target="_blank" rel="noopener">Open PDF</a>${canShare ? btn("Share", () => navigator.share({ files: [file], title: fileName }).catch(() => {})) : ""}${close}</div>`);
+  }
 
   // Shared PDF maker: lays out A4 pages from HTML blocks, then draws each page with html2canvas and saves it with jsPDF.
   // Khmer needs care: the Khmer font is bundled with the app, weights are limited to regular and bold, and no letter
   // spacing or capitals are used, so every Khmer syllable is drawn as one piece and keeps its correct shape.
+  // Every page lists the Khmer font, so Khmer typed by staff also prints correctly in English PDFs.
   async function makePdf(o) {
     const lang = o.lang, km = lang === "km";
     toast(km ? "កំពុងបង្កើត PDF…" : "Making the PDF…");
-    const host = document.createElement("div"); host.className = "rp-host"; document.body.appendChild(host);
+    const host = document.createElement("div"); host.className = "rp-host notr"; document.body.appendChild(host);
     try {
       await Promise.all(PDF_LIBS.map(loadScript));
-      if (!document.getElementById("rp-css")) { const st = document.createElement("style"); st.id = "rp-css"; st.textContent = RP_CSS; document.head.appendChild(st); }
+      pdfCss();
       const fontLoads = ['400 13px "GID Khmer"', '700 13px "GID Khmer"', '400 13px "Plus Jakarta Sans"', '700 13px "Plus Jakarta Sans"', '800 13px "Plus Jakarta Sans"'].map((f) => document.fonts.load(f, f.includes("Khmer") ? "កខគ" : "Ag"));
       await Promise.race([Promise.all(fontLoads).then(() => document.fonts.ready), new Promise((r) => setTimeout(r, 6000))]).catch(() => {});
       const pages = [], cls = "rp-page" + (km ? " km" : "");
-      const newPage = (first) => { const pg = document.createElement("div"); pg.className = cls; pg.innerHTML = (first ? o.head : o.mini(o.contTitle)) + '<div class="rp-body"></div><div class="rp-foot"></div>'; host.appendChild(pg); pages.push(pg); return pg.querySelector(".rp-body"); };
-      let body = newPage(true); const limit = 1123 - 60 - 30;
+      // the small header on continuation and photo pages stays on one line: long project names are shortened with …
+      const fitMini = (pg) => { const sp = pg.querySelector(".rp-mini > span"); if (!sp) return; const tn = [...sp.childNodes].filter((x) => x.nodeType === 3 && x.nodeValue.trim()).pop(); if (!tn) return;
+        let t = tn.nodeValue; while (sp.scrollWidth > sp.clientWidth + 1 && t.length > 4) { t = t.slice(0, -2).replace(/[\s·]+$/, ""); tn.nodeValue = t + "…"; } };
+      const newPage = (first) => { const pg = document.createElement("div"); pg.className = cls; pg.innerHTML = (first ? o.head : o.mini(o.contTitle)) + '<div class="rp-body"></div><div class="rp-foot"><span>&nbsp;</span></div>'; host.appendChild(pg); pages.push(pg); if (!first) fitMini(pg); return pg.querySelector(".rp-body"); };
+      // content may run down to just above the page footer
+      let body = newPage(true);
+      const lineY = () => body.parentElement.querySelector(".rp-foot").getBoundingClientRect().top - 8;
+      const over = (el) => el.getBoundingClientRect().bottom > lineY() + 0.5;
       for (const b of o.blocks) {
-        const el = document.createElement("div"); el.innerHTML = b; body.appendChild(el);
-        if (el.getBoundingClientRect().bottom - body.parentElement.getBoundingClientRect().top > limit && body.children.length > 1) { el.remove(); body = newPage(false); body.appendChild(el); }
+        let el = document.createElement("div"); el.className = "rp-blk"; el.innerHTML = b; signWrap(el); body.appendChild(el);
+        for (let guard = 0; over(el) && guard < 500; guard++) {
+          const parts = trySplit(el, lineY());
+          if (parts) { body = newPage(false); body.appendChild(parts[1]); el = parts[1]; continue; }
+          if (body.children.length > 1) {
+            // a sign-off never stands alone on a page: the section before it (or its last lines) comes along
+            const prev = el.previousElementSibling, isSign = !!el.querySelector(".rp-sign, .sf-sign");
+            let carry = null;
+            if (isSign && prev && body.children.length > 2 && !prev.classList.contains("rp-contd") && prev.getBoundingClientRect().height < 300) { carry = prev; prev.remove(); }
+            else if (isSign && prev && prev.getBoundingClientRect().height > 160) { const r = prev.getBoundingClientRect(), cut = trySplit(prev, r.bottom - 110); if (cut) carry = cut[1]; }
+            el.remove(); body = newPage(false); if (carry) body.appendChild(carry); body.appendChild(el); continue;
+          }
+          break;
+        }
       }
       const ph = o.photos || [];
       for (let i = 0; i < ph.length; i += 6) {
         const pg = document.createElement("div"); pg.className = cls;
-        pg.innerHTML = o.mini(o.photoTitle) + `<div class="rp-grid">${ph.slice(i, i + 6).map((x, j) => `<div class="rp-fig"><div class="img" style="background-image:url('${String(x.src).replace(/'/g, "%27")}')"></div><div class="cap"><b>${i + j + 1}</b><span>${esc(x.cap || "")}</span></div></div>`).join("")}</div><div class="rp-foot"></div>`;
-        host.appendChild(pg); pages.push(pg);
+        pg.innerHTML = o.mini(o.photoTitle) + `<div class="rp-grid">${ph.slice(i, i + 6).map((x, j) => `<div class="rp-fig"><div class="rp-img" style="background-image:url('${String(x.src).replace(/'/g, "%27")}')"></div><div class="rp-cap"><b>${i + j + 1}</b><span>${esc(x.cap || "")}</span></div></div>`).join("")}</div><div class="rp-foot"></div>`;
+        host.appendChild(pg); pages.push(pg); fitMini(pg);
       }
       pages.forEach((pg, i) => { pg.querySelector(".rp-foot").innerHTML = `<span>${o.footLeft}</span><span>${esc(o.no)} · ${o.pageLabel(i + 1, pages.length)}</span>`; });
       await Promise.all(ph.map((x) => new Promise((r) => { const im = new Image(); im.crossOrigin = "anonymous"; im.onload = im.onerror = r; im.src = x.src; })));
@@ -554,21 +709,19 @@
         pdf.addImage(canvas.toDataURL("image/jpeg", 0.88), "JPEG", 0, 0, 210, 297);
       }
       host.remove();
-      const url = URL.createObjectURL(pdf.output("blob"));
-      openModal(o.fileName, `<iframe class="pdf" src="${url}" title="PDF preview"></iframe><div class="form-actions"><a class="btn primary" href="${url}" download="${esc(o.fileName)}">${km ? "ទាញយក" : "Download"} ${esc(o.fileName)}</a><button class="btn" data-act="${act(modalBack)}">${km ? "បិទ" : "Close"}</button></div>`);
-      try { const a = document.createElement("a"); a.href = url; a.download = o.fileName; document.body.appendChild(a); a.click(); a.remove(); } catch (e) { /* the button above still works */ }
+      pdfDeliver(pdf.output("blob"), o.fileName);
     } catch (err) { host.remove(); toast(err.message || String(err), true); }
   }
-  const pdfGenerated = () => new Date().toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
-  const pdfLogo = () => `<img class="rp-logo" src="${LOGO_DATA || "img/logo-landscape.png"}" alt="Green In Design"><div class="rp-co"><small>Structure · Architecture · MEP · ELV</small></div>`;
+  const pdfGenerated = (lang) => rDT(nowIso(), lang);
+  const pdfLogo = () => `<div class="rp-brand"><img class="rp-logo" src="${LOGO_DATA || "img/logo-landscape.png"}" alt="Green In Design"><small class="rp-co">Structure · Architecture · MEP · ELV</small></div>`;
 
   async function reportPdf(d, lang) {
     const L = RT[lang], s = d.session || "End of day", p = byId("projects", d.project_id) || {}, no = reportNo(d), ph = reportPhotos(d), caps = d.captions || [];
     await makePdf({ lang, no, fileName: no + "-" + (lang === "km" ? "KH" : "EN") + ".pdf",
-      head: `<div class="rp-top">${pdfLogo()}<div class="rp-title"><h1>${L.title}</h1><small>${L.no} ${esc(no)}</small><span class="rp-sess">${esc(L.sessions[s])} · ${L.submitted} ${rTime(d.submitted_at || d.created_at)}</span></div></div>`,
+      head: `<div class="rp-top">${pdfLogo()}<div class="rp-title"><h1>${kmTitle(L.title, lang)}</h1><small>${L.no} ${esc(no)}</small><span class="rp-sess">${esc(L.sessions[s])} · ${L.submitted} ${rTime(d.submitted_at || d.created_at)}</span></div></div>`,
       mini: (t) => `<div class="rp-mini"><span><b>${t}</b> · ${esc(p.code)} ${esc(p.name)} · ${esc(rDate(d.report_date, lang))} · ${esc(L.sessions[s])}</span><span>${esc(no)}</span></div>`,
       contTitle: L.title + " (" + L.cont + ")", photoTitle: L.sitePhotos, blocks: reportBlocks(d, L, lang),
-      photos: ph.map((src, i) => ({ src, cap: caps[i] || "" })), footLeft: L.generated + " " + esc(pdfGenerated()), pageLabel: L.page });
+      photos: ph.map((src, i) => ({ src, cap: caps[i] || "" })), footLeft: L.generated + " " + esc(pdfGenerated(lang)), pageLabel: L.page });
   }
 
   // ================= notifications =================
@@ -1836,7 +1989,7 @@
     detail(d.doc_no + " rev " + d.revision + " · " + d.title, [["Project", esc(projLabel(d.project_id))], ["Type", esc(d.doc_type)], ["Discipline", esc(d.discipline)],
       ["Owner", esc(staffName(d.owner_id))], ["Due", fmtDate(d.due_date)], ["Progress", bar(d.progress) + " " + esc(d.progress || 0) + "%"], ["Status", badge(d.status)], ["Comments", esc(d.notes)],
       ["File", href ? `<a href="${esc(href)}" target="_blank" rel="noopener">📄 ${esc(d.file_name || "Open PDF")}</a>` : '<span class="muted small">No PDF yet</span>']], acts.join(""),
-      href ? `<iframe class="pdf" src="${esc(href)}" title="PDF preview"></iframe>` : "");
+      href && !isPhoneView() ? `<iframe class="pdf" src="${esc(href)}" title="PDF preview"></iframe>` : "");
   }
 
   SCREENS.docs = (u) => {
@@ -2124,9 +2277,9 @@
       generated: "បង្កើតដោយប្រព័ន្ធគ្រប់គ្រង GID ·", page: (a, b) => "ទំព័រ " + a + "/" + b, cont: "បន្ត", files: (n) => "ឯកសារ " + n, attachments: "ឯកសារភ្ជាប់" }
   };
   async function qaPdf(kind, r, lang) {
-    const L = QAT[lang], p = byId("projects", r.project_id) || {}, T = (m, v) => esc((m && m[v]) || v || "");
+    const L = QAT[lang], p = byId("projects", r.project_id) || {}, tr = pdfTr(lang), T = (m, v) => esc((m && m[v]) || tr(v || ""));
     const imgs = (l) => (l || []).filter((x) => x.type !== "pdf"), pdfs = (l) => (l || []).filter((x) => x.type === "pdf");
-    const ph = (x, empty) => x ? `<div class="img" style="background-image:url('${String(x.url).replace(/'/g, "%27")}')"></div>` : `<div class="img empty">${empty}</div>`;
+    const ph = (x, empty) => x ? `<div class="sf-img" style="background-image:url('${String(x.url).replace(/'/g, "%27")}')"></div>` : `<div class="sf-noimg">${empty}</div>`;
     const person = (id) => byId("staff", id) || {};
     let no, title, form, stamp, blocks, before, after;
     if (kind === "defect") {
@@ -2137,38 +2290,38 @@
       blocks = [
         `<h2><i>1</i>${L.details}</h2><table class="sf-t"><tr><th>${L.project}</th><td>${esc(p.code)} ${esc(p.name)}</td><th>${L.loc}</th><td>${esc(r.location || "")}</td></tr>
           <tr><th>${L.disc}</th><td>${T(L.discMap, r.discipline)}</td><th>${L.pri}</th><td>${T(L.priMap, r.priority)}</td></tr>
-          <tr><th>${L.raised}</th><td>${esc(rb.name || "")} · ${esc(rb.title || "")}</td><th>${L.date}</th><td>${esc(rDate(r.created_at ? dateInPP(r.created_at) : today(), lang))}</td></tr>
+          <tr><th>${L.raised}</th><td>${esc(rb.name || "")} · ${esc(tr(rb.title || ""))}</td><th>${L.date}</th><td>${esc(rDate(r.created_at ? dateInPP(r.created_at) : today(), lang))}</td></tr>
           <tr><th>${L.assigned}</th><td>${esc(person(r.assigned_to).name || "")}</td><th>${L.due}</th><td>${esc(rDate(r.due_date, lang))}</td></tr>
           ${insp ? `<tr><th>${L.from}</th><td colspan="3">${esc(inspNo(insp))} · ${esc(insp.title)}</td></tr>` : ""}</table>`,
         `<h2><i>2</i>${L.found}</h2><div class="sf-box">${esc(r.description || "")}</div>`,
-        `<h2><i>3</i>${L.evidence}</h2><div class="sf-ba"><div class="bf"><div class="hd">${L.before}</div>${ph(imgs(before)[0], L.none)}<p>${esc(rb.name || "")}</p></div><div class="af"><div class="hd">${L.after}</div>${ph(imgs(after)[0], L.noAfter)}<p>${r.fixed_by ? esc(fx.name || "") + " · " + esc(fmtDate(r.fixed_at)) : "—"}</p></div></div>`,
-        `<h2><i>4</i>${L.correction}</h2><table class="sf-t"><tr><th>${L.corrected}</th><td>${esc(r.correction || "—")}</td></tr><tr><th>${L.fixedBy}</th><td>${r.fixed_by ? esc(fx.name) + " · " + esc(fmtDate(r.fixed_at)) + " " + esc(timeOf(r.fixed_at)) : "—"}</td></tr>
-          <tr><th>${L.verify}</th><td>${esc(r.verify_note || "—")}${r.closed_by ? " · " + esc(cl.name) + " · " + esc(fmtDate(r.closed_at)) : ""}</td></tr>
+        `<h2><i>3</i>${L.evidence}</h2><div class="sf-ba"><div class="sf-bf"><div class="sf-hd">${L.before}</div>${ph(imgs(before)[0], L.none)}<p>${esc(rb.name || "")}</p></div><div class="sf-af"><div class="sf-hd">${L.after}</div>${ph(imgs(after)[0], L.noAfter)}<p>${r.fixed_by ? esc(fx.name || "") + " · " + esc(rDate(r.fixed_at, lang)) : "—"}</p></div></div>`,
+        `<h2><i>4</i>${L.correction}</h2><table class="sf-t"><tr><th>${L.corrected}</th><td>${esc(r.correction || "—")}</td></tr><tr><th>${L.fixedBy}</th><td>${r.fixed_by ? esc(fx.name) + " · " + esc(rDT(r.fixed_at, lang)) : "—"}</td></tr>
+          <tr><th>${L.verify}</th><td>${esc(r.verify_note || "—")}${r.closed_by ? " · " + esc(cl.name) + " · " + esc(rDate(r.closed_at, lang)) : ""}</td></tr>
           <tr><th>${L.attachments}</th><td>${L.files(before.length + after.length)}${files.length ? " · " + files.map((f) => esc(f.name)).join(", ") : ""}</td></tr></table>`,
-        `<h2><i>5</i>${L.sign}</h2><div class="sf-sign"><div><small>${L.raiser}</small><b>${esc(rb.name || "—")}</b><em>${esc(rb.title || "")}</em></div><div><small>${L.fixer}</small><b>${r.fixed_by ? esc(fx.name) : "—"}</b><em>${L.sigLine}</em></div>
+        `<h2><i>5</i>${L.sign}</h2><div class="sf-sign"><div><small>${L.raiser}</small><b>${esc(rb.name || "—")}</b><em>${esc(tr(rb.title || ""))}</em></div><div><small>${L.fixer}</small><b>${r.fixed_by ? esc(fx.name) : "—"}</b><em>${L.sigLine}</em></div>
           <div><small>${L.checker}</small><b>${r.closed_by ? esc(cl.name) : "—"}</b><em>${L.sigLine}</em></div><div><small>${L.pm}</small><b>${esc(pm.name || "—")}</b><em>${L.sigLine}</em></div></div>`];
     } else {
       no = inspNo(r); title = L.titleI; form = L.formI; before = r.evidence || []; after = r.result_evidence || [];
       stamp = r.result === "Passed" ? L.passed : r.result === "Failed" ? L.failed : L.open;
       const ins = person(r.inspector_id), pm = person(p.pm_id), raised = db.defects.filter((f) => f.inspection_id === r.id);
-      const tick = (on, t) => `<span class="sf-chk"><i class="${on ? "on" : ""}">${on ? "✓" : ""}</i>${t}</span>`;
+      const tick = sfTick;
       blocks = [
         `<h2><i>1</i>${L.details}</h2><table class="sf-t"><tr><th>${L.project}</th><td>${esc(p.code)} ${esc(p.name)}</td><th>${L.loc}</th><td>${esc(r.area || "")}</td></tr>
-          <tr><th>${L.disc}</th><td>${T(L.discMap, r.discipline)}</td><th>${L.date}</th><td>${esc(rDate(r.insp_date, lang))}</td></tr><tr><th>${L.inspector}</th><td colspan="3">${esc(ins.name || "")} · ${esc(ins.title || "")}</td></tr></table>`,
+          <tr><th>${L.disc}</th><td>${T(L.discMap, r.discipline)}</td><th>${L.date}</th><td>${esc(rDate(r.insp_date, lang))}</td></tr><tr><th>${L.inspector}</th><td colspan="3">${esc(ins.name || "")} · ${esc(tr(ins.title || ""))}</td></tr></table>`,
         `<h2><i>2</i>${L.checklist}</h2><div class="sf-box">${esc(r.notes || "—")}</div>`,
         `<h2><i>3</i>${L.result}</h2><table class="sf-t"><tr><th>${L.result}</th><td>${tick(r.result === "Passed", L.passed)}${tick(r.result === "Failed", L.failed)}${tick(r.result === "Open", L.open)}</td></tr>
           <tr><th>${L.resultNote}</th><td>${esc(r.result_note || "—")}</td></tr><tr><th>${L.defectsRaised}</th><td>${raised.length ? raised.map((f) => esc(defectNo(f) + " · " + f.description)).join("<br>") : L.none}</td></tr></table>`,
-        `<h2><i>4</i>${L.inspEv}</h2><div class="sf-ba"><div class="bf"><div class="hd">${L.inspPh}</div>${ph(imgs(before)[0], L.none)}<p>${esc(fmtDate(r.insp_date))}</p></div><div class="af"><div class="hd">${L.resPh}</div>${ph(imgs(after)[0], L.none)}<p>${r.checked_at ? esc(fmtDate(r.checked_at)) + " " + esc(timeOf(r.checked_at)) : "—"}</p></div></div>`,
+        `<h2><i>4</i>${L.inspEv}</h2><div class="sf-ba"><div class="sf-bf"><div class="sf-hd">${L.inspPh}</div>${ph(imgs(before)[0], L.none)}<p>${esc(rDate(r.insp_date, lang))}</p></div><div class="sf-af"><div class="sf-hd">${L.resPh}</div>${ph(imgs(after)[0], L.none)}<p>${r.checked_at ? esc(rDT(r.checked_at, lang)) : "—"}</p></div></div>`,
         `<h2><i>5</i>${L.sign}</h2><div class="sf-sign"><div><small>${L.inspector}</small><b>${esc(ins.name || "—")}</b><em>${L.sigLine}</em></div><div><small>${L.pm}</small><b>${esc(pm.name || "—")}</b><em>${L.sigLine}</em></div><div><small>&nbsp;</small><b>&nbsp;</b><em>${L.sigLine}</em></div><div><small>&nbsp;</small><b>&nbsp;</b><em>${L.sigLine}</em></div></div>`];
     }
     const more = imgs(before).concat(imgs(after));
-    if (!document.getElementById("sf-css")) { const st = document.createElement("style"); st.id = "sf-css"; st.textContent = SF_CSS; document.head.appendChild(st); }
+    sfCss();
     await makePdf({ lang, no, fileName: no + "-" + (lang === "km" ? "KH" : "EN") + ".pdf",
-      head: `<div class="rp-top">${pdfLogo()}<div class="rp-title"><h1 class="sf-h1">${title}</h1><small>${esc(no)} · ${form}</small><span class="rp-sess ${/OPEN|FIXED|FAILED|មិន|រង់ចាំ/.test(stamp) ? "sf-open" : ""}">${stamp}</span></div></div>`,
+      head: `<div class="rp-top">${pdfLogo()}<div class="rp-title"><h1 class="sf-h1">${kmTitle(title, lang)}</h1><small>${esc(no)} · ${form}</small><span class="rp-sess ${/OPEN|FIXED|FAILED|មិន|រង់ចាំ/.test(stamp) ? "sf-open" : ""}">${stamp}</span></div></div>`,
       mini: (t) => `<div class="rp-mini"><span><b>${t}</b> · ${esc(p.code)} · ${esc(no)}</span><span>${form}</span></div>`,
       contTitle: title + " (" + L.cont + ")", photoTitle: L.photos, blocks,
       photos: more.length > 2 ? more.map((x, i) => ({ src: x.url, cap: i < imgs(before).length ? (kind === "defect" ? L.before : L.inspPh) : (kind === "defect" ? L.after : L.resPh) })) : [],
-      footLeft: L.generated + " " + esc(pdfGenerated()), pageLabel: L.page });
+      footLeft: L.generated + " " + esc(pdfGenerated(lang)), pageLabel: L.page });
   }
   SCREENS.qaqc = (u) => {
     const T = tabs("qaqc", [["defects", "Defects (snag list)"], ["insp", "Inspections"]]);
@@ -2272,23 +2425,23 @@
   };
   function safetyBlocks(s, form, L, lang) {
     const p = byId("projects", s.project_id) || {}, who = byId("staff", s.reported_by) || {}, closer = byId("staff", s.closed_by);
-    const T = (map, v) => esc((map && map[v]) || v || "");
+    const tr = pdfTr(lang), T = (map, v) => esc((map && map[v]) || tr(v || ""));
     const imgs = (list) => (list || []).filter((x) => x.type !== "pdf"), pdfs = (list) => (list || []).filter((x) => x.type === "pdf");
     const b1 = imgs(s.evidence)[0], a1 = imgs(s.close_evidence)[0];
-    const tick = (on, t) => `<span class="sf-chk"><i class="${on ? "on" : ""}">${on ? "✓" : ""}</i>${t}</span>`;
+    const tick = sfTick;
     const typeRow = ["Toolbox talk", "Inspection", "PPE check", "Near miss", "Incident"].map((t) => tick(s.rec_type === t, T(L.types, t))).join("");
-    const sevRow = ["Low", "Medium", "High"].map((v) => `<span class="sf-sev ${s.severity === v ? "on " + v.toLowerCase() : ""}">${T(L.sevs, v)}</span>`).join("");
-    const ba = `<div class="sf-ba"><div class="bf"><div class="hd">${L.before}</div>${b1 ? `<div class="img" style="background-image:url('${String(b1.url).replace(/'/g, "%27")}')"></div>` : `<div class="img empty">${L.none}</div>`}<p>${esc(who.name || "")} · ${esc(fmtDate(s.rec_date))}</p></div>
-      <div class="af"><div class="hd">${L.after}</div>${a1 ? `<div class="img" style="background-image:url('${String(a1.url).replace(/'/g, "%27")}')"></div>` : `<div class="img empty">${L.noAfter}</div>`}<p>${closer ? esc(closer.name) + " · " + esc(fmtDate(s.closed_at)) + " " + esc(timeOf(s.closed_at)) : "—"}</p></div></div>`;
+    const sevRow = ["Low", "Medium", "High"].map((v) => `<span class="sf-sev ${s.severity === v ? "sf-on sf-" + v.toLowerCase() : ""}">${T(L.sevs, v)}</span>`).join("");
+    const ba = `<div class="sf-ba"><div class="sf-bf"><div class="sf-hd">${L.before}</div>${b1 ? `<div class="sf-img" style="background-image:url('${String(b1.url).replace(/'/g, "%27")}')"></div>` : `<div class="sf-noimg">${L.none}</div>`}<p>${esc(who.name || "")} · ${esc(rDate(s.rec_date, lang))}</p></div>
+      <div class="sf-af"><div class="sf-hd">${L.after}</div>${a1 ? `<div class="sf-img" style="background-image:url('${String(a1.url).replace(/'/g, "%27")}')"></div>` : `<div class="sf-noimg">${L.noAfter}</div>`}<p>${closer ? esc(closer.name) + " · " + esc(rDT(s.closed_at, lang)) : "—"}</p></div></div>`;
     const files = pdfs(s.evidence).concat(pdfs(s.close_evidence));
     const verifier = s.status === "Closed" ? (byId("staff", p.pm_id) || {}) : null;
-    const sign = `<div class="sf-sign"><div><small>${L.reporter}</small><b>${esc(who.name || "")}</b><em>${esc(who.title || "")} · ${esc(fmtDate(s.rec_date))}</em></div>
-      <div><small>${L.closer}</small><b>${closer ? esc(closer.name) : "—"}</b><em>${closer ? esc(closer.title) + " · " + esc(fmtDate(s.closed_at)) : L.sigLine}</em></div>
+    const sign = `<div class="sf-sign"><div><small>${L.reporter}</small><b>${esc(who.name || "")}</b><em>${esc(tr(who.title || ""))} · ${esc(rDate(s.rec_date, lang))}</em></div>
+      <div><small>${L.closer}</small><b>${closer ? esc(closer.name) : "—"}</b><em>${closer ? esc(tr(closer.title)) + " · " + esc(rDate(s.closed_at, lang)) : L.sigLine}</em></div>
       <div><small>${L.verifier}</small><b>${verifier ? esc(verifier.name) : "—"}</b><em>${L.sigLine}</em></div><div><small>${L.officer}</small><b>${L.toAssign}</b><em>${L.sigLine}</em></div></div>`;
     const blocks = [];
     if (form === "A") {
       blocks.push(`<h2><i>1</i>${L.details}</h2><table class="sf-t"><tr><th>${L.project}</th><td>${esc(p.code)} ${esc(p.name)}</td><th>${L.area}</th><td>${esc(s.area || "")}</td></tr>
-        <tr><th>${L.dt}</th><td>${esc(rDate(s.rec_date, lang))}</td><th>${L.by}</th><td>${esc(who.name || "")} · ${esc(who.title || "")}</td></tr></table>`);
+        <tr><th>${L.dt}</th><td>${esc(rDate(s.rec_date, lang))}</td><th>${L.by}</th><td>${esc(who.name || "")} · ${esc(tr(who.title || ""))}</td></tr></table>`);
       blocks.push(`<h2><i>2</i>${L.type} · ${L.sev}</h2><table class="sf-t"><tr><th>${L.type}</th><td>${typeRow}</td></tr><tr><th>${L.sev}</th><td>${sevRow}</td></tr></table>`);
       blocks.push(`<h2><i>3</i>${L.found}</h2><div class="sf-box">${esc(s.description || "")}</div>`);
       blocks.push(`<h2><i>4</i>${L.evidence}</h2>${ba}`);
@@ -2297,8 +2450,8 @@
       blocks.push(`<h2><i>6</i>${L.sign}</h2>${sign}`);
     } else {
       const lk = Number(s.likelihood) || 0, cq = Number(s.consequence) || 0, score = lk * cq;
-      const cell = (l, c) => { const v = l * c, cls = v >= 15 ? "r" : v >= 8 ? "o" : v >= 4 ? "y" : "g"; return `<td class="${cls}${l === lk && c === cq ? " sel" : ""}">${v}</td>`; };
-      const matrix = `<table class="sf-mx"><tbody>${[5, 4, 3, 2, 1].map((l) => `<tr><th>${esc(L.lik[l])} (${l})</th>${[1, 2, 3, 4, 5].map((c) => cell(l, c)).join("")}</tr>`).join("")}<tr><th></th>${[1, 2, 3, 4, 5].map((c) => `<th class="c">${esc(L.con[c])}</th>`).join("")}</tr></tbody></table>`;
+      const cell = (l, c) => { const v = l * c, cls = v >= 15 ? "sf-r" : v >= 8 ? "sf-o" : v >= 4 ? "sf-y" : "sf-g"; return `<td class="${cls}${l === lk && c === cq ? " sf-sel" : ""}">${v}</td>`; };
+      const matrix = `<table class="sf-mx"><tbody>${[5, 4, 3, 2, 1].map((l) => `<tr><th>${esc(L.lik[l])} (${l})</th>${[1, 2, 3, 4, 5].map((c) => cell(l, c)).join("")}</tr>`).join("")}<tr><th></th>${[1, 2, 3, 4, 5].map((c) => `<th class="sf-c">${esc(L.con[c])}</th>`).join("")}</tr></tbody></table>`;
       blocks.push(`<h2><i>A</i>${L.event}</h2><table class="sf-t"><tr><th>${L.project}</th><td>${esc(p.code)} ${esc(p.name)}</td><th>${L.dt}</th><td>${esc(rDate(s.rec_date, lang))}</td></tr>
         <tr><th>${L.area}</th><td>${esc(s.area || "")}</td><th>${L.by}</th><td>${esc(who.name || "")}</td></tr><tr><th>${L.type}</th><td colspan="3">${typeRow}</td></tr>
         <tr><th>${L.desc}</th><td colspan="3">${esc(s.description || "")}</td></tr></table>`);
@@ -2309,7 +2462,7 @@
       blocks.push(`<h2><i>F</i>${L.capa}</h2><table class="sf-t"><tr><th>${L.immediate}</th><td>${esc(s.action || L.none)}</td></tr><tr><th>${L.correction}</th><td>${esc(s.correction || "—")}</td></tr><tr><th>${L.preventive}</th><td>${esc(s.preventive || "—")}</td></tr>
         <tr><th>${L.attachments}</th><td>${L.files((s.evidence || []).length + (s.close_evidence || []).length)}${files.length ? " · " + files.map((f) => esc(f.name)).join(", ") : ""}</td></tr></table>`);
       const openH = s.closed_at ? Math.max(0, Math.round((new Date(s.closed_at) - new Date(s.created_at || s.rec_date)) / 3600000)) : null;
-      blocks.push(`<h2><i>G</i>${L.closure}</h2><table class="sf-t"><tr><th>${L.closedOn}</th><td>${s.closed_at ? esc(fmtDate(s.closed_at)) + " " + esc(timeOf(s.closed_at)) : "—"}</td><th>${L.timeOpen}</th><td>${openH != null ? openH + " h" : "—"}</td></tr><tr><th>${L.lessons}</th><td colspan="3">${esc(s.lessons || "—")}</td></tr></table>`);
+      blocks.push(`<h2><i>G</i>${L.closure}</h2><table class="sf-t"><tr><th>${L.closedOn}</th><td>${s.closed_at ? esc(rDT(s.closed_at, lang)) : "—"}</td><th>${L.timeOpen}</th><td>${openH != null ? openH + " h" : "—"}</td></tr><tr><th>${L.lessons}</th><td colspan="3">${esc(s.lessons || "—")}</td></tr></table>`);
       blocks.push(`<h2><i>H</i>${L.sign}</h2>${sign}`);
     }
     return blocks;
@@ -2318,27 +2471,31 @@
     const L = SFT[lang], form = safetyForm(s), no = safetyNo(s), p = byId("projects", s.project_id) || {};
     const title = form === "B" ? L.titleB : L.titleA;
     const more = (s.evidence || []).concat(s.close_evidence || []).filter((x) => x.type !== "pdf");
-    if (!document.getElementById("sf-css")) { const st = document.createElement("style"); st.id = "sf-css"; st.textContent = SF_CSS; document.head.appendChild(st); }
+    sfCss();
     await makePdf({ lang, no, fileName: no + "-Form" + form + "-" + (lang === "km" ? "KH" : "EN") + ".pdf",
-      head: `<div class="rp-top">${pdfLogo()}<div class="rp-title"><h1 class="sf-h1">${title}</h1><small>${esc(no)} · ${form === "B" ? L.formB : L.formA}</small><span class="rp-sess ${s.status === "Open" ? "sf-open" : ""}">${s.status === "Open" ? L.open : L.closed}</span></div></div>`,
+      head: `<div class="rp-top">${pdfLogo()}<div class="rp-title"><h1 class="sf-h1">${kmTitle(title, lang)}</h1><small>${esc(no)} · ${form === "B" ? L.formB : L.formA}</small><span class="rp-sess ${s.status === "Open" ? "sf-open" : ""}">${s.status === "Open" ? L.open : L.closed}</span></div></div>`,
       mini: (t) => `<div class="rp-mini"><span><b>${t}</b> · ${esc(p.code)} · ${esc(no)}</span><span>${form === "B" ? L.formB : L.formA}</span></div>`,
       contTitle: title + " (" + L.cont + ")", photoTitle: L.photos, blocks: safetyBlocks(s, form, L, lang),
       photos: more.length > 2 ? more.map((x, i) => ({ src: x.url, cap: (i < (s.evidence || []).filter((y) => y.type !== "pdf").length ? L.before : L.after) })) : [],
-      footLeft: L.generated + " " + esc(pdfGenerated()), pageLabel: L.page });
+      footLeft: L.generated + " " + esc(pdfGenerated(lang)), pageLabel: L.page });
   }
-  const SF_CSS = `.rp-page .sf-h1{font-size:16px;max-width:430px;line-height:1.3}.rp-page.km .sf-h1{font-size:16px;line-height:1.6}
+  const SF_CSS = `.rp-page .sf-h1{font-size:17px;line-height:1.3}.rp-page.km .sf-h1{font-size:17px;line-height:1.55}
   .rp-page h2 i{font-style:normal;background:#2e8540;color:#fff;border-radius:4px;padding:0 6px;margin-right:6px;font-size:11px}
-  .sf-t th{background:#eef6ef;width:20%;text-transform:none!important;font-size:11px!important;color:#3b4b41!important;border:1px solid #d5dfd6}.sf-t td{border:1px solid #d5dfd6}
-  .sf-chk{display:inline-flex;align-items:center;gap:4px;margin:0 10px 2px 0;white-space:nowrap}.sf-chk i{width:12px;height:12px;border:1.4px solid #3b4b41;border-radius:2px;display:inline-block;font-style:normal;font-size:9px;line-height:10px;text-align:center;color:#fff}.sf-chk i.on{background:#2e8540;border-color:#2e8540}
-  .sf-sev{display:inline-block;padding:1px 10px;border-radius:4px;margin-right:6px;border:1px solid #d5dfd6;color:#8a93a6}.sf-sev.on{color:#fff;font-weight:700}.sf-sev.on.low{background:#1a7f42;border-color:#1a7f42}.sf-sev.on.medium{background:#b97800;border-color:#b97800}.sf-sev.on.high{background:#c0362c;border-color:#c0362c}
-  .sf-box{border:1px solid #d5dfd6;border-radius:6px;padding:8px 10px;min-height:44px;white-space:pre-wrap}
-  .sf-ba{display:grid;grid-template-columns:1fr 1fr;gap:12px}.sf-ba>div{border:1px solid #d5dfd6;border-radius:8px;overflow:hidden}.sf-ba .hd{display:block;width:auto;height:auto;border-radius:0;padding:5px 9px;color:#fff;font-weight:700;font-size:11.5px}.sf-ba .bf .hd{background:#c0362c}.sf-ba .af .hd{background:#1a7f42}
-  .sf-ba .img{height:200px;background:#eef0f4 center/cover no-repeat}.sf-ba .img.empty{display:flex;align-items:center;justify-content:center;color:#8a93a6;font-size:12px}.sf-ba p{padding:5px 9px;font-size:11px;color:#4a5a50}
-  .sf-sign{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.sf-sign>div{border:1px solid #d5dfd6;border-radius:6px;padding:7px 9px;height:76px;position:relative;font-size:11.5px}.sf-sign small{display:block;color:#6b7488;font-size:10px}.sf-sign em{position:absolute;left:9px;right:9px;bottom:6px;border-top:1px dashed #9aa79f;padding-top:3px;font-style:normal;font-size:9.5px;color:#7d8c83}
-  .sf-two{display:grid;grid-template-columns:1.1fr .9fr;gap:14px}.sf-mx{width:auto!important;border-collapse:separate!important;border-spacing:2px}.sf-mx td{width:34px;height:22px;text-align:center;font-weight:700;border:0!important;border-radius:3px;padding:0!important;font-size:10.5px}
-  .sf-mx th{font-size:9.5px!important;padding:0 5px!important;border:0!important;text-transform:none!important;color:#5b6b61!important;white-space:nowrap}.sf-mx th.c{text-align:center;white-space:normal;line-height:1.2}
-  .sf-mx .g{background:#cfe9d4}.sf-mx .y{background:#fbe7a6}.sf-mx .o{background:#f7c08a}.sf-mx .r{background:#f2a39c}.sf-mx td.sel{outline:2.5px solid #121a2c;outline-offset:-2px}
-  .sf-note{background:#f4f8f2;border-left:3px solid #2e8540;padding:6px 9px;font-size:11.5px;margin-top:6px}.rp-sess.sf-open{background:#c0362c}`;
+  .sf-t th{background:#eef6ef;width:20%;text-transform:none!important;font-size:11px!important;color:#3b4b41!important;border:1px solid #d5dfd6;vertical-align:top}.sf-t td{border:1px solid #d5dfd6;vertical-align:top}
+  .sf-t.sf-cols th{width:auto}.sf-t .sf-wide{width:46%!important}.rp-page .sf-t .sf-num{text-align:right;white-space:nowrap}
+  .sf-chk{display:inline-flex;align-items:center;gap:5px;margin:0 10px 2px 0;white-space:nowrap;vertical-align:top}
+  .sf-chk i{position:relative;flex:0 0 12px;width:12px;height:12px;border:1.4px solid #3b4b41;border-radius:2px;display:block;font-style:normal}
+  .sf-chk i.sf-on{background:#2e8540;border-color:#2e8540}.sf-chk i.sf-on::after{content:"";position:absolute;left:2.6px;top:.4px;width:3.2px;height:6.4px;border:solid #fff;border-width:0 1.8px 1.8px 0;transform:rotate(45deg)}
+  .sf-sev{display:inline-block;padding:1px 10px;border-radius:4px;margin-right:6px;border:1px solid #d5dfd6;color:#8a93a6}.sf-sev.sf-on{color:#fff;font-weight:700}.sf-sev.sf-low{background:#1a7f42;border-color:#1a7f42}.sf-sev.sf-medium{background:#b97800;border-color:#b97800}.sf-sev.sf-high{background:#c0362c;border-color:#c0362c}
+  .sf-box{border:1px solid #d5dfd6;border-radius:6px;padding:8px 10px;min-height:44px;white-space:pre-wrap}.sf-box.rp-contd{min-height:0}
+  .sf-ba{display:grid;grid-template-columns:1fr 1fr;gap:12px}.sf-ba>div{border:1px solid #d5dfd6;border-radius:8px;overflow:hidden}.sf-ba .sf-hd{display:block;padding:5px 9px;color:#fff;font-weight:700;font-size:11.5px}.sf-ba .sf-bf .sf-hd{background:#c0362c}.sf-ba .sf-af .sf-hd{background:#1a7f42}
+  .sf-ba .sf-img{height:200px;background:#f3f5f8 center/contain no-repeat}.sf-ba .sf-noimg{height:200px;background:#f3f5f8;display:flex;align-items:center;justify-content:center;color:#8a93a6;font-size:12px;text-align:center;padding:0 12px}.sf-ba p{padding:5px 9px;font-size:11px;color:#4a5a50}
+  .sf-sign{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.sf-sign>div{border:1px solid #d5dfd6;border-radius:6px;padding:7px 9px;min-height:76px;font-size:11.5px;display:flex;flex-direction:column}.sf-sign small{display:block;color:#6b7488;font-size:10px}.sf-sign em{margin-top:auto;display:block;border-top:1px dashed #9aa79f;padding-top:3px;font-style:normal;font-size:9.5px;color:#7d8c83}
+  .sf-two{display:grid;grid-template-columns:1.1fr .9fr;gap:14px;align-items:start}.sf-mx{width:auto!important;border-collapse:separate!important;border-spacing:2px}.sf-mx td{width:34px;height:22px;text-align:center;font-weight:700;border:0!important;border-radius:3px;padding:0!important;font-size:10.5px;vertical-align:middle!important}
+  .sf-mx th{font-size:9.5px!important;padding:0 5px!important;border:0!important;text-transform:none!important;color:#5b6b61!important;white-space:nowrap;vertical-align:middle!important}.sf-mx th.sf-c{text-align:center;white-space:normal;line-height:1.2}
+  .sf-mx .sf-g{background:#cfe9d4}.sf-mx .sf-y{background:#fbe7a6}.sf-mx .sf-o{background:#f7c08a}.sf-mx .sf-r{background:#f2a39c}.sf-mx td.sf-sel{outline:2.5px solid #121a2c;outline-offset:-2px}
+  .sf-note{background:#f4f8f2;border-left:3px solid #2e8540;padding:6px 9px;font-size:11.5px;margin-top:6px}.rp-sess.sf-open{background:#c0362c}
+  .rp-page.km .sf-chk i{flex-basis:13px;width:13px;height:13px}`;
   SCREENS.safety = (u) => {
     const rows = db.safety.filter((s) => inScope(u, s.project_id)).filter(byProjectFilter).filter((s) => matchSearch(s, ["description", "rec_type"])).sort((a, b) => String(b.rec_date).localeCompare(String(a.rec_date)));
     const open = rows.filter((s) => s.status === "Open").length;
@@ -2537,36 +2694,36 @@
       generated: "បង្កើតដោយប្រព័ន្ធគ្រប់គ្រង GID ·", page: (a, b) => "ទំព័រ " + a + "/" + b, cont: "បន្ត", lost: "មូលហេតុមិនបាន" }
   };
   async function svrPdf(v, lang) {
-    const L = SVT[lang], T = (m, x) => esc((m && m[x]) || x || ""), vis = svrVisitors(v), qs = vis.find((s) => groupsOf(s).includes("QS")), md = withTag("MD")[0] || {};
-    const tick = (on, t) => `<span class="sf-chk"><i class="${on ? "on" : ""}">${on ? "✓" : ""}</i>${t}</span>`;
+    const L = SVT[lang], tr = pdfTr(lang), T = (m, x) => esc((m && m[x]) || tr(x || "")), vis = svrVisitors(v), qs = vis.find((s) => groupsOf(s).includes("QS")), md = withTag("MD")[0] || {};
+    const tick = sfTick;
     const proj = v.project_id ? byId("projects", v.project_id) : null;
     const blocks = [
       `<h2><i>1</i>${L.details}</h2><table class="sf-t"><tr><th>${L.client}</th><td>${esc(v.client)}</td><th>${L.contact}</th><td>${esc([v.contact_name, v.contact_phone, v.contact_telegram].filter(Boolean).join(" · "))}</td></tr>
         <tr><th>${L.address}</th><td>${esc(v.address)}</td><th>${L.gps}</th><td>${hasSitePin(v) ? esc(Number(v.lat).toFixed(5) + ", " + Number(v.lng).toFixed(5)) + " · " + L.recorded : L.none}</td></tr>
         <tr><th>${L.visit}</th><td>${esc(rDate(v.visit_date, lang))} · ${esc([v.time_from, v.time_to].filter(Boolean).join("–"))}</td><th>${L.by}</th><td>${esc(vis.map((s) => s.name).join(", "))}</td></tr>
-        <tr><th>${L.source}</th><td>${esc(v.lead_source || L.none)}</td><th>${L.work}</th><td>${T(L.workMap, v.work_type)}</td></tr></table>`,
+        <tr><th>${L.source}</th><td>${v.lead_source ? esc(tr(v.lead_source)) : L.none}</td><th>${L.work}</th><td>${T(L.workMap, v.work_type)}</td></tr></table>`,
       `<h2><i>2</i>${L.req}</h2><table class="sf-t"><tr><th>${L.wants}</th><td colspan="3">${esc(v.requirements || "")}</td></tr>
         <tr><th>${L.budget}</th><td>${v.budget_min || v.budget_max ? esc(money(v.budget_min || 0) + " – " + money(v.budget_max || 0)) : L.none}</td><th>${L.timeline}</th><td>${esc(v.timeline || L.none)}</td></tr>
-        <tr><th>${L.scope}</th><td colspan="3">${SCOPES.map((k) => tick((v.scopes || []).includes(k), lang === "km" ? esc(I18N.t(k) || k) : k)).join("")}</td></tr></table>`,
-      `<h2><i>3</i>${L.cond}</h2><table class="sf-t"><tr><th>${L.cScope}</th><th>${L.cCond}</th><th style="width:auto">${L.cNote}</th></tr>${(v.conditions || []).map((c) => `<tr><td><b>${lang === "km" ? esc(I18N.t(c.scope) || c.scope) : esc(c.scope)}</b></td><td><span class="svc ${esc(String(c.cond).toLowerCase())}">${T(L.condMap, c.cond)}</span></td><td>${esc(c.note || "")}</td></tr>`).join("") || `<tr><td colspan="3">${L.none}</td></tr>`}</table>`,
+        <tr><th>${L.scope}</th><td colspan="3">${SCOPES.map((k) => tick((v.scopes || []).includes(k), esc(tr(k)))).join("")}</td></tr></table>`,
+      `<h2><i>3</i>${L.cond}</h2><table class="sf-t sf-cols"><tr><th>${L.cScope}</th><th>${L.cCond}</th><th class="sf-wide">${L.cNote}</th></tr>${(v.conditions || []).map((c) => `<tr><td><b>${esc(tr(c.scope))}</b></td><td><span class="svc svc-${esc(String(c.cond).toLowerCase())}">${T(L.condMap, c.cond)}</span></td><td>${esc(c.note || "")}</td></tr>`).join("") || `<tr><td colspan="3">${L.none}</td></tr>`}</table>`,
       `<h2><i>4</i>${L.cons}</h2><div class="sf-box">${SVR_CONSTRAINTS.map(([k]) => tick((v.constraints || []).includes(k), esc(L.consMap[k]))).join("")}</div>`,
       `<h2><i>5</i>${L.meas}</h2><table class="sf-t"><tr><th>${L.plot}</th><td>${esc(v.plot_size || L.none)}</td><th>${L.floors}</th><td>${esc(v.floors || L.none)}</td></tr><tr><th>${L.height}</th><td>${esc(v.floor_height || L.none)}</td><th>${L.area}</th><td>${esc(v.floor_area || L.none)}</td></tr></table>`,
       `<h2><i>6</i>${L.risks}</h2><div class="sf-box"><b>${L.risk}:</b> ${esc(v.risks || L.none)}<br><b>${L.opp}:</b> ${esc(v.opportunities || L.none)}</div>`,
       `<h2><i>7</i>${L.rec}</h2><table class="sf-t"><tr><th>${L.go}</th><td>${SVR_DECISION.map(([k]) => tick(v.decision === k, esc(L.decMap[k]))).join("")}</td></tr><tr><th>${L.est}</th><td>${v.est_value ? esc(money(v.est_value)) : L.none}${v.quote_value ? " · " + esc(money(v.quote_value)) : ""}</td></tr>
         <tr><th>${L.team}</th><td>${esc(v.proposed_team || L.none)}</td></tr>${v.lost_reason ? `<tr><th>${L.lost}</th><td>${esc(v.lost_reason)}</td></tr>` : ""}</table>`,
-      `<h2><i>8</i>${L.acts}</h2><table class="sf-t"><tr><th style="width:auto">${L.aAct}</th><th>${L.aWho}</th><th>${L.aBy}</th><th>${L.aSt}</th></tr>${(v.actions || []).map((a) => `<tr><td>${esc(a.action)}</td><td>${esc(staffName(a.who))}</td><td>${esc(a.by ? rDate(a.by, lang) : "")}</td><td>${a.done ? L.done : L.open}</td></tr>`).join("") || `<tr><td colspan="4">${L.none}</td></tr>`}</table>
+      `<h2><i>8</i>${L.acts}</h2><table class="sf-t sf-cols"><tr><th class="sf-wide">${L.aAct}</th><th>${L.aWho}</th><th>${L.aBy}</th><th>${L.aSt}</th></tr>${(v.actions || []).map((a) => `<tr><td>${esc(a.action)}</td><td>${esc(staffName(a.who))}</td><td>${esc(a.by ? rDate(a.by, lang) : "")}</td><td>${a.done ? L.done : L.open}</td></tr>`).join("") || `<tr><td colspan="4">${L.none}</td></tr>`}</table>
         <div class="svconv">${proj ? L.convDone(esc(proj.code + " " + proj.name)) : L.conv}</div>`,
       `<h2><i>9</i>${L.sign}</h2><div class="sf-sign"><div><small>${L.sVisit}</small><b>${esc((byId("staff", v.author_id) || vis[0] || {}).name || "")}</b><em>${L.sig}</em></div><div><small>${L.sQs}</small><b>${esc(qs ? qs.name : "")}</b><em>${L.sig}</em></div>
-        <div><small>${L.sAppr}</small><b>${esc(v.approved_by ? staffName(v.approved_by) : md.name || "")}</b><em>${v.approved_at ? esc(fmtDate(v.approved_at)) : L.md}</em></div><div><small>${L.sClient}</small><b>${esc(v.contact_name || "")}</b><em>${L.sig}</em></div></div>`];
-    if (!document.getElementById("sf-css")) { const st = document.createElement("style"); st.id = "sf-css"; st.textContent = SF_CSS; document.head.appendChild(st); }
-    if (!document.getElementById("svr-css")) { const st = document.createElement("style"); st.id = "svr-css"; st.textContent = ".svc{font-weight:700;padding:1px 7px;border-radius:4px;font-size:11px}.svc.good{background:#e3f4e8;color:#1a7f42}.svc.fair{background:#fff4d6;color:#8a5a00}.svc.poor{background:#fdeceb;color:#c0362c}.svc.none{background:#eef1ef;color:#5b6b61}.svconv{border:1.5px dashed #2e8540;border-radius:8px;padding:7px 10px;margin-top:8px;background:#f4f8f2;font-size:12px}"; document.head.appendChild(st); }
-    const stamp = (L.status[v.status] || v.status) + (v.status === "Lead" && v.quote_due ? " · " + L.due + " " + esc(fmtDate(v.quote_due)) : "");
+        <div><small>${L.sAppr}</small><b>${esc(v.approved_by ? staffName(v.approved_by) : md.name || "")}</b><em>${v.approved_at ? esc(rDate(v.approved_at, lang)) : L.md}</em></div><div><small>${L.sClient}</small><b>${esc(v.contact_name || "")}</b><em>${L.sig}</em></div></div>`];
+    sfCss();
+    if (!document.getElementById("svr-css")) { const st = document.createElement("style"); st.id = "svr-css"; st.textContent = ".svc{font-weight:700;padding:1px 7px;border-radius:4px;font-size:11px}.svc.svc-good{background:#e3f4e8;color:#1a7f42}.svc.svc-fair{background:#fff4d6;color:#8a5a00}.svc.svc-poor{background:#fdeceb;color:#c0362c}.svc.svc-none{background:#eef1ef;color:#5b6b61}.svconv{border:1.5px dashed #2e8540;border-radius:8px;padding:7px 10px;margin-top:8px;background:#f4f8f2;font-size:12px}"; document.head.appendChild(st); }
+    const stamp = (L.status[v.status] || v.status) + (v.status === "Lead" && v.quote_due ? " · " + L.due + " " + esc(rDate(v.quote_due, lang)) : "");
     await makePdf({ lang, no: v.svr_no, fileName: v.svr_no + "-" + (lang === "km" ? "KH" : "EN") + ".pdf",
-      head: `<div class="rp-top">${pdfLogo()}<div class="rp-title"><h1 class="sf-h1">${L.title}</h1><small>${esc(v.svr_no)} · ${L.form}</small><span class="rp-sess ${v.status === "Lost" ? "sf-open" : ""}">${stamp}</span></div></div>`,
+      head: `<div class="rp-top">${pdfLogo()}<div class="rp-title"><h1 class="sf-h1">${kmTitle(L.title, lang)}</h1><small>${esc(v.svr_no)} · ${L.form}</small><span class="rp-sess ${v.status === "Lost" ? "sf-open" : ""}">${stamp}</span></div></div>`,
       mini: (t) => `<div class="rp-mini"><span><b>${t}</b> · ${esc(v.svr_no)} · ${esc(v.client)}</span><span>${L.form}</span></div>`,
       contTitle: L.title + " (" + L.cont + ")", photoTitle: L.photos, blocks,
       photos: (v.photos || []).map((src, i) => ({ src, cap: (i + 1) + " · " + ((v.captions || [])[i] || "") })),
-      footLeft: L.generated + " " + esc(pdfGenerated()), pageLabel: L.page });
+      footLeft: L.generated + " " + esc(pdfGenerated(lang)), pageLabel: L.page });
   }
 
   // ================= SHARED for the new modules =================
@@ -2577,6 +2734,7 @@
   const histList = (h) => (h || []).length ? `<ul class="hist">${h.slice().reverse().map((x) => `<li><small>${esc(fmtDate(x.at))} ${esc(timeOf(x.at))} · ${esc(staffName(x.by))}</small><br><b>${esc(x.action)}</b>${x.note ? " · " + esc(x.note) : ""}</li>`).join("")}</ul>` : "";
   function nextCode(list, field, prefix, pad) { const n = Math.max(0, ...list.map((x) => { const m = String(x[field] || "").match(/(\d+)$/); return String(x[field] || "").startsWith(prefix) && m ? Number(m[1]) : 0; })); return prefix + String(n + 1).padStart(pad || 3, "0"); }
   const projShort = (p) => p ? String(p.code || "").replace(/^[A-Z]+-/, "") : "";
+  const sfTick = (on, t) => `<span class="sf-chk"><i class="${on ? "sf-on" : ""}"></i><span>${t}</span></span>`;
   const sfCss = () => { if (!document.getElementById("sf-css")) { const st = document.createElement("style"); st.id = "sf-css"; st.textContent = SF_CSS; document.head.appendChild(st); } };
 
   // ================= VARIATION ORDERS =================
@@ -2694,21 +2852,21 @@
       sign: "ការអនុម័ត", qs: "គណនាតម្លៃដោយ (QS)", pm: "ពិនិត្យដោយ (PM)", md: "អនុម័តតម្លៃដោយ (នាយក)", cl: "អនុម័តដោយម្ចាស់គម្រោង", sig: "ហត្ថលេខា / កាលបរិច្ឆេទ", page: (a, b) => "ទំព័រ " + a + "/" + b, gen: "បង្កើតដោយប្រព័ន្ធគ្រប់គ្រង GID ·", photos: "ភស្តុតាង", cont: "បន្ត" }
   };
   async function voPdf(v, lang) {
-    const L = VOT[lang], p = byId("projects", v.project_id) || {}, by = (a) => ((v.history || []).filter((h) => h.action === a).slice(-1)[0] || {});
+    const L = VOT[lang], tr = pdfTr(lang), p = byId("projects", v.project_id) || {}, by = (a) => ((v.history || []).filter((h) => h.action === a).slice(-1)[0] || {});
     const prev = sum(db.variations.filter((x) => x.project_id === v.project_id && VO_OK.includes(x.status) && x.id !== v.id), (x) => x.amount);
-    const sg = (lab, h) => `<div><small>${lab}</small><b>${esc(h.by ? staffName(h.by) : "")}</b><em>${h.at ? esc(fmtDate(h.at)) : L.sig}</em></div>`;
+    const sg = (lab, h) => `<div><small>${lab}</small><b>${esc(h.by ? staffName(h.by) : "")}</b><em>${h.at ? esc(rDate(h.at, lang)) : L.sig}</em></div>`;
     const blocks = [
-      `<h2><i>1</i>${L.details}</h2><table class="sf-t"><tr><th>${L.project}</th><td>${esc(p.code)} ${esc(p.name)}</td><th>${L.client}</th><td>${esc(p.client || "")}</td></tr><tr><th>${L.asked}</th><td>${esc(v.asked_by || "")} · ${esc(rDate(v.asked_date, lang))}</td><th>${L.time}</th><td>${esc((v.time_days > 0 ? "+" : "") + (v.time_days || 0))} ${L.days}</td></tr></table>`,
+      `<h2><i>1</i>${L.details}</h2><table class="sf-t"><tr><th>${L.project}</th><td>${esc(p.code)} ${esc(p.name)}</td><th>${L.client}</th><td>${esc(p.client || "")}</td></tr><tr><th>${L.asked}</th><td>${esc(tr(v.asked_by || ""))}${v.asked_date ? " · " + esc(rDate(v.asked_date, lang)) : ""}</td><th>${L.time}</th><td>${esc((v.time_days > 0 ? "+" : "") + (v.time_days || 0))} ${L.days}</td></tr></table>`,
       `<h2><i>2</i>${L.reason}</h2><div class="sf-box">${esc(v.reason || "")}</div>`,
-      `<h2><i>3</i>${L.price}</h2><table class="sf-t"><tr><th style="width:auto">${L.item}</th><th>${L.qty}</th><th>${L.unit}</th><th>${L.rate}</th><th>${L.amt}</th></tr>${(v.lines || []).map((l) => `<tr><td>${esc(l.item)}</td><td>${esc(l.qty)}</td><td>${esc(l.unit)}</td><td>${money(l.rate)}</td><td>${money(l.qty * l.rate)}</td></tr>`).join("")}
-        <tr><td colspan="4">${L.oh} ${esc(v.markup_pct || 0)}%</td><td>${money(v.amount - sum(v.lines || [], (l) => l.qty * l.rate))}</td></tr><tr><td colspan="4"><b>${L.total}</b></td><td><b>${money(v.amount)}</b></td></tr></table>
-        <table class="sf-t" style="margin-top:6px"><tr><th>${L.contract}</th><td>${money(p.contract_value)}</td></tr><tr><th>${L.prev}</th><td>${money(prev)}</td></tr><tr><th>${L.revised}</th><td><b>${money(Number(p.contract_value || 0) + prev + Number(v.amount || 0))}</b></td></tr></table>`,
+      `<h2><i>3</i>${L.price}</h2><table class="sf-t sf-cols"><tr><th class="sf-wide">${L.item}</th><th class="sf-num">${L.qty}</th><th>${L.unit}</th><th class="sf-num">${L.rate}</th><th class="sf-num">${L.amt}</th></tr>${(v.lines || []).map((l) => `<tr><td>${esc(l.item)}</td><td class="sf-num">${esc(l.qty)}</td><td>${esc(l.unit)}</td><td class="sf-num">${money(l.rate)}</td><td class="sf-num">${money(l.qty * l.rate)}</td></tr>`).join("")}
+        <tr><td colspan="4">${L.oh} ${esc(v.markup_pct || 0)}%</td><td class="sf-num">${money(v.amount - sum(v.lines || [], (l) => l.qty * l.rate))}</td></tr><tr><td colspan="4"><b>${L.total}</b></td><td class="sf-num"><b>${money(v.amount)}</b></td></tr></table>
+        <table class="sf-t sf-sum" style="margin-top:6px"><tr><th style="width:60%">${L.contract}</th><td class="sf-num">${money(p.contract_value)}</td></tr><tr><th>${L.prev}</th><td class="sf-num">${money(prev)}</td></tr><tr><th>${L.revised}</th><td class="sf-num"><b>${money(Number(p.contract_value || 0) + prev + Number(v.amount || 0))}</b></td></tr></table>`,
       `<h2><i>4</i>${L.sign}</h2><div class="sf-sign">${sg(L.qs, by("Priced"))}${sg(L.pm, by("PM checked"))}${sg(L.md, by("MD approved price"))}${sg(L.cl, by("Client approved"))}</div>`];
     sfCss();
     await makePdf({ lang, no: v.vo_no, fileName: v.vo_no + "-" + (lang === "km" ? "KH" : "EN") + ".pdf",
-      head: `<div class="rp-top">${pdfLogo()}<div class="rp-title"><h1 class="sf-h1">${L.title}</h1><small>${esc(v.vo_no)} · ${L.form}</small><span class="rp-sess">${esc(v.status)}</span></div></div>`,
+      head: `<div class="rp-top">${pdfLogo()}<div class="rp-title"><h1 class="sf-h1">${kmTitle(L.title, lang)}</h1><small>${esc(v.vo_no)} · ${L.form}</small><span class="rp-sess ${["Client rejected", "Cancelled"].includes(v.status) ? "sf-open" : ""}">${esc(tr(v.status))}</span></div></div>`,
       mini: (t) => `<div class="rp-mini"><span><b>${t}</b> · ${esc(p.code)} · ${esc(v.vo_no)}</span><span>${L.form}</span></div>`, contTitle: L.title + " (" + L.cont + ")", photoTitle: L.photos, blocks,
-      photos: (v.evidence || []).concat(v.client_evidence || []).filter((x) => x.type !== "pdf").map((x) => ({ src: x.url, cap: x.name })), footLeft: L.gen + " " + esc(pdfGenerated()), pageLabel: L.page });
+      photos: (v.evidence || []).concat(v.client_evidence || []).filter((x) => x.type !== "pdf").map((x) => ({ src: x.url, cap: x.name })), footLeft: L.gen + " " + esc(pdfGenerated(lang)), pageLabel: L.page });
   }
 
   // ================= SUBCONTRACTORS =================
@@ -2947,17 +3105,18 @@
   }
   const TTK = { IR: "ការធ្វើតេស្តភាពធន់អ៊ីសូឡង់", ER: "ការធ្វើតេស្តភាពធន់ដីដី (Earth)", RCD: "ការធ្វើតេស្តឧបករណ៍ RCD", PT: "ការធ្វើតេស្តសម្ពាធបំពង់", CCTV: "ការដំណើរការកាមេរ៉ា CCTV", DATA: "ការធ្វើតេស្តចំណុចបណ្តាញ (Cat6)" };
   async function testPdf(t, lang) {
-    const km = lang === "km", T = TT[t.test_type], p = byId("projects", t.project_id) || {}, title = km ? TTK[t.test_type] : T.name + " test";
-    const L = km ? { form: "ទម្រង់ GID-TC-" + t.test_type, d: "ព័ត៌មានលម្អិត", pr: "គម្រោង", loc: "ទីតាំង", ins: "ឧបករណ៍", cal: "ក្រិតតាមខ្នាតរហូតដល់", rule: "លក្ខខណ្ឌជាប់", res: "លទ្ធផល", lines: "លទ្ធផលតាមខ្សែ", pass: "ជាប់", fail: "មិនជាប់", open: "មិនទាន់ចប់", sign: "ហត្ថលេខា", by: "ធ្វើតេស្តដោយ", wit: "សាក្សី", pm: "អ្នកគ្រប់គ្រងគម្រោង", sig: "ហត្ថលេខា / កាលបរិច្ឆេទ", ph: "រូបថត", gen: "បង្កើតដោយប្រព័ន្ធគ្រប់គ្រង GID ·", page: (a, b) => "ទំព័រ " + a + "/" + b, date: "កាលបរិច្ឆេទ", note: "កំណត់ចំណាំ" }
-      : { form: "Form GID-TC-" + t.test_type, d: "Details", pr: "Project", loc: "Location", ins: "Instrument", cal: "Calibrated until", rule: "Pass rule", res: "Result", lines: "Results", pass: "PASS", fail: "FAIL", open: "OPEN", sign: "Sign-off", by: "Tested by", wit: "Witness", pm: "Project Manager", sig: "Signature / date", ph: "Photos", gen: "GID Management System · generated", page: (a, b) => "Page " + a + " of " + b, date: "Date", note: "Note" };
+    const km = lang === "km", T = TT[t.test_type], p = byId("projects", t.project_id) || {}, title = km ? TTK[t.test_type] : /test|commissioning/i.test(T.name) ? T.name : T.name + " test", tr = pdfTr(lang);
+    const L = km ? { form: "ទម្រង់ GID-TC-" + t.test_type, d: "ព័ត៌មានលម្អិត", pr: "គម្រោង", loc: "ទីតាំង", ins: "ឧបករណ៍", cal: "ក្រិតតាមខ្នាតរហូតដល់", rule: "លក្ខខណ្ឌជាប់", res: "លទ្ធផល", lines: "លទ្ធផលតាមខ្សែ", pass: "ជាប់", fail: "មិនជាប់", yes: "មាន", no: "គ្មាន", open: "មិនទាន់ចប់", sign: "ហត្ថលេខា", by: "ធ្វើតេស្តដោយ", wit: "សាក្សី", pm: "អ្នកគ្រប់គ្រងគម្រោង", sig: "ហត្ថលេខា / កាលបរិច្ឆេទ", ph: "រូបថត", gen: "បង្កើតដោយប្រព័ន្ធគ្រប់គ្រង GID ·", page: (a, b) => "ទំព័រ " + a + "/" + b, date: "កាលបរិច្ឆេទ", note: "កំណត់ចំណាំ" }
+      : { form: "Form GID-TC-" + t.test_type, d: "Details", pr: "Project", loc: "Location", ins: "Instrument", cal: "Calibrated until", rule: "Pass rule", res: "Result", lines: "Results", pass: "PASS", fail: "FAIL", yes: "Yes", no: "No", open: "OPEN", sign: "Sign-off", by: "Tested by", wit: "Witness", pm: "Project Manager", sig: "Signature / date", ph: "Photos", gen: "GID Management System · generated", page: (a, b) => "Page " + a + " of " + b, date: "Date", note: "Note" };
+    const cellV = (ty, v) => v == null ? "" : ty === "yn" ? (v === "Yes" ? L.yes : v === "No" ? L.no : tr(v)) : ty === "pf" ? (v === "Pass" ? L.pass : v === "Fail" ? L.fail : tr(v)) : v;
     const R = (x) => x === "Pass" ? L.pass : x === "Fail" ? L.fail : L.open;
     const blocks = [`<h2><i>1</i>${L.d}</h2><table class="sf-t"><tr><th>${L.pr}</th><td>${esc(p.code)} ${esc(p.name)}</td><th>${L.loc}</th><td>${esc(t.location)}</td></tr><tr><th>${L.ins}</th><td>${esc([t.instrument, t.instrument_sn && "SN " + t.instrument_sn].filter(Boolean).join(" · "))}</td><th>${L.cal}</th><td>${t.calib_until ? esc(rDate(t.calib_until, lang)) : "—"}</td></tr>
-      <tr><th>${L.date}</th><td>${esc(rDate(t.test_date, lang))}</td><th>${L.rule}</th><td>${T.limitLabel ? esc(T.limitLabel + " " + (t.limit_value == null ? T.limit : t.limit_value)) : "Yes / Yes / Yes"}</td></tr></table>`,
-      `<h2><i>2</i>${L.lines}</h2><table class="sf-t"><tr>${T.cols.map(([, l]) => `<th>${esc(l)}</th>`).join("")}<th>${L.res}</th></tr>${(t.rows || []).map((r) => { const ps = rowPass(t, r); return `<tr>${T.cols.map(([k]) => `<td>${esc(r[k] == null ? "" : r[k])}</td>`).join("")}<td><b>${ps == null ? "—" : ps ? L.pass : L.fail}</b></td></tr>`; }).join("")}</table>${t.note ? `<div class="sf-box"><b>${L.note}:</b> ${esc(t.note)}</div>` : ""}`,
+      <tr><th>${L.date}</th><td>${esc(rDate(t.test_date, lang))}</td><th>${L.rule}</th><td>${T.limitLabel ? esc(tr(T.limitLabel) + " " + (t.limit_value == null ? T.limit : t.limit_value)) : T.cols.filter((c) => c[2] === "yn").map(() => L.yes).join(" / ")}</td></tr></table>`,
+      `<h2><i>2</i>${L.lines}</h2><table class="sf-t sf-cols"><tr>${T.cols.map(([, l, ty], i) => `<th${i ? (ty === "n" ? ' class="sf-num"' : "") : ' class="sf-wide"'}>${esc(tr(l))}</th>`).join("")}<th>${L.res}</th></tr>${(t.rows || []).map((r) => { const ps = rowPass(t, r); return `<tr>${T.cols.map(([k, , ty]) => `<td${ty === "n" ? ' class="sf-num"' : ""}>${esc(cellV(ty, r[k]))}</td>`).join("")}<td><b>${ps == null ? "—" : ps ? L.pass : L.fail}</b></td></tr>`; }).join("")}</table>${t.note ? `<div class="sf-box"><b>${L.note}:</b> ${esc(t.note)}</div>` : ""}`,
       `<h2><i>3</i>${L.sign}</h2><div class="sf-sign"><div><small>${L.by}</small><b>${esc(staffName(t.tested_by))}</b><em>${L.sig}</em></div><div><small>${L.wit}</small><b>${esc(t.witness || "")}</b><em>${L.sig}</em></div><div><small>${L.pm}</small><b>${esc(staffName(p.pm_id))}</b><em>${L.sig}</em></div><div><small>&nbsp;</small><b>&nbsp;</b><em>${L.sig}</em></div></div>`];
     sfCss();
-    await makePdf({ lang, no: t.test_no, fileName: t.test_no + "-" + (km ? "KH" : "EN") + ".pdf", head: `<div class="rp-top">${pdfLogo()}<div class="rp-title"><h1 class="sf-h1">${esc(title)}</h1><small>${esc(t.test_no)} · ${L.form}</small><span class="rp-sess ${t.result === "Pass" ? "" : "sf-open"}">${R(t.result)}</span></div></div>`,
-      mini: (x) => `<div class="rp-mini"><span><b>${x}</b> · ${esc(p.code)} · ${esc(t.test_no)}</span><span>${L.form}</span></div>`, contTitle: title, photoTitle: L.ph, blocks, photos: (t.photos || []).map((src, i) => ({ src, cap: String(i + 1) })), footLeft: L.gen + " " + esc(pdfGenerated()), pageLabel: L.page });
+    await makePdf({ lang, no: t.test_no, fileName: t.test_no + "-" + (km ? "KH" : "EN") + ".pdf", head: `<div class="rp-top">${pdfLogo()}<div class="rp-title"><h1 class="sf-h1">${kmTitle(esc(title), lang)}</h1><small>${esc(t.test_no)} · ${L.form}</small><span class="rp-sess ${t.result === "Pass" ? "" : "sf-open"}">${R(t.result)}</span></div></div>`,
+      mini: (x) => `<div class="rp-mini"><span><b>${x}</b> · ${esc(p.code)} · ${esc(t.test_no)}</span><span>${L.form}</span></div>`, contTitle: esc(title) + " (" + (km ? "បន្ត" : "continued") + ")", photoTitle: L.ph, blocks, photos: (t.photos || []).map((src) => ({ src, cap: "" })), footLeft: L.gen + " " + esc(pdfGenerated(lang)), pageLabel: L.page });
   }
   function hoItemForm(u, pid, it) {
     it = it || {};
@@ -3219,17 +3378,18 @@
   }
   async function orgChartPdf(p, lang) {
     const km = lang === "km", data = projectOrgData(p), host = document.createElement("div");
-    const T = (t) => km ? (I18N.t(t) || t) : t;
-    host.className = "oc-print" + (km ? " km" : "");
-    host.innerHTML = `<div class="ocp-head">${pdfLogo()}<div class="ocp-title"><h1>${km ? "តារាងរចនាសម្ព័ន្ធគម្រោង" : "Project Organization Chart"}</h1><p><b>${esc(p.code)} · ${esc(p.name)}</b> · ${esc(p.client || "")} · ${esc(p.location || "")}</p></div></div>`
-      + orgChartHtml(data).replace(/data-act="[^"]*"/g, "").replace(/ loading="lazy"/g, ' loading="eager"') + `<div class="ocp-foot"><span>GID Management System · ${km ? "បង្កើតនៅ" : "generated"} ${esc(pdfGenerated())}</span><span>${esc(p.code)}</span></div>`;
-    if (km) host.querySelectorAll(".oc-l, .oc-none").forEach((el) => { el.textContent = T(el.textContent); });
+    // notr: the screen translator must never touch the hidden print copy (the English chart stays English in a Khmer app)
+    host.className = "oc-print notr" + (km ? " km" : "");
+    host.innerHTML = `<div class="ocp-head">${pdfLogo()}<div class="ocp-title"><h1>${km ? kmTitle("តារាងរចនាសម្ព័ន្ធគម្រោង", lang) : "Project Organization Chart"}</h1><p><b>${esc(p.code)} · ${esc(p.name)}</b> · ${esc(p.client || "")} · ${esc(p.location || "")}</p></div></div>`
+      + orgChartHtml(data).replace(/data-act="[^"]*"/g, "").replace(/ loading="lazy"/g, ' loading="eager"') + `<div class="ocp-foot"><span>${km ? "បង្កើតដោយប្រព័ន្ធគ្រប់គ្រង GID · " : "GID Management System · generated "}${esc(pdfGenerated(lang))}</span><span>${esc(p.code)}</span></div>`;
+    if (km) host.querySelectorAll(".oc-l, .oc-none, .ocn i").forEach((el) => { el.textContent = kmText(el.textContent); });
     host.querySelectorAll(".oc-l.top").forEach((el) => el.remove());
     toast(km ? "កំពុងបង្កើត PDF…" : "Making the PDF…");
     document.body.appendChild(host);
     try {
       await Promise.all(PDF_LIBS.map(loadScript));
-      await Promise.race([document.fonts.ready, new Promise((r) => setTimeout(r, 4000))]);
+      pdfCss();
+      await Promise.race([Promise.all(['400 13px "GID Khmer"', '700 13px "GID Khmer"'].map((f) => document.fonts.load(f, "កខគ"))).then(() => document.fonts.ready), new Promise((r) => setTimeout(r, 4000))]).catch(() => {});
       // photos in the hidden copy must load now (lazy photos off screen never load), and never wait more than 8 seconds
       await Promise.race([Promise.all([...host.querySelectorAll("img")].map((im) => im.complete && im.naturalWidth ? 0 : new Promise((r) => { im.onload = im.onerror = r; }))), new Promise((r) => setTimeout(r, 8000))]);
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
@@ -3238,9 +3398,7 @@
       const w = 297, h = Math.min(210, (canvas.height / canvas.width) * w), iw = h < 210 ? w : (canvas.width / canvas.height) * 210;
       pdf.addImage(canvas.toDataURL("image/jpeg", 0.9), "JPEG", (297 - iw) / 2, 0, iw, h);
       host.remove();
-      const name = p.code + "-OrgChart-" + (km ? "KH" : "EN") + ".pdf", url = URL.createObjectURL(pdf.output("blob"));
-      openModal(name, `<iframe class="pdf" src="${url}" title="PDF preview"></iframe><div class="form-actions"><a class="btn primary" href="${url}" download="${esc(name)}">${km ? "ទាញយក" : "Download"} ${esc(name)}</a><button class="btn" data-act="${act(modalBack)}">${km ? "បិទ" : "Close"}</button></div>`);
-      try { const a = document.createElement("a"); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove(); } catch (e) { /* the button above still works */ }
+      pdfDeliver(pdf.output("blob"), p.code + "-OrgChart-" + (km ? "KH" : "EN") + ".pdf");
     } catch (err) { host.remove(); toast(err.message || String(err), true); }
   }
   function openProjectOrg(p) {

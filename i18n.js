@@ -9,18 +9,30 @@
   const PAT = () => window.GID_KM_PATTERNS || [];
   const SKIP = new Set(["SCRIPT", "STYLE", "TEXTAREA", "CODE", "PRE", "svg"]);
 
-  // Translate one string. Returns null when there is no translation (the text is left as it is).
-  I18N.t = function (text) {
-    if (I18N.lang !== "km" || !text) return null;
-    const key = text.replace(/\s+/g, " ").trim();
+  // Look a string up in the Khmer dictionary and patterns, whatever language the app is showing.
+  // Returns null when there is no translation. Used by the screen translator and by the Khmer PDFs.
+  function lookup(text) {
+    if (!text) return null;
+    const key = String(text).replace(/\s+/g, " ").trim();
     if (!key || !/[A-Za-z]/.test(key)) return null;
     const dict = KM();
     if (Object.prototype.hasOwnProperty.call(dict, key)) return dict[key];
     for (const [re, fn] of PAT()) {
       const m = key.match(re);
-      if (m) { const out = typeof fn === "function" ? fn(m, I18N.t) : key.replace(re, fn); if (out != null) return out; }
+      if (m) { const out = typeof fn === "function" ? fn(m, lookup) : key.replace(re, fn); if (out != null) return out; }
     }
     return null;
+  }
+  // Khmer for a string even when the app is in English (Khmer PDFs). Returns null when the dictionary has no entry.
+  // (Some patterns call I18N.t themselves, so Khmer is switched on just for this lookup.)
+  I18N.km = function (text) {
+    const prev = I18N.lang; I18N.lang = "km";
+    try { return lookup(text); } finally { I18N.lang = prev; }
+  };
+  // Translate one string for the screen. Returns null when there is no translation (the text is left as it is).
+  I18N.t = function (text) {
+    if (I18N.lang !== "km") return null;
+    return lookup(text);
   };
   // Translate a key that may be a fragment ("Pending", "Approved") for use inside patterns
   I18N.tr = (x) => I18N.t(x) || x;
