@@ -11,11 +11,16 @@ Optional: PDF tests need jspdf + html2canvas and Khmer fonts. Install once with
     npm install --prefix tests/.libs jspdf html2canvas @fontsource/noto-sans-khmer @fontsource/plus-jakarta-sans
 Without them the PDF buttons still run but produce empty PDFs.
 """
-import os
+import os, re
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 LIBS = os.environ.get("GID_TEST_LIBS") or os.path.join(ROOT, "tests", ".libs", "node_modules")
-PASSKEY = os.environ.get("GID_PASSKEY", "")  # the demo passkey: set it on your machine, never write it in a file
+PASSKEY = os.environ.get("GID_PASSKEY", "")  # optional; normally not needed (see remembered_device below)
+
+
+def _pass_hash():
+    m = re.search(r'PASS_HASH = "([0-9a-f]{64})"', open(os.path.join(ROOT, "index.html"), encoding="utf-8").read())
+    return m.group(1) if m else ""
 CT = {"js": "text/javascript", "css": "text/css", "html": "text/html", "png": "image/png", "jpg": "image/jpeg",
       "webmanifest": "application/json", "woff2": "font/woff2", "md": "text/plain", "sql": "text/plain"}
 
@@ -54,13 +59,16 @@ async def route(r):
     await r.abort()  # nothing leaves the machine
 
 
-async def new_context(browser, phone=False, **kw):
+async def new_context(browser, phone=False, remembered_device=True, **kw):
+    """remembered_device=True opens the app like a device that already passed the passkey gate (no passkey needed)."""
     vp = {"width": 390, "height": 844} if phone else {"width": 1280, "height": 800}
     opts = dict(viewport=vp, device_scale_factor=2 if phone else 1, timezone_id="Asia/Phnom_Penh",
                 geolocation={"latitude": 11.5561, "longitude": 104.9283, "accuracy": 20}, permissions=["geolocation"])
     opts.update(kw)
     ctx = await browser.new_context(**opts)
     await ctx.route("**/*", route)
+    if remembered_device and _pass_hash():
+        await ctx.add_init_script("try{if(!localStorage.getItem('gid-pass'))localStorage.setItem('gid-pass','%s')}catch(e){}" % _pass_hash())
     return ctx
 
 
@@ -74,7 +82,7 @@ async def login(pg, user="s01", hash=""):
         await pg.goto("http://localhost/index.html")
     if await pg.locator("#pk").count():
         if not PASSKEY:
-            raise SystemExit("Set the demo passkey first:  export GID_PASSKEY='…'  (ask the System Admin)")
+            raise SystemExit("The passkey gate is showing. Use new_context(..., remembered_device=True) or set GID_PASSKEY.")
         await pg.fill("#pk", PASSKEY)
         await pg.click(".gate-go")
     await pg.wait_for_selector(".rail")

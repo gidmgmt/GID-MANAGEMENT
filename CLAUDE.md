@@ -51,11 +51,10 @@ Plain HTML/JS, no build step. Files:
 ## Testing (required before every deploy)
 ```
 npm install --prefix tests/.libs jspdf html2canvas @fontsource/noto-sans-khmer @fontsource/plus-jakarta-sans   # once, optional (PDFs/fonts)
-export GID_PASSKEY='…'      # demo passkey from Jack / the System Admin; never write it in a file
 python3 tests/smoke.py       # every screen × 13 roles × desktop/phone × English/Khmer-dark, plus key permission rules
 python3 tests/workflows.py   # variations, subcontractor payments, retention, test sheets, handover
 ```
-Use `tests/harness.py` (`new_context`, `login(pg, staff_id, route)`) for new tests. It runs offline in local mode and never touches Supabase.
+Use `tests/harness.py` (`new_context`, `login(pg, staff_id, route)`) for new tests. It runs offline in local mode, never touches Supabase, and opens the app as a remembered device, so **nobody needs the passkey for testing**. Never ask Jack for the passkey or write it anywhere.
 Staff ids: s01 MD · s02–s05 PM · s06 Site Manager · s07–s17 site engineers · s18 Head of Design · s19–s27 design · s28 structural · s29 QA/QC · s30 Document Engineer (backup admin) · s31–s33 QS (s33 System Admin) · s34–s38 Finance · s35 HR · s39 Procurement · s40 Admin.
 
 ## Deploying (lead only)
