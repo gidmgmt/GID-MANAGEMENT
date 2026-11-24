@@ -122,6 +122,7 @@ async def main():
 
                     # 6. left-overs are cleared by the next touch
                     await pg.wait_for_timeout(600)
+                    await pg.evaluate("window.scrollTo(0, 0)"); await pg.wait_for_timeout(150)  # tap the page heading, not a table row that opens a window
                     await pg.evaluate("document.documentElement.classList.add('lock-scroll')")
                     await pg.touchscreen.tap(x, 10); await pg.wait_for_timeout(200)
                     check(not await pg.evaluate("document.documentElement.classList.contains('lock-scroll')"), f"{t} a stale scroll lock is cleared by the next touch")

@@ -641,7 +641,7 @@ window.GID_KM = {
 
 // ---------- v22: schedule & meetings ----------
 Object.assign(window.GID_KM, {
-  "Cancel": "បោះបង់", // fixes the older entry, which said "pay off" instead of "cancel"
+  "Cancel": "បោះបង់", "You cannot change this event.": "អ្នកមិនអាចកែប្រែព្រឹត្តិការណ៍នេះបានទេ។", "Only HR or the System Admin can change public holidays.": "មានតែផ្នែកធនធានមនុស្ស ឬអ្នកគ្រប់គ្រងប្រព័ន្ធប៉ុណ្ណោះ ដែលអាចកែប្រែថ្ងៃឈប់សម្រាកសាធារណៈបាន។", // fixes the older entry, which said "pay off" instead of "cancel"
   "Schedule": "កាលវិភាគ", "Schedule & Meetings": "កាលវិភាគ និងកិច្ចប្រជុំ", "Agenda": "បញ្ជីកាលវិភាគ", "Month": "ខែ", "Public holidays": "ថ្ងៃឈប់សម្រាកសាធារណៈ", "Public holiday": "ថ្ងៃឈប់សម្រាកសាធារណៈ",
   "Mine": "របស់ខ្ញុំ", "My projects": "គម្រោងរបស់ខ្ញុំ", "Everyone": "ទាំងអស់គ្នា", "All types": "គ្រប់ប្រភេទ", "From other modules": "ពីផ្នែកផ្សេងៗ", "New event": "កាលវិភាគថ្មី",
   "Tomorrow": "ថ្ងៃស្អែក", "This week": "សប្តាហ៍នេះ", "Next week": "សប្តាហ៍ក្រោយ", "Nothing planned.": "គ្មានអ្វីគ្រោងទុកទេ។", "Add": "បន្ថែម", "All day": "ពេញមួយថ្ងៃ",
@@ -695,6 +695,7 @@ Object.assign(window.GID_KM, {
     [/^Public holiday (added|changed|removed): (.+)$/, (m) => "ថ្ងៃឈប់សម្រាកសាធារណៈ " + ({ added: "បានបន្ថែម", changed: "បានកែ", removed: "បានដកចេញ" })[m[1]] + "៖ " + m[2]],
     [/^Cancel · (.+)$/, (m) => "លុបចោល · " + m[1]],
     [/^Minutes · (.+)$/, (m) => "កំណត់ហេតុប្រជុំ · " + m[1]],
-    [/^Done · (.+)$/, (m) => "រួចរាល់ · " + m[1]]
+    [/^Done · (.+)$/, (m) => "រួចរាល់ · " + m[1]],
+    [/^Linked to a record in (.+)$/, (m, tr) => "ភ្ជាប់ទៅកំណត់ត្រាក្នុង " + (tr(m[1]) || m[1])]
   );
 })();

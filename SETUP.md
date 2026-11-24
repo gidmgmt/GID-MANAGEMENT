@@ -209,6 +209,14 @@ Database: `supabase/update-v20.sql` (already installed on the GID database and t
 - Passwords are stored only in scrambled form, in a part of the database the public website key cannot read.
 - Still a demo: the other tables are open to the public key until the next step (per-role database security). Use sample data only.
 
+## Version 22: Schedule & Meetings, staff badges, Settings freeze fix
+
+Database change: run `supabase/update-v22.sql` once (adds the `events` and `holidays` tables; safe to run again).
+- New **Schedule** (menu: My work → Schedule): month calendar and Today / Tomorrow / This week list, meetings, inspections, site visits, progress claims, deadlines. Cambodia public holidays 2026 and 2027 shown in red (HR and System Admin can add or change them; 2027 Visak Bochea and Royal Ploughing dates still to confirm). Dates from the other modules (tasks, IPC, VO, QA/QC, site visits, deliveries, drawings, leave, handover…) appear automatically and open the original record. Meeting attendee picker grouped by department with search; invited people get an alert and Telegram message. "Add to schedule" on projects, IPC, VO and inspections. Approved leave is shown to everyone (no reason); pending leave only to the people involved.
+- **People**: tapping a person now shows two hanging staff badges (front and back) in GID green, with all their details; Back button, phone Back or Escape removes them. On phones swipe to see the back.
+- **Settings freeze fixed** on tablets and phones: the permissions table no longer traps scrolling, the page no longer redraws while your finger is on the screen, and "Telegram bot: Checking…" now finishes (or says it did not answer).
+- Khmer test-sheet answers now read ត្រឹមត្រូវ / មិនត្រឹមត្រូវ.
+
 ## Version 21: screen, PDF and Khmer fixes
 
 No database change. Fixes from the full visual check (computer, 3 phone sizes, every PDF, Khmer review):

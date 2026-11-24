@@ -4004,6 +4004,15 @@
     if (!u || !e) return false;
     return e.organiser_id === u.id || e.created_by === u.id || can(u, "schedule", "admin") || (!!e.project_id && (byId("projects", e.project_id) || {}).pm_id === u.id && can(u, "schedule", "edit"));
   }
+  // May this person open the record an event is linked to? Same rule as the record's own module (money modules need full view).
+  function canOpenLink(u, tbl, r) {
+    const mod = NOTE_MODULE[tbl]; if (!u || !r || !mod) return false;
+    const pid = tbl === "projects" ? r.id : r.project_id;
+    if (!navVisible(u, mod) || !inScope(u, pid)) return false;
+    if (seesAll(u, mod)) return true;
+    if (["cost", "finance", "vo", "subs"].includes(mod)) return false;
+    return ["requester_id", "assignee_id", "author_id", "raised_by", "created_by", "owner_id", "inspector_id", "pm_id"].some((k) => r[k] === u.id);
+  }
   const evTime = (e) => e.all_day || !e.start_time ? "All day" : e.start_time + (e.end_time ? "–" + e.end_time : "");
 
   // Every dated item the person may see, from the events table and from the other modules
@@ -4060,7 +4069,7 @@
     const ev = db.events.filter((e) => canSeeEvent(u, e)).map((e) => ({ kind: "event", ev: e, d: String(e.date || "").slice(0, 10), type: e.type, cls: "t-" + (EV_CLS[e.type] || "other"), label: e.type, title: e.title,
       pid: e.project_id || "", time: e.all_day ? "" : e.start_time || "", mine: e.organiser_id === u.id || e.created_by === u.id || evAttendees(e).includes(u.id), done: e.status !== "Planned", cancelled: e.status === "Cancelled", go: () => openEvent(e) }));
     // an event made from a record (link) already shows that record: the record's own date item on the same day is not repeated
-    const linked = new Set(db.events.filter((e) => e.link_module && e.status !== "Cancelled").map((e) => e.link_module + ":" + e.link_id + ":" + String(e.date).slice(0, 10)));
+    const linked = new Set(db.events.filter((e) => e.link_module && e.status !== "Cancelled" && canSeeEvent(u, e)).map((e) => e.link_module + ":" + e.link_id + ":" + String(e.date).slice(0, 10)));
     return ev.concat(linkedItems(u).filter((x) => !linked.has((x.tbl || "") + ":" + (x.rid || "") + ":" + x.d)));
   }
   function schedFilter(u, items) {
@@ -4138,9 +4147,9 @@
     ], async (v) => {
       if (db.holidays.some((x) => x.id !== h.id && String(x.date).slice(0, 10) === v.date && String(x.name).trim().toLowerCase() === v.name.trim().toLowerCase())) throw new Error("This holiday is already in the list for that date.");
       const row = { date: v.date, name: v.name.trim(), name_km: v.name_km.trim(), year: Number(v.date.slice(0, 4)) };
-      if (isNew) await save("holidays", row, "Public holiday added: " + row.name + " · " + fmtDate(row.date)); else await patch("holidays", h.id, row, "Public holiday changed: " + row.name + " · " + fmtDate(row.date));
+      if (!canHolidays(me())) throw new Error("Only HR or the System Admin can change public holidays."); if (isNew) await save("holidays", row, "Public holiday added: " + row.name + " · " + fmtDate(row.date)); else await patch("holidays", h.id, row, "Public holiday changed: " + row.name + " · " + fmtDate(row.date));
       toast("Saved");
-    }, isNew ? "Add holiday" : "Save changes", { extraHtml: isNew ? "" : `<div class="form-actions" style="justify-content:flex-start;margin-top:0">${btn("Remove holiday", async () => { if (!confirm("Remove " + h.name + " (" + fmtDate(h.date) + ") from the public holidays?")) return; await Store.remove("holidays", h.id); await log("Removed", "holidays", h.id, "Public holiday removed: " + h.name + " · " + fmtDate(h.date)); closeModal(); render(); toast("Removed"); }, "danger")}</div>` });
+    }, isNew ? "Add holiday" : "Save changes", { extraHtml: isNew ? "" : `<div class="form-actions" style="justify-content:flex-start;margin-top:0">${btn("Remove holiday", async () => { if (!canHolidays(me())) throw new Error("Only HR or the System Admin can change public holidays."); if (!confirm("Remove " + h.name + " (" + fmtDate(h.date) + ") from the public holidays?")) return; await Store.remove("holidays", h.id); await log("Removed", "holidays", h.id, "Public holiday removed: " + h.name + " · " + fmtDate(h.date)); closeModal(); render(); toast("Removed"); }, "danger")}</div>` });
   }
 
   // ----- attendee picker: search, grouped by department, select a whole department -----
@@ -4206,14 +4215,14 @@
         toast(r.no + " saved" + (row.attendees.length ? " · " + row.attendees.length + " people invited" : ""));
       } else {
         const before = evAttendees(e), removed = before.filter((id) => !row.attendees.includes(id) && id !== u.id);
-        await patch("events", e.id, row, "Event changed: " + row.title + " · " + fmtDate(row.date));
+        if (!canEditEvent(me(), e)) throw new Error("You cannot change this event."); await patch("events", e.id, row, "Event changed: " + row.title + " · " + fmtDate(row.date));
         for (const id of removed) { try { await Store.insert("notifications", { to_id: id, actor_id: u.id, title: "Removed from: " + row.title, body: fmtDate(row.date) + " · " + staffName(u.id), tbl: "events", record_id: e.id, read: false, at: nowIso() }); } catch (x) { /* never block */ } }
         toast("Saved");
       }
       state.tab.schedDay = row.date; state.tab.schedMonth = row.date.slice(0, 7);
     }, isNew ? "Save and invite" : "Save changes", {
       extraHtml: peoplePicker(evAttendees(e)) + `<input type="hidden" name="link_module" value="${esc(e.link_module || "")}"><input type="hidden" name="link_id" value="${esc(e.link_id || "")}">`
-        + (lk ? `<p class="muted small">Linked to: ${esc(MODULE_NAMES[NOTE_MODULE[e.link_module]] || "")} · ${esc(linkLabel(e.link_module, lk))}</p>` : ""),
+        + (lk && canOpenLink(me(), e.link_module, lk) ? `<p class="muted small">Linked to: ${esc(MODULE_NAMES[NOTE_MODULE[e.link_module]] || "")} · ${esc(linkLabel(e.link_module, lk))}</p>` : ""),
       onReady: (m) => {
         const f = m.querySelector("#mform"), dateIn = f.querySelector('input[name="date"]'), st = f.querySelector('input[name="start_time"]'), en = f.querySelector('input[name="end_time"]');
         const dateField = dateIn.closest(".field"), warn = document.createElement("p"); warn.className = "sch-warn"; warn.hidden = true; dateField.appendChild(warn);
@@ -4246,17 +4255,17 @@
     const acts = [];
     if (canEditEvent(u, e) && e.status === "Planned") {
       acts.push(btn("Cancel event", () => confirmAction("Cancel · " + e.title, [{ name: "reason", label: "Reason (sent to the people invited)", type: "textarea" }], async (v) => {
-        await patch("events", e.id, { status: "Cancelled", notes: [e.notes, v.reason ? "Cancelled: " + v.reason : ""].filter(Boolean).join("\n"), updated_at: nowIso() }, "Event cancelled: " + e.title + " · " + fmtDate(e.date)); }, "Cancel event"), "danger"));
+        if (!canEditEvent(me(), e)) throw new Error("You cannot change this event."); await patch("events", e.id, { status: "Cancelled", notes: [e.notes, v.reason ? "Cancelled: " + v.reason : ""].filter(Boolean).join("\n"), updated_at: nowIso() }, "Event cancelled: " + e.title + " · " + fmtDate(e.date)); }, "Cancel event"), "danger"));
       acts.push(btn("Edit", () => eventForm(u, e)));
       acts.push(btn(e.type === "Meeting" ? "Mark done and add minutes" : "Mark done", () => formModal((e.type === "Meeting" ? "Minutes · " : "Done · ") + e.title, [{ name: "minutes", label: e.type === "Meeting" ? "Meeting minutes (decisions, actions, who does what by when)" : "What happened (optional)", type: "textarea", required: e.type === "Meeting", value: e.minutes || "" }],
-        async (v) => { await patch("events", e.id, { status: "Done", minutes: v.minutes || "", updated_at: nowIso() }, "Event done: " + e.title + " · " + fmtDate(e.date)); toast("Saved"); }, "Save"), "primary"));
+        async (v) => { if (!canEditEvent(me(), e)) throw new Error("You cannot change this event."); await patch("events", e.id, { status: "Done", minutes: v.minutes || "", updated_at: nowIso() }, "Event done: " + e.title + " · " + fmtDate(e.date)); toast("Saved"); }, "Save"), "primary"));
     } else if (canEditEvent(u, e) && e.status === "Done") {
-      acts.push(btn("Edit minutes", () => formModal("Minutes · " + e.title, [{ name: "minutes", label: "Meeting minutes", type: "textarea", value: e.minutes || "" }], async (v) => { await patch("events", e.id, { minutes: v.minutes || "", updated_at: nowIso() }, "Minutes updated: " + e.title); toast("Saved"); }, "Save")));
+      acts.push(btn("Edit minutes", () => formModal("Minutes · " + e.title, [{ name: "minutes", label: "Meeting minutes", type: "textarea", value: e.minutes || "" }], async (v) => { if (!canEditEvent(me(), e)) throw new Error("You cannot change this event."); await patch("events", e.id, { minutes: v.minutes || "", updated_at: nowIso() }, "Minutes updated: " + e.title); toast("Saved"); }, "Save")));
     }
     detail((e.no ? e.no + " · " : "") + e.title, [["Type", `<span class="tag sch-tag t-${EV_CLS[e.type] || "other"}">${esc(e.type)}</span>`], ["Status", badge(e.status)],
       ["Date", `${esc(wdShort(String(e.date).slice(0, 10)))} · ${fmtDate(e.date)}${hol.length ? ` <span class="tag bad">Public holiday</span> <small>${esc(hol.map(holName).join(" · "))}</small>` : isSunday(String(e.date).slice(0, 10)) ? ` <span class="tag order">Sunday</span>` : ""}`], ["Time", esc(evTime(e))],
       ["Project", e.project_id ? esc(projLabel(e.project_id) + " " + ((byId("projects", e.project_id) || {}).name || "")) : "No project (office)"], ["Location", esc(e.location)], ["Organiser", esc(staffName(e.organiser_id))],
-      lk ? ["Linked record", `<a href="#" data-act="${act(() => openRecord(e.link_module, e.link_id))}">${esc(MODULE_NAMES[NOTE_MODULE[e.link_module]] || "")} · ${esc(linkLabel(e.link_module, lk))}</a>`] : null,
+      lk && !canOpenLink(me(), e.link_module, lk) ? ["Linked record", esc("Linked to a record in " + (MODULE_NAMES[NOTE_MODULE[e.link_module]] || "another module"))] : lk ? ["Linked record", `<a href="#" data-act="${act(() => openRecord(e.link_module, e.link_id))}">${esc(MODULE_NAMES[NOTE_MODULE[e.link_module]] || "")} · ${esc(linkLabel(e.link_module, lk))}</a>`] : null,
       ["Notes", e.notes ? `<span class="sch-pre">${esc(e.notes)}</span>` : ""], e.minutes ? ["Minutes", `<span class="sch-pre">${esc(e.minutes)}</span>`] : null].filter(Boolean), acts.join(""),
       `<h4>Attendees · ${att.length}</h4>${att.length ? `<ul class="sch-att">${att.map((s) => `<li>${avatar(s, "av sm")}<span><b>${esc(s.name)}</b><small>${esc(s.title)} · ${esc(DEPT_NAME[groupsOf(s)[0]] || "")}</small></span></li>`).join("")}</ul>` : `<p class="muted small">No one invited.</p>`}`);
   }
