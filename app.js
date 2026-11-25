@@ -1629,7 +1629,7 @@
     ["stock", "Stock", "stock", "Money & materials"], ["finance", "Finance", "finance", "Money & materials"],
     ["people", "People", "people", "Company"], ["admin", "Settings", "admin", "Company"]
   ];
-  const navVisible = (u, mod) => mod === null || (mod === "admin" ? isAdminPage(u) : mod === "svr" ? svrAccess(u) : can(u, mod, "view") || level(u, mod) === "own");
+  const navVisible = (u, mod) => mod === null || (mod === "admin" ? (isAdminPage(u) || canAnnounce(u)) : mod === "svr" ? svrAccess(u) : can(u, mod, "view") || level(u, mod) === "own");
 
   // ---------- HOME ----------
   SCREENS.home = (u) => {
@@ -5052,7 +5052,7 @@
   // ================= v23 Announcements: a message from the System Admin to everyone or to chosen departments / people =================
   // Only the System Admin and the backup admin write them. Each person gets one alert (and Telegram message through the
   // notifications trigger); unread ones show as a banner on Dashboard and My work until the person taps "Got it".
-  const canAnnounce = (u) => !!u && (isSysAdmin(u) || hasTag(u, "BACKUPADMIN"));
+  const canAnnounce = (u) => !!u && (isSysAdmin(u) || hasTag(u, "BACKUPADMIN") || hasTag(u, "MD") || hasTag(u, "HR")); // owner: System Admin, backup admin, MD and HR
   const trTxt = (x) => (window.I18N && I18N.t && I18N.t(x)) || x; // Khmer for a browser confirm() question
   const ANN_MAX = 2000;
   const annDept = (s) => { const g = groupsOf(s)[0]; return DEPT_ORDER.includes(g) ? g : "ADMIN"; };
@@ -5108,7 +5108,7 @@
       admin && !gone ? btn("Withdraw", () => annWithdraw(a), "danger") : "");
   }
   async function annWithdraw(a) {
-    if (!canAnnounce(me())) { toast("Only the System Admin can do this.", true); return; }
+    if (!canAnnounce(me())) { toast("Only the System Admin, HR or the MD can send announcements.", true); return; }
     if (!confirm(trTxt("Withdraw this announcement? It disappears from everyone's Dashboard and My work. It stays in the history."))) return;
     try {
       await patch("announcements", a.id, { status: "Withdrawn" }, "Announcement withdrawn: " + a.title);
@@ -5183,6 +5183,7 @@
   SCREENS.admin = (u) => {
     const audit = db.audit_log.slice().sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 60);
     const sys = isAdminPage(u);
+    if (!sys) return `<h1>Settings</h1><p class="muted">Send announcements to staff.</p>${canAnnounce(u) ? annCard(u) : ""}`; // HR: announcements only
     return `<h1>Settings</h1><p class="muted">${canManagePerms(u) ? "Control who can see and do what, and check the activity log." : "System settings and activity log."}</p>
       ${canAnnounce(u) ? annCard(u) : ""}
       ${isAdminPage(u) ? healthCard() : ""}
@@ -5196,7 +5197,11 @@
   };
 
   // From inside a window or panel: take the place of its Back step, so Back returns to the screen before
-  function go(route) { if (history.state && history.state.gidModal && location.hash !== "#" + route) location.replace("#" + route); else location.hash = "#" + route; }
+  function go(route) {
+    if (history.state && history.state.gidModal && location.hash !== "#" + route) { // same Safari fix as the menu links: drop the window's Back marker
+      try { history.replaceState(null, "", "#" + route); window.dispatchEvent(new HashChangeEvent("hashchange")); } catch (e) { location.replace("#" + route); }
+    } else location.hash = "#" + route;
+  }
   function routeFromHash() {
     const u = me(); const def = can(u, "dashboard", "view") ? "dashboard" : "home"; let r = (location.hash || "").replace(/^#\/?/, "") || def;
     // a project page: #projects/<id>

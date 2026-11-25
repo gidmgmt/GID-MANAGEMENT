@@ -72,6 +72,7 @@ Staff ids: s01 MD · s02–s05 PM · s06 Site Manager · s07–s17 site engineer
 - Subcontractors: Claimed → QS checked (certified ≤ claimed; retention by contract %, 0% allowed) → PM approved (creates bill) → Paid by Finance. Retention released by bill.
 - IPC: Draft → QS checked → PM verified → MD approved → Invoiced → Paid.
 - Devices: only the System Admin and backup admin can sign devices out.
+- Announcements: System Admin, backup admin, MD and HR can send. Sign-in ends every day at 03:00 Phnom Penh time.
 - Decided by Jack (v23):
   - VO "PM checked": only the PM of that VO's project does it (not the MD; the MD still approves the price at the next step). Nobody does two checks in a row on the same VO.
   - Marking bills, payments, invoices and subcontractor payments as Paid: Finance staff only (Finance group). Not Procurement, Admin or the System Admin.

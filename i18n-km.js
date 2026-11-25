@@ -751,3 +751,6 @@ window.GID_KM_PATTERNS.unshift(
   [/^Staff ID number of (.+): (.+)$/, (m) => "លេខសម្គាល់បុគ្គលិករបស់ " + m[1] + "៖ " + m[2]],
   [/^(PO-\d+) is already (.+)\.$/, (m, tr) => m[1] + " " + (tr(m[2]) || m[2]) + " រួចហើយ។"]
 );
+
+// v23 lead: announcements by HR / MD
+Object.assign(window.GID_KM, { "Only the System Admin, HR or the MD can send announcements.": "មានតែអ្នកគ្រប់គ្រងប្រព័ន្ធ ផ្នែកធនធានមនុស្ស (HR) ឬនាយកគ្រប់គ្រង (MD) ប៉ុណ្ណោះ ដែលអាចផ្ញើសេចក្តីជូនដំណឹងបាន។", "Send announcements to staff.": "ផ្ញើសេចក្តីជូនដំណឹងទៅបុគ្គលិក។" });

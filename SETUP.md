@@ -209,6 +209,16 @@ Database: `supabase/update-v20.sql` (already installed on the GID database and t
 - Passwords are stored only in scrambled form, in a part of the database the public website key cannot read.
 - Still a demo: the other tables are open to the public key until the next step (per-role database security). Use sample data only.
 
+## Version 23: announcements, sign in every day, clear alerts, approved rules, staff ID number
+
+Database change: run `supabase/update-v23.sql` once (safe to run again).
+- **Announcements** (Settings): the System Admin, backup admin, MD and HR can send a message to everyone, to departments or to chosen people. It arrives in the app and on Telegram; Important ones stay as a banner on Dashboard / My work until "Got it". The sender sees how many have read it and can withdraw it.
+- **Sign in every day**: every sign-in (staff account or demo passkey) ends at 03:00 Phnom Penh time; staff sign in again for the new day. Unsent site reports are kept and sent after signing in.
+- **Clear alerts**: every app and Telegram alert now has the same layout — kind (action needed, approved, rejected, reminder, announcement, for your information, welcome), what happened with its number, project number and name, amount, date, the same in Khmer, who and when. Drawing uploads and progress changes are bell only (no Telegram). New: possible split PO alerts the MD; "your account is ready" for new staff. Full list: docs/NOTIFICATIONS.md.
+- **Approved rules**: only the project's PM does "PM checked" on a VO; only Finance marks payments paid; PMs act only on their own projects (MD on all); nobody approves their own drawing; only the QA/QC inspector, the project PM or the MD passes/fails/closes QA/QC items.
+- **Staff ID number** on the badge (GID-001…), editable by HR / MD / System Admin in People or with the pencil on the badge.
+- iPhone: buttons inside windows that jump to another screen now work like the menu fix.
+
 ## Version 22: Schedule & Meetings, staff badges, Settings freeze fix
 
 Database change: run `supabase/update-v22.sql` once (adds the `events` and `holidays` tables; safe to run again).

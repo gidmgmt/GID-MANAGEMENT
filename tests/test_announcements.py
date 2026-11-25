@@ -48,7 +48,10 @@ async def main():
         await login(pg, "s07", "admin")
         ok("s07 (site engineer) cannot see the Announcements card", await pg.locator(".card.ann").count() == 0)
         await login(pg, "s01", "admin")
-        ok("MD sees Settings but not the Announcements card", await pg.locator(".card.ann").count() == 0 and await pg.locator(".main h2").count() > 0)
+        ok("MD (owner: may send) sees the Announcements card in Settings", await pg.locator(".card.ann").count() == 1)
+        await login(pg, "s35", "admin")
+        ok("HR (owner: may send) sees the Announcements card", await pg.locator(".card.ann").count() == 1)
+        ok("HR sees only announcements in Settings (no permissions, devices or activity log)", await pg.locator(".main .card").count() == 1 and "Activity log" not in await pg.inner_text(".main"))
         await login(pg, "s30", "admin")
         ok("backup admin (s30) sees the Announcements card", await pg.locator(".card.ann .btn.primary").count() == 1)
 
