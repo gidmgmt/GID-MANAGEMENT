@@ -731,3 +731,23 @@ window.GID_KM_PATTERNS.unshift(
   [/^The announcement was saved, but the alerts could not be sent: (.+)$/, (m) => "បានរក្សាទុកសេចក្តីជូនដំណឹង ប៉ុន្តែមិនអាចផ្ញើដំណឹងបានទេ៖ " + m[1]],
   [/^Signed in until (\d{1,2}:\d{2}) (today|tomorrow)$/, (m) => "បានចូលប្រើរហូតដល់ម៉ោង " + m[1] + (parseInt(m[1], 10) < 12 ? " ព្រឹក" : "") + (m[2] === "today" ? " ថ្ងៃនេះ" : " ថ្ងៃស្អែក")]
 );
+
+// ---------- v23 rules: who may approve, check, pay and close; Staff ID number ----------
+Object.assign(window.GID_KM, {
+  "Only the Project Manager of this project (or the MD) can do this.": "មានតែអ្នកគ្រប់គ្រងគម្រោងនៃគម្រោងនេះ (ឬនាយកគ្រប់គ្រង) ប៉ុណ្ណោះ ដែលអាចធ្វើការនេះបាន។",
+  "Only the Project Manager of this project can do the PM check.": "មានតែអ្នកគ្រប់គ្រងគម្រោងនៃគម្រោងនេះប៉ុណ្ណោះ ដែលអាចធ្វើការពិនិត្យរបស់ PM បាន។",
+  "You did the previous check on this variation, so another person must do this step.": "អ្នកបានធ្វើការពិនិត្យមុននៃការងារកែប្រែនេះរួចហើយ ដូច្នេះត្រូវឱ្យអ្នកផ្សេងធ្វើជំហាននេះ។",
+  "Only Finance staff can mark this as paid.": "មានតែបុគ្គលិកផ្នែកហិរញ្ញវត្ថុប៉ុណ្ណោះ ដែលអាចកត់ថាបានបង់ប្រាក់។",
+  "You created this drawing, so another approver must approve it.": "អ្នកបានបង្កើតប្លង់នេះ ដូច្នេះត្រូវឱ្យអ្នកអនុម័តផ្សេងទៀតអនុម័ត។",
+  "Only the QA/QC inspector, the Project Manager of this project or the MD can pass, fail or close this.": "មានតែអ្នកត្រួតពិនិត្យគុណភាព (QA/QC) អ្នកគ្រប់គ្រងគម្រោងនៃគម្រោងនេះ ឬនាយកគ្រប់គ្រងប៉ុណ្ណោះ ដែលអាចកំណត់ជាប់ មិនជាប់ ឬបិទការងារនេះបាន។",
+  "This step is waiting for someone else.": "ជំហាននេះកំពុងរង់ចាំអ្នកផ្សេង។",
+  "Staff ID number": "លេខសម្គាល់បុគ្គលិក", "Change Staff ID number": "ប្តូរលេខសម្គាល់បុគ្គលិក", "Staff ID number saved": "បានរក្សាទុកលេខសម្គាល់បុគ្គលិក",
+  "Example: GID-041. Shown on the staff badge.": "ឧទាហរណ៍៖ GID-041។ បង្ហាញលើកាតបុគ្គលិក។",
+  "Only HR, the MD or the System Admin can change the Staff ID number.": "មានតែផ្នែកធនធានមនុស្ស នាយកគ្រប់គ្រង ឬអ្នកគ្រប់គ្រងប្រព័ន្ធប៉ុណ្ណោះ ដែលអាចប្តូរលេខសម្គាល់បុគ្គលិកបាន។"
+});
+window.GID_KM_PATTERNS.unshift(
+  [/^Staff ID number · (.+)$/, (m) => "លេខសម្គាល់បុគ្គលិក · " + m[1]],
+  [/^Staff ID number (.+) is already used by (.+)\. Choose another number\.$/, (m) => "លេខសម្គាល់បុគ្គលិក " + m[1] + " ត្រូវបានប្រើដោយ " + m[2] + " រួចហើយ។ សូមជ្រើសលេខផ្សេង។"],
+  [/^Staff ID number of (.+): (.+)$/, (m) => "លេខសម្គាល់បុគ្គលិករបស់ " + m[1] + "៖ " + m[2]],
+  [/^(PO-\d+) is already (.+)\.$/, (m, tr) => m[1] + " " + (tr(m[2]) || m[2]) + " រួចហើយ។"]
+);

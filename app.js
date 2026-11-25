@@ -195,7 +195,7 @@
   const isSysAdmin = (u) => hasTag(u, "SYSADMIN");
   const isPMRole = (u) => groupsOf(u).includes("PM") || hasTag(u, "PD");
   // Who may manage a project's team and progress: the MD, any Project Manager, the system admin
-  const canManageProject = (u) => hasTag(u, "MD") || isPMRole(u) || isSysAdmin(u);
+  const canManageProject = (u, pid) => hasTag(u, "MD") || (pid == null ? isPMRole(u) : isPMof(u, pid)) || isSysAdmin(u); // v23: with a project, only that project's PM
   const isAdminPage = (u) => hasTag(u, "SYSADMIN") || hasTag(u, "BACKUPADMIN") || hasTag(u, "MD");
 
   // Permission matrix in use: the standard one, with the changes saved by the MD or system admin on top
@@ -240,7 +240,16 @@
   }
   const inScope = (u, pid) => { const s = projectScope(u); return !pid || !s || s.has(pid); };
   const myProjects = (u) => db.projects.filter((p) => inScope(u, p.id));
-  const isPMof = (u, pid) => { const p = byId("projects", pid); return (p && p.pm_id === u.id) || isPMRole(u); };
+  // v23 rules: a PM acts only on their own projects (the project's PM, or listed as a PM in its team). The MD is checked separately where the MD may act.
+  const projectPMs = (pid) => { const p = byId("projects", pid); if (!p) return [];
+    const ids = [p.pm_id].concat(db.project_members.filter((m) => m.project_id === pid && (/project manager/i.test(m.role || "") || isPMRole(byId("staff", m.staff_id) || { groups: "", tags: "" }))).map((m) => m.staff_id));
+    return ids.filter((x, i) => x && ids.indexOf(x) === i); };
+  const isPMof = (u, pid) => !!(u && pid && projectPMs(pid).includes(u.id));
+  const isFinance = (u) => groupsOf(u).includes("FIN"); // v23 rules: only Finance marks bills, payments and invoices as paid
+  const RULE_MSG = { notPM: "Only the Project Manager of this project (or the MD) can do this.", voPM: "Only the Project Manager of this project can do the PM check.",
+    twice: "You did the previous check on this variation, so another person must do this step.", finance: "Only Finance staff can mark this as paid.",
+    ownDoc: "You created this drawing, so another approver must approve it.", qaClose: "Only the QA/QC inspector, the Project Manager of this project or the MD can pass, fail or close this.",
+    notYours: "This step is waiting for someone else." };
 
   // ================= approval engine =================
   const STEP_LABEL = { PM: "Project Manager approves", QS: "QS checks budget", MD: "MD approves (USD 500 or more)",
@@ -285,7 +294,7 @@
     let ids = [];
     const p = byId("projects", req.project_id);
     switch (step.role) {
-      case "PM": ids = p ? [p.pm_id] : headOf(req.requester_id); if (ids.includes(req.requester_id)) ids = [PD()]; break;
+      case "PM": ids = p ? projectPMs(p.id) : headOf(req.requester_id); if (ids.includes(req.requester_id)) ids = [PD()]; break;
       case "QS": { const qsTeam = req.project_id ? db.project_members.filter((m) => m.project_id === req.project_id && groupsOf(byId("staff", m.staff_id) || { groups: "" }).includes("QS")).map((m) => m.staff_id) : [];
         ids = qsTeam.length ? qsTeam : inGroup("QS").map((s) => s.id); break; }
       case "MD": ids = [MD()]; break;
@@ -307,6 +316,7 @@
   async function decide(req, approve, note, extra) {
     const u = me();
     const step = req.steps[req.step_index];
+    if (req.status !== "Pending" || !approversFor(req).includes(u.id)) throw new Error(RULE_MSG.notYours);
     const history = (req.history || []).concat([{ at: nowIso(), by: u.id, action: approve ? "Approved" : "Rejected", note: note || "" }]);
     if (!approve) { await patch("requests", req.id, { status: "Rejected", history }, req.ref_no + " rejected"); return; }
     const notes = [];
@@ -1876,14 +1886,14 @@
   function overallProgress(list) { const tw = list.reduce((a, x) => a + (Number(x.weight) || 0), 0); return tw ? Math.round(list.reduce((a, x) => a + (Number(x.weight) || 0) * (Number(x.progress) || 0), 0) / tw) : 0; }
   // Who may update progress: the boss, Project Managers, the project's site engineers and the QS team
   function canUpdateProgress(u, p) {
-    if (canManageProject(u) || isSysAdmin(u)) return true;
+    if (canManageProject(u, p.id) || isSysAdmin(u)) return true;
     const g = groupsOf(u), mine = db.project_members.some((m) => m.project_id === p.id && m.staff_id === u.id);
     if (g.includes("SITE")) return mine || hasTag(u, "SITEMGR");
     if (g.includes("QS")) return mine || !teamOf(p.id, "QS").length;
     return false;
   }
   // Only the boss, PMs and QS change the scopes and their shares; site engineers enter progress only
-  const canSetShares = (u) => canManageProject(u) || isSysAdmin(u) || groupsOf(u).includes("QS");
+  const canSetShares = (u, pid) => canManageProject(u, pid) || isSysAdmin(u) || groupsOf(u).includes("QS");
   const HOW_CALC = "How it is calculated: each scope's share of the project × its progress, added together. Example: Structure 40% share at 50% done + Architecture 60% share at 20% done = 20% + 12% = 32% for the project. Shares must add up to 100%.";
   function scopePicker(sel) {
     sel = sel || [];
@@ -1904,7 +1914,7 @@
       <tfoot><tr><td><b>Project</b></td><td class="r">${list.reduce((a, x) => a + (Number(x.weight) || 0), 0)}%</td><td>${bar(overallProgress(list))} <b class="pc">${overallProgress(list)}%</b></td></tr></tfoot></table><p class="muted small howcalc">${esc(HOW_CALC)}</p>`;
   }
   function updateProgress(p) {
-    const u = me(), shares = canSetShares(u), mgr = canManageProject(u);
+    const u = me(), shares = canSetShares(u, p.id), mgr = canManageProject(u, p.id);
     let list = scopesOf(p).map((x) => Object.assign({}, x));
     const rowsHtml = () => list.map((x, i) => `<tr data-i="${i}"><td><b>${esc(x.scope)}</b>${SCOPE_INFO[x.scope] ? `<small>${esc(SCOPE_INFO[x.scope])}</small>` : ""}</td>
         <td><input class="num sc-w" type="number" min="0" max="100" step="1" inputmode="numeric" value="${esc(x.weight)}" ${shares ? "" : "readonly"} aria-label="Share of project % for ${esc(x.scope)}"></td>
@@ -1946,7 +1956,7 @@
   function openProject(p) { if (p) go("projects/" + encodeURIComponent(p.id)); }
   function openProjectModal(p) {
     const u = me();
-    const canEdit = canManageProject(u);
+    const canEdit = canManageProject(u, p.id);
     const acts = (canUpdateProgress(u, p) ? btn("Update progress", () => updateProgress(p), canEdit ? "" : "primary") : "")
       + (canEdit ? btn("Manage team", () => manageTeam(p), "primary") + btn("Site location", () => editSiteLocation(p)) : btn("Org chart", () => openProjectOrg(p)));
     const li = (m) => `<li>${esc(staffName(m.staff_id))} · <small>${esc(m.role)}</small></li>`;
@@ -2371,7 +2381,8 @@
   };
 
   // ---------- DOCUMENT CONTROL ----------
-  const canReviewDoc = (u) => hasTag(u, "HEAD") && groupsOf(u).includes("DESIGN") || groupsOf(u).includes("ENG") || isSysAdmin(u);
+  const canReviewDoc = (u) => hasTag(u, "HEAD") && groupsOf(u).includes("DESIGN") || groupsOf(u).includes("ENG") || isSysAdmin(u) || hasTag(u, "MD");
+  const docAuthor = (d) => d.owner_id || ""; // v23 rules: the person who created this revision never approves it
   const canIssueDoc = (u) => hasTag(u, "DOC") || isSysAdmin(u);
   const siteOnly = (u) => !can(u, "docs", "edit") && groupsOf(u).some((g) => ["SITE"].includes(g));
   const canEditDoc = (u, d) => can(u, "docs", "edit") && inScope(u, d.project_id);
@@ -2390,7 +2401,8 @@
     if (d.status === "Draft" && edit) acts.push(btn("Send for review", () => { if (!d.file_url) return toast("Upload the PDF before sending for review.", true); go2("In review", d.doc_no + " sent for review", { progress: Math.max(80, Number(d.progress) || 0) }); }, "primary"));
     if (d.status === "In review" && canReviewDoc(u)) {
       acts.push(btn("Return with comments", () => confirmAction("Return " + d.doc_no, [{ name: "notes", label: "Comments", type: "textarea", required: true }], (v) => patch("documents", d.id, { status: "Draft", notes: v.notes }, d.doc_no + " returned"))));
-      acts.push(btn("Approve", () => go2("Approved", d.doc_no + " approved", { progress: 100 }), "primary"));
+      if (docAuthor(d) === u.id) acts.push(`<p class="muted small">${esc(RULE_MSG.ownDoc)}</p>`);
+      else acts.push(btn("Approve", () => { const cur = byId("documents", d.id) || d; if (docAuthor(cur) === me().id) return toast(RULE_MSG.ownDoc, true); if (!canReviewDoc(me())) return toast(RULE_MSG.notYours, true); go2("Approved", d.doc_no + " approved", { progress: 100 }); }, "primary"));
     }
     if (d.status === "Approved" && canIssueDoc(u)) acts.push(btn("Issue to site", async () => {
       const newer = sameNo.find((x) => x.id !== d.id && x.status === "Issued" && Number(x.revision) > Number(d.revision));
@@ -2451,6 +2463,7 @@
   function openClaim(c) {
     const u = me(); const next = claimActionsFor(u, c)[0];
     const run = async (v) => {
+      if (claimActionsFor(me(), byId("claims", c.id) || c)[0] !== next) throw new Error(next === "PM verified" ? RULE_MSG.notPM : RULE_MSG.notYours);
       const hist = (c.history || []).concat([{ at: nowIso(), by: u.id, action: next, note: v.note || "" }]);
       const p = { status: next, history: hist };
       if (next === "Invoiced") {
@@ -2497,7 +2510,8 @@
   // ---------- PROCUREMENT ----------
   function openPO(p) {
     const u = me(); const acts = [];
-    const onSite = groupsOf(u).includes("SITE") && inScope(u, p.project_id) || isPMof(u, p.project_id) || isSysAdmin(u) || hasTag(u, "PROC");
+    const deliveryOk = (x) => groupsOf(x).includes("SITE") && inScope(x, p.project_id) || isPMof(x, p.project_id) || hasTag(x, "MD") || isSysAdmin(x) || hasTag(x, "PROC");
+    const onSite = deliveryOk(u);
     const stockLines = (p.items || []).filter((x) => x.item_id);
     const defStore = (projectStores(p.project_id)[0] || mainStores()[0] || {}).id;
     if (p.status === "Ordered" && onSite) acts.push(btn("Confirm delivery", () => formModal("Confirm delivery · " + p.po_no, [
@@ -2507,6 +2521,8 @@
         : [{ name: "stock_item", label: "Add to stock (optional)", type: "select", options: db.stock_items.map((i) => [i.id, i.code + " " + i.name]), blank: "Not a stock item" },
           { name: "stock_qty", label: "Quantity received into stock", type: "number" }, { name: "stock_store", label: "Into store", type: "select", options: db.stores.map((s) => [s.id, s.name]), value: defStore }]),
       async (v) => {
+        if (!deliveryOk(me())) throw new Error(RULE_MSG.notPM);
+        if ((byId("purchase_orders", p.id) || p).status !== "Ordered") throw new Error(p.po_no + " is already " + (byId("purchase_orders", p.id) || p).status + ".");
         const toStock = v.to_stock === "yes", one = v.stock_item, oneQ = Number(v.stock_qty), store = v.stock_store;
         ["to_stock", "stock_item", "stock_qty", "stock_store"].forEach((k) => delete v[k]);
         if (one && !(oneQ > 0)) throw new Error("Enter the quantity received into stock, or choose 'Not a stock item'.");
@@ -2554,10 +2570,11 @@
   // ---------- FINANCE ----------
   function openInvoice(i) {
     const u = me();
-    const canPay = i.status === "Unpaid" && can(u, "finance", "admin");
+    const canPay = i.status === "Unpaid" && isFinance(u); // v23 rules: Finance only
     detail(i.inv_no + " · " + i.party, [["Type", esc(i.direction)], ["Project", esc(projLabel(i.project_id))], ["Amount", money(i.amount)], ["Due", fmtDate(i.due_date)],
       ["Status", badge(i.status)], ["Paid on", i.paid_at ? fmtDate(i.paid_at) : ""], ["Source", esc(i.source_type === "po" ? (byId("purchase_orders", i.source_id) || {}).po_no : i.source_type === "claim" ? "IPC claim" : i.source_type === "sub_payment" ? "Subcontractor payment " + ((byId("sub_payments", i.source_id) || {}).pc_no || "") : i.source_type === "retention" ? "Retention release" : i.source_type)]],
       canPay ? btn(i.direction === "Payable" ? "Mark paid" : "Mark received", async () => {
+        if (!isFinance(me())) return toast(RULE_MSG.finance, true);
         await patch("invoices", i.id, { status: "Paid", paid_at: nowIso() }, i.inv_no + (i.direction === "Payable" ? " paid" : " received"));
         if (i.source_type === "po") await patch("purchase_orders", i.source_id, { status: "Paid" }, "PO paid");
         if (i.source_type === "sub_payment") { const x = byId("sub_payments", i.source_id); if (x && x.status !== "Paid") await patch("sub_payments", x.id, { status: "Paid", paid_at: nowIso(), history: (x.history || []).concat([{ at: nowIso(), by: u.id, action: "Paid", note: i.inv_no }]) }, x.pc_no + " paid"); }
@@ -2587,6 +2604,7 @@
   // ---------- QA/QC: defects and inspections ----------
   // Raised ("imposed") by the executive, Project Managers, the QS team and QA/QC inspectors, always with a photo or PDF.
   // The site team corrects the defect, again with a photo or PDF; the person who raised it (or the PM) checks and closes it.
+  const canCloseQA = (u, pid) => hasTag(u, "QAQC") || isPMof(u, pid) || hasTag(u, "MD"); // v23 rules: pass/fail and close
   const canRaiseQA = (u) => groupsOf(u).some((g) => ["EXEC", "PM", "QS"].includes(g)) || hasTag(u, "QAQC") || qaqcBoss(u);
   const QA_DISC = ["Architecture", "Structure", "Mechanical", "Electrical", "Plumbing", "Fire", "ELV"];
   const defectNo = (f) => "DEF-" + String(db.defects.slice().sort((a, b) => String(a.created_at || "").localeCompare(String(b.created_at || "")) || String(a.id).localeCompare(String(b.id))).indexOf(f) + 1).padStart(4, "0");
@@ -2636,13 +2654,14 @@
       { name: "result_note", label: result === "Passed" ? "What was checked" : "What failed", type: "textarea", required: true },
       { name: "result_evidence", label: "Photos or files of the result", type: "evidence", required: true, requiredMsg: "Attach a photo, image or PDF of the result.", help: "Required. Photo of the work as inspected, or the signed checklist." }
     ], async (v) => {
+      if (!canCloseQA(me(), i.project_id)) throw new Error(RULE_MSG.qaClose);
       const ev = await storeEvidence(v.result_evidence, "inspection-result");
       await patch("inspections", i.id, { result, result_note: v.result_note, result_evidence: ev, checked_at: nowIso() }, "Inspection " + result.toLowerCase() + ": " + i.title);
     }, result === "Passed" ? "Save: passed" : "Save: failed");
   }
   function openInspection(i) {
     const u = me(); const acts = [];
-    if (i.result === "Open" && (i.inspector_id === u.id || qaqcBoss(u) || canRaiseQA(u))) {
+    if (i.result === "Open" && canCloseQA(u, i.project_id)) {
       acts.push(btn("Failed", () => inspectionResult(i, "Failed"), "danger"));
       acts.push(btn("Passed", () => inspectionResult(i, "Passed"), "primary"));
     }
@@ -2665,13 +2684,13 @@
   }
   function verifyDefect(f, ok) {
     formModal((ok ? "Close" : "Reopen") + " · " + defectNo(f), [{ name: "verify_note", label: ok ? "Checked on site (note)" : "Why it is not accepted", type: "textarea", required: !ok }],
-      async (v) => { await patch("defects", f.id, ok ? { status: "Closed", verify_note: v.verify_note, closed_by: me().id, closed_at: nowIso() } : { status: "Open", verify_note: v.verify_note }, "Defect " + (ok ? "closed" : "reopened") + ": " + f.description); },
+      async (v) => { if (!canCloseQA(me(), f.project_id)) throw new Error(RULE_MSG.qaClose); await patch("defects", f.id, ok ? { status: "Closed", verify_note: v.verify_note, closed_by: me().id, closed_at: nowIso() } : { status: "Open", verify_note: v.verify_note }, "Defect " + (ok ? "closed" : "reopened") + ": " + f.description); },
       ok ? "Close defect" : "Reopen");
   }
   function openDefect(f) {
     const u = me(); const acts = [];
     if (f.status === "Open" && (f.assigned_to === u.id || can(u, "qaqc", "edit") || isPMof(u, f.project_id))) acts.push(btn("Send correction", () => fixDefect(f), "primary"));
-    if (f.status === "Fixed" && (qaqcBoss(u) || isPMof(u, f.project_id) || f.raised_by === u.id || canRaiseQA(u))) { acts.push(btn("Reopen", () => verifyDefect(f, false))); acts.push(btn("Close", () => verifyDefect(f, true), "primary")); }
+    if (f.status === "Fixed" && canCloseQA(u, f.project_id)) { acts.push(btn("Reopen", () => verifyDefect(f, false))); acts.push(btn("Close", () => verifyDefect(f, true), "primary")); }
     acts.push(btn("PDF English", () => qaPdf("defect", f, "en")) + btn("PDF ខ្មែរ", () => qaPdf("defect", f, "km")));
     detail(defectNo(f) + " · " + f.description, [["Project", esc(projLabel(f.project_id))], ["Location", esc(f.location)], ["Discipline", esc(f.discipline)], ["Priority", f.priority ? badge(f.priority) : ""],
       ["Raised by", esc(staffName(f.raised_by))], ["Assigned to", esc(staffName(f.assigned_to))], ["Fix by", fmtDate(f.due_date)], ["Status", badge(f.status)],
@@ -2794,7 +2813,7 @@
     }, "Send record");
   }
   // PMs, the Site Manager and site engineers on the project may close an open record, with proof of the correction
-  const canCloseSafety = (u, s) => s.status === "Open" && (can(u, "safety", "approve") || hasTag(u, "SITEMGR") || (groupsOf(u).includes("SITE") && inScope(u, s.project_id)) || isPMRole(u));
+  const canCloseSafety = (u, s) => s.status === "Open" && (can(u, "safety", "approve") || hasTag(u, "SITEMGR") || (groupsOf(u).includes("SITE") && inScope(u, s.project_id)) || isPMof(u, s.project_id)) && !(isPMRole(u) && !isPMof(u, s.project_id) && !isSysAdmin(u));
   function closeSafety(s) {
     formModal("Close · " + s.rec_type, [
       { name: "correction", label: "What was corrected", type: "textarea", required: true, value: s.correction || "" },
@@ -3168,10 +3187,11 @@
   const isQS = (u) => groupsOf(u).includes("QS");
   function voActions(u, v) {
     const pm = isPMof(u, v.project_id) || hasTag(u, "MD"), out = [];
+    const pmOnly = isPMof(u, v.project_id) && voLastBy(v, "Priced") !== u.id; // v23 rules: only this project's PM, never the person who priced it
     const step = (label, to, cls, fields, extra) => out.push([label, to, cls, fields, extra]);
     if (["Raised", "Priced"].includes(v.status) && (isQS(u) || isSysAdmin(u))) step(v.status === "Raised" ? "Price it" : "Change price", "price", v.status === "Raised" ? "primary" : "");
-    if (v.status === "Priced" && pm) { step("Back to QS", "Raised", "", [{ name: "note", label: "What to change", type: "textarea", required: true }]); step("PM checked", "PM checked", "primary"); }
-    if (v.status === "PM checked" && hasTag(u, "MD")) { step("Back to QS", "Raised", "", [{ name: "note", label: "What to change", type: "textarea", required: true }]); step("Approve price", "MD approved", "primary"); }
+    if (v.status === "Priced" && pmOnly) { step("Back to QS", "Raised", "", [{ name: "note", label: "What to change", type: "textarea", required: true }]); step("PM checked", "PM checked", "primary"); }
+    if (v.status === "PM checked" && hasTag(u, "MD") && voLastBy(v, "PM checked") !== u.id) { step("Back to QS", "Raised", "", [{ name: "note", label: "What to change", type: "textarea", required: true }]); step("Approve price", "MD approved", "primary"); }
     if (v.status === "MD approved" && (pm || isQS(u))) step("Sent to client", "Sent to client", "primary", [{ name: "client_ref", label: "How it was sent", value: "Email to client", required: true }]);
     if (v.status === "Sent to client" && (pm || isQS(u))) {
       step("Client rejected", "Client rejected", "danger", [{ name: "note", label: "Why did the client reject it?", type: "textarea", required: true }]);
@@ -3181,7 +3201,14 @@
     if (["Raised", "Priced", "PM checked"].includes(v.status) && (v.raised_by === u.id || pm)) step("Cancel VO", "Cancelled", "danger", [{ name: "note", label: "Why?", type: "textarea", required: true }]);
     return out;
   }
+  const voLastBy = (v, action) => { const h = (v.history || []).filter((x) => x.action === action); return (h[h.length - 1] || {}).by; };
+  function voRefusal(u, v, to) {
+    if (to === "PM checked" && !isPMof(u, v.project_id)) return RULE_MSG.voPM;
+    if ((to === "PM checked" && voLastBy(v, "Priced") === u.id) || (to === "MD approved" && voLastBy(v, "PM checked") === u.id)) return RULE_MSG.twice;
+    return voActions(u, v).some((a) => a[1] === to) ? "" : RULE_MSG.notYours;
+  }
   async function voMove(v, to, x) {
+    const why = voRefusal(me(), byId("variations", v.id) || v, to); if (why) throw new Error(why);
     const u = me(), hist = (v.history || []).concat([{ at: nowIso(), by: u.id, action: to === "Raised" ? "Back to QS" : to === "MD approved" ? "MD approved price" : to, note: (x && (x.note || x.client_ref)) || "" }]);
     const p = { status: to, history: hist };
     if (x && x.client_ref) p.client_ref = x.client_ref;
@@ -3236,7 +3263,7 @@
     }, "Add to claim");
   }
   function openVO(v) {
-    const u = me(), acts = voActions(u, v).map(([label, to, cls, fields]) => btn(label, () => to === "price" ? priceVO(v) : to === "claim" ? voToClaim(v) : fields ? formModal(label + " · " + v.vo_no, fields, (x) => voMove(v, to, x), label) : voMove(v, to).then(() => { closeModal(); render(); toast(v.vo_no + ": " + to); }), cls));
+    const u = me(), acts = voActions(u, v).map(([label, to, cls, fields]) => btn(label, () => to === "price" ? priceVO(v) : to === "claim" ? voToClaim(v) : fields ? formModal(label + " · " + v.vo_no, fields, (x) => voMove(v, to, x), label) : voMove(v, to).then(() => { closeModal(); render(); toast(v.vo_no + ": " + to); }, (e) => toast(e.message, true)), cls));
     acts.push(btn("PDF English", () => voPdf(v, "en")) + btn("PDF ខ្មែរ", () => voPdf(v, "km")));
     if (!["In claim", "Client rejected", "Cancelled"].includes(v.status)) acts.push(schedBtn(u, "variations", v, { type: "Meeting", title: v.vo_no + " · " + v.title }));
     const p = byId("projects", v.project_id) || {}, c = v.claim_id ? byId("claims", v.claim_id) : null;
@@ -3353,11 +3380,12 @@
     const pm = isPMof(u, k.project_id) || hasTag(u, "MD"), out = [];
     if (x.status === "Claimed" && (isQS(u) || isSysAdmin(u))) out.push(["QS check", "QS checked", "primary", [{ name: "certified", label: "Amount certified (USD)", type: "number", value: x.claimed, required: true, help: k.retention_pct ? "Retention " + k.retention_pct + "% is kept from this amount." : "No retention on this contract." }, { name: "note", label: "Note", type: "textarea" }]]);
     if (x.status === "QS checked" && pm) { out.push(["Back to QS", "Claimed", "", [{ name: "note", label: "What to check again", type: "textarea", required: true }]]); out.push(["PM approve", "PM approved", "primary", null]); }
-    if (x.status === "PM approved" && can(u, "finance", "admin")) out.push(["Mark paid", "Paid", "primary", null]);
+    if (x.status === "PM approved" && isFinance(u)) out.push(["Mark paid", "Paid", "primary", null]);
     return out;
   }
   async function payMove(x, k, to, v) {
     const u = me(), s = byId("subcontractors", k.sub_id) || {}, p = { status: to, history: (x.history || []).concat([{ at: nowIso(), by: u.id, action: to, note: (v && v.note) || "" }]) };
+    if (!payActions(u, byId("sub_payments", x.id) || x, k).some((a) => a[1] === to)) throw new Error(to === "Paid" ? RULE_MSG.finance : ["PM approved", "Claimed"].includes(to) && x.status === "QS checked" ? RULE_MSG.notPM : RULE_MSG.notYours);
     if (to === "QS checked") {
       const cert = Number(v.certified);
       if (!(cert >= 0)) throw new Error("Enter the amount certified.");
@@ -3373,7 +3401,7 @@
   }
   function openPayment(x) {
     const u = me(), k = byId("sub_contracts", x.contract_id) || {}, s = byId("subcontractors", k.sub_id) || {};
-    const acts = payActions(u, x, k).map(([label, to, cls, fields]) => btn(label, () => fields ? formModal(label + " · " + x.pc_no, fields, (v) => payMove(x, k, to, v), label) : payMove(x, k, to).then(() => { closeModal(); render(); toast(x.pc_no + ": " + to); }), cls)).join("");
+    const acts = payActions(u, x, k).map(([label, to, cls, fields]) => btn(label, () => fields ? formModal(label + " · " + x.pc_no, fields, (v) => payMove(x, k, to, v), label) : payMove(x, k, to).then(() => { closeModal(); render(); toast(x.pc_no + ": " + to); }, (e) => toast(e.message, true)), cls)).join("");
     detail(s.name + " · " + x.pc_no, [["Project", esc(projLabel(k.project_id))], ["Scope", esc(k.scope)], ["Work done up to", fmtDate(x.period_to)], ["Claimed", money(x.claimed)],
       ["Certified by QS", x.status === "Claimed" ? "—" : money(x.certified)], ["Retention kept", k.retention_pct ? money(x.retention_amt) + " (" + esc(k.retention_pct) + "%)" : "No retention"], ["To pay", x.status === "Claimed" ? "—" : "<b>" + money(x.certified - x.retention_amt) + "</b>"],
       ["Status", badge(x.status)], x.note ? ["Note", esc(x.note)] : null], acts, `${stepper(PC_FLOW, x.status, x.status === "Paid")}${(x.evidence || []).length ? `<h4>Claim documents</h4>${evidenceHtml(x.evidence)}` : ""}<h4>History</h4>${histList(x.history)}`);
@@ -3580,7 +3608,7 @@
       ["Handover items done", items.filter((h) => h.status !== "Pending").length + " / " + items.length], ["Warranties ending ≤ 60 days", String(ws.filter((w) => wDays(w) >= 0 && wDays(w) <= 60).length), "", ws.some((w) => wDays(w) >= 0 && wDays(w) <= 14) ? "r" : ""],
       p ? ["Defect liability ends", dl ? fmtDate(dl) : "—", p.handover_date ? (p.dlp_months || 12) + " months after handover " + fmtDate(p.handover_date) : "Set the handover date"] : ["Projects", String(pids.size)]])}
       <div class="tc-grid">${sys}</div>
-      <div class="sec-h"><h2>Test sheets</h2>${edit ? btn("New test sheet", () => newTest(u, pid), "primary") : ""}${p && canManageProject(u) ? btn("Set handover date", () => setHandoverDate(p)) : ""}</div>
+      <div class="sec-h"><h2>Test sheets</h2>${edit ? btn("New test sheet", () => newTest(u, pid), "primary") : ""}${p && canManageProject(u, p.id) ? btn("Set handover date", () => setHandoverDate(p)) : ""}</div>
       ${table([{ label: "No.", get: (t) => `<small>${esc(t.test_no)}</small>` }, { label: "Test", get: (t) => `<b>${esc(TT[t.test_type].name)}</b><br><small>${esc(t.location)}</small>` }, pid ? null : { label: "Project", get: (t) => esc(projLabel(t.project_id)) }, { label: "System", get: (t) => esc(t.system) },
         { label: "Date", get: (t) => fmtDate(t.test_date) }, { label: "Lines", get: (t) => String((t.rows || []).length) }, { label: "Result", get: (t) => badge(t.result) }].filter(Boolean), tests, openTest)}
       <div class="sec-h"><h2>Handover pack</h2>${edit ? btn("Add item", () => hoItemForm(u, pid)) : ""}</div>
@@ -3633,7 +3661,7 @@
   }
   function projectTeam(u, p) {
     const mem = db.project_members.filter((m) => m.project_id === p.id).map((m) => [m, byId("staff", m.staff_id)]).filter(([, s]) => s && !s.left_on);
-    return `<section class="card"><div class="card-head"><h2>Project org chart</h2>${btn("Full view and PDF", () => openProjectOrg(p))}${canManageProject(u) ? btn("Manage team", () => manageTeam(p), "primary") : ""}</div>${orgChartHtml(projectOrgData(p))}</section>
+    return `<section class="card"><div class="card-head"><h2>Project org chart</h2>${btn("Full view and PDF", () => openProjectOrg(p))}${canManageProject(u, p.id) ? btn("Manage team", () => manageTeam(p), "primary") : ""}</div>${orgChartHtml(projectOrgData(p))}</section>
       <section class="card"><div class="card-head"><h2>Team list <span class="count">${mem.length + 1}</span></h2></div><ul class="people">${[byId("staff", p.pm_id)].filter(Boolean).map((s) => `<li data-act="${act(() => openPerson(s))}">${avatar(s)}<b>${esc(s.name)}</b><small>Project Manager${s.phone ? " · " + esc(s.phone) : ""}</small></li>`).join("")}${mem.map(([m, s]) => `<li data-act="${act(() => openPerson(s))}">${avatar(s)}<b>${esc(s.name)}</b><small>${esc(s.title)}${s.phone ? " · " + esc(s.phone) : ""}</small></li>`).join("")}</ul></section>`;
   }
   function projectPage(u, p) {
@@ -3649,7 +3677,7 @@
       body = subTable(list, p.id) + `<div class="sec-h"><h2>Payment certificates</h2></div>` + payTable(pays.sort((a, b) => (a.status === "Paid") - (b.status === "Paid") || String(b.period_to).localeCompare(String(a.period_to)))); }
     else if (cur === "handover") body = handoverBody(u, new Set([p.id]), p.id);
     else body = embedScreen(cur, u, p.id);
-    const acts = (canUpdateProgress(u, p) ? btn("Update progress", () => updateProgress(p), "primary") : "") + (canManageProject(u) ? btn("Site location", () => editSiteLocation(p)) : "")
+    const acts = (canUpdateProgress(u, p) ? btn("Update progress", () => updateProgress(p), "primary") : "") + (canManageProject(u, p.id) ? btn("Site location", () => editSiteLocation(p)) : "")
       + schedBtn(u, "projects", p, { type: "Site visit", title: "Site visit · " + p.code, location: p.name });
     return `<h1>Projects</h1><p class="muted">${esc(p.code)} · everything about this job in one place</p>
       <a class="backlink" href="#projects">‹ All projects</a>
@@ -3682,6 +3710,7 @@
       { name: "name", label: "Full name", required: true, value: s.name || "", help: "Family name first, as on the ID card. Example: Sok Dara" },
       { name: "short_name", label: "Called (short name)", value: s.short_name || "", help: "How the team calls this person. Empty = the last part of the name." },
       { name: "title", label: "Job title", required: true, value: s.title || "", help: "Example: Site Engineer" },
+      { name: "staff_no", label: "Staff ID number", value: isNew ? nextStaffNo() : (s.staff_no || ""), help: "Example: GID-041. Shown on the staff badge." },
       { name: "dept", label: "Department", type: "select", required: true, options: Object.keys(DEPT_NAME).map((k) => [k, DEPT_NAME[k]]), value: dept },
       { name: "phone", label: "Phone number", required: true, value: s.phone || "", help: "Example: 012 345 678" },
       { name: "telegram_user", label: "Telegram username", value: s.telegram_user || "", help: "Example: @sokdara (optional)" },
@@ -3699,7 +3728,7 @@
       const ph = (v.photo || []).filter((x) => x.type !== "pdf");
       const photo = ph.length ? (await storeEvidence(ph.slice(0, 1), "staff-photo"))[0].url : (s.photo || "");
       const row = { name: v.name.trim(), short_name: v.short_name || "", title: v.title.trim(), groups: [v.dept].concat(extra).join(","), phone: v.phone, telegram_user: v.telegram_user || "", email: v.email || "",
-        start_date: v.start_date || null, desk: v.desk || "", photo };
+        start_date: v.start_date || null, desk: v.desk || "", photo, staff_no: checkStaffNo(v.staff_no, s.id) };
       if (admin) row.tags = v.tags || ""; else if (isNew) row.tags = "";
       if (!isNew) { await patch("staff", s.id, row, "Staff details updated: " + row.name + " · " + row.title); return; }
       if (db.staff.some((x) => !x.left_on && x.name.toLowerCase() === row.name.toLowerCase())) throw new Error(row.name + " is already in the staff list.");
@@ -3740,7 +3769,23 @@
 
   // ---------- (v22) staff profile: two hanging badges (front and back) that drop in from the top of the screen ----------
   // Shows exactly what the old profile window showed (same permission checks). Back button, Escape and the phone's Back close it.
-  const staffNo = (s) => { const id = String(s.id || ""); return (/^s\d+$/i.test(id) ? id : id.slice(0, 8)).toUpperCase(); };
+  const staffNo = (s) => { if (String(s.staff_no || "").trim()) return String(s.staff_no).trim(); const id = String(s.id || ""); return (/^s\d+$/i.test(id) ? id : id.slice(0, 8)).toUpperCase(); };
+  // (v23) Staff ID number: HR, the MD and the System Admin set it; two active staff never share one
+  const nextStaffNo = () => "GID-" + String(Math.max(0, ...db.staff.map((x) => parseInt(String(x.staff_no || "").replace(/\D/g, ""), 10) || 0)) + 1).padStart(3, "0");
+  function checkStaffNo(no, selfId) {
+    no = String(no || "").trim().toUpperCase();
+    const other = no && db.staff.find((x) => !x.left_on && x.id !== selfId && String(x.staff_no || "").trim().toUpperCase() === no);
+    if (other) throw new Error("Staff ID number " + no + " is already used by " + other.name + ". Choose another number.");
+    return no;
+  }
+  function editStaffNo(s) {
+    formModal("Staff ID number · " + s.name, [{ name: "staff_no", label: "Staff ID number", value: s.staff_no || "", help: "Example: GID-041. Shown on the staff badge." }], async (v) => {
+      if (!canManageStaff(me())) throw new Error("Only HR, the MD or the System Admin can change the Staff ID number.");
+      const no = checkStaffNo(v.staff_no, s.id);
+      await patch("staff", s.id, { staff_no: no }, "Staff ID number of " + s.name + ": " + (no || "removed"));
+      toast("Staff ID number saved");
+    }, "Save");
+  }
   const STRAP_TXT = Array(14).fill("GREEN IN DESIGN").join(" · ");
   const BADGE_CLIP = `<svg class="bdg-clip" viewBox="0 0 48 92" aria-hidden="true"><defs>
       <linearGradient id="bdgm" x1="0" x2="1"><stop offset="0" stop-color="#8d9a92"/><stop offset=".35" stop-color="#f4f7f5"/><stop offset=".6" stop-color="#b9c4bd"/><stop offset="1" stop-color="#6d7a72"/></linearGradient>
@@ -3772,7 +3817,7 @@
       <div class="bdg-photo">${avatar(s, "bdg-ph")}</div>
       <div class="bdg-who"><h2 class="bdg-name">${esc(s.name)}</h2>${s.short_name && s.short_name !== s.name ? `<p class="bdg-short">“${esc(s.short_name)}”</p>` : ""}</div>
       <hr><div class="bdg-pos"><small>Position</small><b>${esc(s.title)}</b></div><hr>
-      <div class="bdg-foot"><span class="bdg-id"><small>Staff ID</small><b>${esc(staffNo(s))}</b></span><span class="bdg-dept"><small>Department</small><b>${depts.map((d) => `<span>${esc(d)}</span>`).join("")}</b></span></div>`;
+      <div class="bdg-foot"><span class="bdg-id"><small>Staff ID</small><b>${esc(staffNo(s))}</b>${canManageStaff(u) && !s.left_on ? `<button type="button" class="bdg-noedit" data-act="${act(off(() => editStaffNo(s)))}" aria-label="Change Staff ID number" title="Change Staff ID number">✎</button>` : ""}</span><span class="bdg-dept"><small>Department</small><b>${depts.map((d) => `<span>${esc(d)}</span>`).join("")}</b></span></div>`;
     const back = `<div class="bdg-brand"><img src="img/logo-mark.png" alt="GID"><span><b>Green In Design</b><small>Structure · Architecture · MEP · ELV</small></span></div>
       <dl class="bdg-info">${[
         row("Phone", s.phone ? `<a href="tel:${esc(tel)}">${esc(s.phone)}</a>` : '<span class="bdg-muted">Not set</span>'),
@@ -3894,11 +3939,11 @@
   }
   function openProjectOrg(p) {
     openModal("Org chart · " + p.code, `<p class="muted small">${esc(p.name)} · made from the team assigned in Manage team. Tap a person to see details.</p>${orgChartHtml(projectOrgData(p))}
-      <div class="form-actions">${canManageProject(me()) ? btn("Manage team", () => manageTeam(p)) : ""}${btn("PDF English", () => orgChartPdf(p, "en"), "primary")}${btn("PDF ខ្មែរ", () => orgChartPdf(p, "km"), "primary")}</div>`, (m) => m.querySelector(".modal").classList.add("wide"));
+      <div class="form-actions">${canManageProject(me(), p.id) ? btn("Manage team", () => manageTeam(p)) : ""}${btn("PDF English", () => orgChartPdf(p, "en"), "primary")}${btn("PDF ខ្មែរ", () => orgChartPdf(p, "km"), "primary")}</div>`, (m) => m.querySelector(".modal").classList.add("wide"));
   }
 
   SCREENS.people = (u) => {
-    const rows = staffNow().filter((s) => matchSearch(s, ["name", "title", "phone"]));
+    const rows = staffNow().filter((s) => matchSearch(s, ["name", "title", "phone", "staff_no"]));
     if (state.tab.people === "accounts" && !canAccounts(u)) state.tab.people = "chart";
     const t = tabs("people", [["chart", "Org chart"], ["list", "List"]].concat(canAccounts(u) ? [["accounts", "Accounts"]] : []));
     let content;
