@@ -143,7 +143,7 @@ begin
     ('finance', 'Finance', 'ហិរញ្ញវត្ថុ'),
     ('qaqc', 'QA/QC', 'ត្រួតពិនិត្យគុណភាព'),
     ('safety', 'Safety', 'សុវត្ថិភាព'),
-    ('svr', 'Site visits', 'ការចុះពិនិត្យទីតាំង'),
+    ('svr', 'Site visits', 'ចុះពិនិត្យទីតាំង'),
     ('vo', 'Variations (VO)', 'ការងារកែប្រែ (VO)'),
     ('subs', 'Subcontractors', 'អ្នកម៉ៅការបន្ត'),
     ('handover', 'Testing & Handover', 'តេស្ត និងប្រគល់ការងារ'),
@@ -188,7 +188,7 @@ begin
                 else '📢 <b>ANNOUNCEMENT · សេចក្តីជូនដំណឹង</b>' end
       || nl || '<b>' || tg_esc(private.tg_cut(a_title, 250)) || '</b>'
       || case when a_msg <> '' then nl || nl || tg_esc(private.tg_cut(a_msg, 3300)) else '' end
-      || case when full_len > 3300 then nl || '<i>Read the rest in GID / អានបន្តក្នុង GID</i>' else '' end
+      || case when full_len > 3300 then nl || '<i>Read the rest in GID / អានបន្តនៅក្នុង GID</i>' else '' end
       || nl || nl || foot;
 
   elsif new.tbl = 'welcome' and k in ('', 'welcome') then
@@ -209,9 +209,9 @@ begin
     -- v23 layout: kind · module, title with reference, details, Khmer, footer
     select * into md from private.tg_module(new.module, new.tbl);
     select x.i, x.e, x.km into icon, kind_en, kind_km from (values
-      ('action', '⚠️', 'ACTION NEEDED', 'រង់ចាំអ្នកចាត់ការ'),
+      ('action', '⚠️', 'ACTION NEEDED', 'អ្នកត្រូវចាត់ការ'),
       ('approved', '✅', 'APPROVED / DONE', 'បានអនុម័ត / រួចរាល់'),
-      ('rejected', '❌', 'REJECTED / RETURNED', 'បានបដិសេធ / បញ្ជូនត្រឡប់'),
+      ('rejected', '❌', 'REJECTED / RETURNED', 'បានបដិសេធ / បញ្ជូនមកវិញ'),
       ('reminder', '📅', 'REMINDER', 'ការរំលឹក'),
       ('info', 'ℹ️', 'FOR YOUR INFORMATION', 'សម្រាប់ជាព័ត៌មាន'),
       ('welcome', '🎉', 'WELCOME', 'សូមស្វាគមន៍')
@@ -293,8 +293,8 @@ begin
          'Signed up with ' || btrim(p_login) || coalesce(' · "' || nullif(left(btrim(coalesce(p_note, '')), 120), '') || '"', '')
            || '. Check who it is, link the staff profile and approve, or reject.',
          'accounts', acc::text, false, now(), 'action', 'people',
-         'គណនីថ្មីរង់ចាំការអនុម័ត: ' || nm,
-         'សូមពិនិត្យ ភ្ជាប់ទៅប្រវត្តិរូបបុគ្គលិក រួចអនុម័ត ឬបដិសេធ។'
+         'គណនីថ្មីរង់ចាំការអនុម័ត៖ ' || nm,
+         'សូមពិនិត្យថាជានរណា ភ្ជាប់ទៅប្រវត្តិរូបបុគ្គលិក រួចអនុម័ត ឬបដិសេធ។'
   from public.staff st
   where st.left_on is null
     and (private.has_tag(st.tags, 'HR') or private.has_tag(st.tags, 'SYSADMIN') or private.has_tag(st.tags, 'BACKUPADMIN'));

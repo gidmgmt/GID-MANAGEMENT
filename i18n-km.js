@@ -701,26 +701,26 @@ Object.assign(window.GID_KM, {
 })();
 
 // ---------- v23: announcements (Settings) + sign in every day ----------
-// (written by the front-end developer; gid-khmer-ux please review)
+// (written by the front-end developer; Khmer reviewed by gid-khmer-ux)
 Object.assign(window.GID_KM, {
   "Announcements": "សេចក្តីជូនដំណឹង", "Announcement": "សេចក្តីជូនដំណឹង", "New announcement": "សេចក្តីជូនដំណឹងថ្មី",
-  "Write a message to everyone, or to chosen departments or people. It shows at the top of their Dashboard and My work, in Alerts, and on Telegram.": "សរសេរសារទៅកាន់បុគ្គលិកទាំងអស់ ឬទៅផ្នែក ឬបុគ្គលិកដែលបានជ្រើស។ សារនេះបង្ហាញនៅខាងលើផ្ទាំងគ្រប់គ្រង និងការងាររបស់ខ្ញុំ ក្នុងដំណឹង និងនៅលើ Telegram។",
+  "Write a message to everyone, or to chosen departments or people. It shows at the top of their Dashboard and My work, in Alerts, and on Telegram.": "សរសេរសារទៅបុគ្គលិកទាំងអស់ ឬទៅផ្នែក ឬបុគ្គលិកដែលបានជ្រើស។ សារនេះបង្ហាញនៅខាងលើផ្ទាំងគ្រប់គ្រង និងការងាររបស់ខ្ញុំ ក្នុងដំណឹង និងក្នុង Telegram។",
   "The announcements table is not in the database yet. Paste supabase/update-v23.sql into Supabase → SQL Editor and press Run.": "តារាងសេចក្តីជូនដំណឹងមិនទាន់មាននៅក្នុងមូលដ្ឋានទិន្នន័យនៅឡើយទេ។ សូមបិទភ្ជាប់ supabase/update-v23.sql ទៅក្នុង Supabase → SQL Editor ហើយចុច Run។",
   "Sent by": "ផ្ញើដោយ", "Sent to": "ផ្ញើទៅ", "Read by": "បានអានដោយ", "Withdraw": "ដកវិញ", "Withdrawn": "បានដកវិញ", "Important": "សំខាន់",
   "1 person": "1 នាក់", "Got it": "យល់ហើយ", "Read all": "អានទាំងអស់", "Message": "សារ", "Importance": "កម្រិតសំខាន់", "Send to": "ផ្ញើទៅ",
   "Chosen departments or people": "ផ្នែក ឬបុគ្គលិកដែលបានជ្រើស", "Departments and people": "ផ្នែក និងបុគ្គលិក", "Preview: how people will see it": "មើលជាមុន៖ របៀបដែលបុគ្គលិកនឹងឃើញ",
   "Short, for example: Office closed on Friday": "ខ្លីៗ ឧទាហរណ៍៖ ការិយាល័យបិទនៅថ្ងៃសុក្រ", "Line breaks are kept. Up to 2000 characters.": "ការចុះបន្ទាត់ត្រូវបានរក្សាទុក។ យ៉ាងច្រើន 2000 តួអក្សរ។",
-  "Important stays at the top of Dashboard and My work until each person taps Got it. Normal shows there until it is read or until the date below.": "សារសំខាន់នៅខាងលើផ្ទាំងគ្រប់គ្រង និងការងាររបស់ខ្ញុំ រហូតដល់ម្នាក់ៗចុច យល់ហើយ។ សារធម្មតាបង្ហាញនៅទីនោះ រហូតដល់បានអាន ឬដល់កាលបរិច្ឆេទខាងក្រោម។",
+  "Important stays at the top of Dashboard and My work until each person taps Got it. Normal shows there until it is read or until the date below.": "សារសំខាន់នៅខាងលើផ្ទាំងគ្រប់គ្រង និងការងាររបស់ខ្ញុំ រហូតដល់ម្នាក់ៗចុច «យល់ហើយ»។ សារធម្មតាបង្ហាញនៅទីនោះ រហូតដល់បានអាន ឬដល់កាលបរិច្ឆេទខាងក្រោម។",
   "Show on Dashboard and My work until": "បង្ហាញលើផ្ទាំងគ្រប់គ្រង និងការងាររបស់ខ្ញុំ រហូតដល់",
   "Write a title and a message.": "សូមសរសេរចំណងជើង និងសារ។", "The message is too long: up to 2000 characters.": "សារវែងពេក៖ យ៉ាងច្រើន 2000 តួអក្សរ។",
   "Choose at least one person (other than you).": "សូមជ្រើសយ៉ាងហោចណាស់ម្នាក់ (ក្រៅពីអ្នក)។", "Send to 1 person?": "ផ្ញើទៅ 1 នាក់?", "Sent to 1 person": "បានផ្ញើទៅ 1 នាក់",
   "This announcement was withdrawn.": "សេចក្តីជូនដំណឹងនេះត្រូវបានដកវិញ។", "This announcement was not sent to you.": "សេចក្តីជូនដំណឹងនេះមិនបានផ្ញើមកអ្នកទេ។",
   "Only the System Admin can do this.": "មានតែអ្នកគ្រប់គ្រងប្រព័ន្ធទេដែលអាចធ្វើបាន។", "Announcement withdrawn": "បានដកសេចក្តីជូនដំណឹងវិញ",
-  "Withdraw this announcement? It disappears from everyone's Dashboard and My work. It stays in the history.": "ដកសេចក្តីជូនដំណឹងនេះវិញ? វានឹងបាត់ពីផ្ទាំងគ្រប់គ្រង និងការងាររបស់ខ្ញុំ របស់អ្នកទាំងអស់គ្នា។ វានៅតែមានក្នុងប្រវត្តិ។",
+  "Withdraw this announcement? It disappears from everyone's Dashboard and My work. It stays in the history.": "ដកសេចក្តីជូនដំណឹងនេះវិញ? វានឹងបាត់ពីផ្ទាំងគ្រប់គ្រង និងការងាររបស់ខ្ញុំ របស់គ្រប់គ្នា ប៉ុន្តែនៅតែមានក្នុងប្រវត្តិ។",
   // sign in every day
-  "Please sign in again for today.": "សូមចូលប្រើម្តងទៀតសម្រាប់ថ្ងៃនេះ។", "Everyone signs in again each day after 3:00 am. Please sign in.": "បុគ្គលិកទាំងអស់ត្រូវចូលប្រើម្តងទៀតជារៀងរាល់ថ្ងៃ បន្ទាប់ពីម៉ោង 3:00 ព្រឹក។ សូមចូលប្រើ។",
-  "Action needed": "រង់ចាំអ្នកចាត់ការ", "Your sign-in for today has ended.": "ការចូលប្រើរបស់អ្នកសម្រាប់ថ្ងៃនេះបានបញ្ចប់ហើយ។",
-  "Save your work now. You will be asked to sign in again when you close this window.": "សូមរក្សាទុកការងាររបស់អ្នកឥឡូវនេះ។ អ្នកនឹងត្រូវចូលប្រើម្តងទៀត នៅពេលបិទផ្ទាំងនេះ។"
+  "Please sign in again for today.": "សូមចូលប្រើម្តងទៀតសម្រាប់ថ្ងៃនេះ។", "Everyone signs in again each day after 3:00 am. Please sign in.": "គ្រប់គ្នាត្រូវចូលប្រើម្តងទៀតរៀងរាល់ថ្ងៃ ក្រោយម៉ោង 3:00 ព្រឹក។ សូមចូលប្រើ។",
+  "Action needed": "អ្នកត្រូវចាត់ការ", "Your sign-in for today has ended.": "ការចូលប្រើរបស់អ្នកសម្រាប់ថ្ងៃនេះបានបញ្ចប់ហើយ។",
+  "Save your work now. You will be asked to sign in again when you close this window.": "សូមរក្សាទុកការងារឥឡូវនេះ។ ពេលបិទផ្ទាំងនេះ អ្នកនឹងត្រូវចូលប្រើម្តងទៀត។"
 });
 window.GID_KM_PATTERNS.unshift(
   [/^Send to (\d+) people\?$/, (m) => "ផ្ញើទៅ " + m[1] + " នាក់?"],
@@ -728,6 +728,6 @@ window.GID_KM_PATTERNS.unshift(
   [/^(\d+) more announcements in Alerts\.$/, (m) => "សេចក្តីជូនដំណឹង " + m[1] + " ទៀតនៅក្នុងដំណឹង។"],
   [/^Announcement sent: (.+)$/, (m) => "បានផ្ញើសេចក្តីជូនដំណឹង៖ " + m[1]],
   [/^Announcement withdrawn: (.+)$/, (m) => "បានដកសេចក្តីជូនដំណឹងវិញ៖ " + m[1]],
-  [/^The announcement was saved, but the alerts could not be sent: (.+)$/, (m) => "សេចក្តីជូនដំណឹងបានរក្សាទុក ប៉ុន្តែមិនអាចផ្ញើដំណឹងបានទេ៖ " + m[1]],
-  [/^Signed in until (\d{1,2}:\d{2}) (today|tomorrow)$/, (m) => "បានចូលប្រើរហូតដល់ម៉ោង " + m[1] + (m[2] === "today" ? " ថ្ងៃនេះ" : " ថ្ងៃស្អែក")]
+  [/^The announcement was saved, but the alerts could not be sent: (.+)$/, (m) => "បានរក្សាទុកសេចក្តីជូនដំណឹង ប៉ុន្តែមិនអាចផ្ញើដំណឹងបានទេ៖ " + m[1]],
+  [/^Signed in until (\d{1,2}:\d{2}) (today|tomorrow)$/, (m) => "បានចូលប្រើរហូតដល់ម៉ោង " + m[1] + (parseInt(m[1], 10) < 12 ? " ព្រឹក" : "") + (m[2] === "today" ? " ថ្ងៃនេះ" : " ថ្ងៃស្អែក")]
 );

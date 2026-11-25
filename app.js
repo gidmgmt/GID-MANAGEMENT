@@ -348,7 +348,7 @@
       toast("Possible split order: this supplier has " + money(total) + " on this project in 7 days. Flagged for the MD.", true);
       const md = MD(); // (v23) the MD really gets the alert now
       if (md && md !== state.user) await insertNotes([noteRow(md, state.user, "purchase_orders", po.id, { kind: "action", ref: po.po_no, project: projFull(po.project_id), amount: money(po.amount),
-        title: po.po_no + " · Possible split order: please check", title_km: po.po_no + " · អាចជាការបំបែកការបញ្ជាទិញ៖ សូមពិនិត្យ",
+        title: po.po_no + " · Possible split order: please check", title_km: po.po_no + " · អាចជាការបញ្ជាទិញបំបែកជាច្រើនដង៖ សូមពិនិត្យ",
         body: supplierName(po.supplier_id) + " has " + money(total) + " on this project in 7 days", body_km: supplierName(po.supplier_id) + " មាន " + money(total) + " លើគម្រោងនេះក្នុង 7 ថ្ងៃ" }, nowIso())]);
     }
     return po;
@@ -864,7 +864,7 @@
   const STEP_SHORT = { PM: "approval", QS: "budget check", MD: "approval", PROC: "order", STORE: "stock release", FIN: "payment", HEAD: "approval", LINE: "approval", HR: "approval" };
   const STEP_SHORT_KM = { approval: "ការអនុម័ត", "budget check": "ការពិនិត្យថវិកា", order: "ការបញ្ជាទិញ", "stock release": "ការបញ្ចេញស្តុក", payment: "ការទូទាត់" };
   const STEP_DONE = { PM: "PM approval", QS: "QS check", MD: "MD approval", PROC: "Procurement", STORE: "Store", FIN: "Finance", HEAD: "Head of department", LINE: "Line manager", HR: "HR" };
-  const STEP_DONE_KM = { PM: "PM អនុម័ត", QS: "QS ពិនិត្យ", MD: "នាយកអនុម័ត", PROC: "លទ្ធកម្ម", STORE: "ឃ្លាំង", FIN: "ហិរញ្ញវត្ថុ", HEAD: "ប្រធានផ្នែក", LINE: "អ្នកគ្រប់គ្រងផ្ទាល់", HR: "ធនធានមនុស្ស" };
+  const STEP_DONE_KM = { PM: "PM អនុម័ត", QS: "QS ពិនិត្យ", MD: "នាយកអនុម័ត", PROC: "លទ្ធកម្ម", STORE: "ឃ្លាំង", FIN: "ហិរញ្ញវត្ថុ", HEAD: "ប្រធានផ្នែក", LINE: "ប្រធានផ្ទាល់", HR: "ធនធានមនុស្ស" };
   const ids_ = (t) => withTag(t).map((s) => s.id), grp_ = (g) => inGroup(g).map((s) => s.id);
   const cut = (s, n) => { s = String(s || "").replace(/\s+/g, " ").trim(); return s.length > n ? s.slice(0, n - 1) + "…" : s; };
   const changed = (b, r, k) => !!b && JSON.stringify(b[k] == null ? null : b[k]) !== JSON.stringify(r[k] == null ? null : r[k]);
@@ -879,7 +879,7 @@
     const isNew = !b;
     switch (tbl) {
       case "requests": {
-        const ref = r.ref_no, typ = r.type, tk = KMW(typ), amount = r.amount ? money(r.amount) : "";
+        const ref = r.ref_no, typ = r.type, tk = ({ Purchase: "ទិញ", Payment: "ទូទាត់" })[typ] || KMW(typ), amount = r.amount ? money(r.amount) : "";
         const due = r.needed_by ? (typ === "Leave" ? "from " + dLong(r.needed_by) + (r.leave_days ? ", " + r.leave_days + " days" : "") : "needed by " + dLong(r.needed_by)) : "";
         const base = { ref, amount, due, body: cut(r.title, 160), body_km: "" };
         const mine = (to) => to === r.requester_id;
@@ -893,13 +893,13 @@
           const by = `Approved by ${actor} (${STEP_DONE[prev.role] || prev.label || ""})`, byKm = `បានអនុម័តដោយ ${actor} (${STEP_DONE_KM[prev.role] || ""})`;
           return pick((to) => appr.includes(to)
             ? M(Object.assign({}, base, { kind: "action", title: `${ref} · ${typ} request waiting for your ${short}`, title_km: `${ref} · សំណើ${tk} រង់ចាំ${STEP_SHORT_KM[short]}របស់អ្នក`, body: base.body + " · " + by, body_km: byKm }))
-            : M(Object.assign({}, base, { title: `${ref} · ${typ} request approved by ${actor}, now with ${waitingOn(r)}`, title_km: `${ref} · សំណើ${tk} បានអនុម័តដោយ ${actor} ឥឡូវនៅ ${waitingOn(r)}` })));
+            : M(Object.assign({}, base, { title: `${ref} · ${typ} request approved by ${actor}, now with ${waitingOn(r)}`, title_km: `${ref} · សំណើ${tk} ត្រូវបានអនុម័តដោយ ${actor} ឥឡូវរង់ចាំ ${waitingOn(r)}` })));
         }
         if (b && b.status === r.status) return null;
         if (r.status === "Approved") {
           const po = db.purchase_orders.find((p) => p.request_id === r.id), last = (r.steps[r.steps.length - 1] || {}).role;
           const next = po ? `${po.po_no} issued to ${supplierName(po.supplier_id)}` : last === "FIN" ? "Paid by Finance" : typ === "Leave" ? "Leave recorded" : last === "STORE" ? "Released from stock" : "";
-          const nextKm = po ? `${po.po_no} បានចេញទៅ ${supplierName(po.supplier_id)}` : last === "FIN" ? "ហិរញ្ញវត្ថុបានទូទាត់" : typ === "Leave" ? "បានកត់ត្រាច្បាប់ឈប់សម្រាក" : last === "STORE" ? "បានបញ្ចេញពីស្តុក" : "";
+          const nextKm = po ? `បានចេញ ${po.po_no} ទៅ ${supplierName(po.supplier_id)}` : last === "FIN" ? "ហិរញ្ញវត្ថុបានទូទាត់" : typ === "Leave" ? "បានកត់ត្រាច្បាប់ឈប់សម្រាក" : last === "STORE" ? "បានបញ្ចេញពីស្តុក" : "";
           return pick((to) => M(Object.assign({}, base, { kind: mine(to) ? "approved" : "info", title: `${ref} · ${typ} request approved`, title_km: `${ref} · សំណើ${tk} ត្រូវបានអនុម័ត`,
             body: [base.body, next].filter(Boolean).join(" · "), body_km: nextKm })));
         }
@@ -913,13 +913,13 @@
       }
       case "purchase_orders": {
         const ref = r.po_no, sup = supplierName(r.supplier_id), rq = byId("requests", r.request_id), amount = money(r.amount);
-        if (isNew) return pick(() => M({ ref, amount, title: `${ref} · Purchase order sent to ${sup}`, title_km: `${ref} · ការបញ្ជាទិញបានផ្ញើទៅ ${sup}`,
+        if (isNew) return pick(() => M({ ref, amount, title: `${ref} · Purchase order sent to ${sup}`, title_km: `${ref} · បានផ្ញើការបញ្ជាទិញទៅ ${sup}`,
           body: [cut(r.description, 160), rq ? "For request " + rq.ref_no : ""].filter(Boolean).join(" · "), body_km: rq ? "សម្រាប់សំណើ " + rq.ref_no : "" }));
         if (!changed(b, r, "status")) return null;
         if (r.status === "Delivered") {
           const inv = db.invoices.find((i) => i.source_type === "po" && i.source_id === r.id), fin = grp_("FIN");
           return pick((to) => fin.includes(to) && inv
-            ? M({ ref, amount, kind: "action", due: inv.due_date ? "due " + dLong(inv.due_date) : "", title: `${ref} · Delivered: supplier bill ${inv.inv_no} to pay`, title_km: `${ref} · បានដឹកមកដល់៖ វិក្កយបត្រ ${inv.inv_no} ត្រូវបង់`, body: `${sup} · Received by ${staffName(r.delivered_by)}`, body_km: `${sup} · ទទួលដោយ ${staffName(r.delivered_by)}` })
+            ? M({ ref, amount, kind: "action", due: inv.due_date ? "due " + dLong(inv.due_date) : "", title: `${ref} · Delivered: supplier bill ${inv.inv_no} to pay`, title_km: `${ref} · បានដឹកមកដល់៖ ត្រូវបង់វិក្កយបត្រ ${inv.inv_no}`, body: `${sup} · Received by ${staffName(r.delivered_by)}`, body_km: `${sup} · ទទួលដោយ ${staffName(r.delivered_by)}` })
             : M({ ref, amount, title: `${ref} · Delivered on site`, title_km: `${ref} · បានដឹកមកដល់ការដ្ឋាន`, body: `${sup} · Received by ${staffName(r.delivered_by)}`, body_km: `${sup} · ទទួលដោយ ${staffName(r.delivered_by)}` }));
         }
         if (r.status === "Paid") return pick((to) => M({ ref, amount, kind: rq && to === rq.requester_id ? "approved" : "info", title: `${ref} · Supplier paid`, title_km: `${ref} · បានបង់ប្រាក់អ្នកផ្គត់ផ្គង់`, body: sup }));
@@ -931,9 +931,9 @@
         const qty = Math.abs(Number(r.qty) || 0) + " " + (it.unit || "");
         const proc = ids_("PROC");
         return pick((to) => low && proc.includes(to)
-          ? M({ ref: r.ref || "", kind: "action", title: `Low stock: ${it.name} (${q} ${it.unit} left, minimum ${it.min_qty})`, title_km: `ស្តុកទាប៖ ${it.name} (នៅសល់ ${q} ${it.unit}, អប្បបរមា ${it.min_qty})`, body: st, body_km: "" })
-          : M({ ref: r.ref || "", title: low ? `Low stock: ${it.name} (${q} ${it.unit} left, minimum ${it.min_qty})` : `${it.name}: ${qty} ${verb[0]}`, title_km: low ? `ស្តុកទាប៖ ${it.name} (នៅសល់ ${q} ${it.unit}, អប្បបរមា ${it.min_qty})` : `${it.name}៖ ${verb[1]} ${qty}`,
-            body: [st, `Now ${q} ${it.unit} in total`].filter(Boolean).join(" · "), body_km: `សរុបឥឡូវ ${q} ${it.unit}` }));
+          ? M({ ref: r.ref || "", kind: "action", title: `Low stock: ${it.name} (${q} ${it.unit} left, minimum ${it.min_qty})`, title_km: `ស្តុកតិច៖ ${it.name} (នៅសល់ ${q} ${it.unit} អប្បបរមា ${it.min_qty})`, body: st, body_km: "" })
+          : M({ ref: r.ref || "", title: low ? `Low stock: ${it.name} (${q} ${it.unit} left, minimum ${it.min_qty})` : `${it.name}: ${qty} ${verb[0]}`, title_km: low ? `ស្តុកតិច៖ ${it.name} (នៅសល់ ${q} ${it.unit} អប្បបរមា ${it.min_qty})` : `${it.name}៖ ${verb[1]} ${qty}`,
+            body: [st, `Now ${q} ${it.unit} in total`].filter(Boolean).join(" · "), body_km: `ឥឡូវមានសរុប ${q} ${it.unit}` }));
       }
       case "daily_reports": {
         const who = staffName(r.author_id), date = dLong(r.report_date);
@@ -951,12 +951,12 @@
         }
         const away = r.loc_status === "Away from site" || r.loc_status === "No location";
         const title = r.late && S === "Morning" ? `LATE morning report (${r.late_minutes || 0} min) from ${who}` : `${S} report from ${who}`;
-        const title_km = r.late && S === "Morning" ? `របាយការណ៍ពេលព្រឹក យឺត (${r.late_minutes || 0} នាទី) ពី ${who}` : `របាយការណ៍${Skm} ពី ${who}`;
+        const title_km = r.late && S === "Morning" ? `របាយការណ៍ពេលព្រឹកយឺត ${r.late_minutes || 0} នាទី ពី ${who}` : `របាយការណ៍${Skm} ពី ${who}`;
         const awayEn = away ? (r.loc_status === "No location" ? " · sent WITHOUT LOCATION" : ` · sent AWAY FROM SITE${r.distance_m ? " (" + Math.round(r.distance_m) + " m)" : ""}`) : "";
-        const awayKm = away ? (r.loc_status === "No location" ? " · ផ្ញើគ្មានទីតាំង" : " · ផ្ញើក្រៅការដ្ឋាន") : "";
+        const awayKm = away ? (r.loc_status === "No location" ? " · ផ្ញើដោយគ្មានទីតាំង" : ` · ផ្ញើពីក្រៅការដ្ឋាន${r.distance_m ? " (" + Math.round(r.distance_m) + " m)" : ""}`) : "";
         return pick(() => M({ due: date, title: title + awayEn, title_km: title_km + awayKm,
           body: [`${r.manpower || 0} workers · ${reportPhotos(r).length} photos`, r.issues ? "Issue: " + cut(r.issues, 160) : "", r.loc_note ? cut(r.loc_note, 100) : ""].filter(Boolean).join(" · "),
-          body_km: `កម្មករ ${r.manpower || 0} នាក់ · រូបថត ${reportPhotos(r).length}` }));
+          body_km: `កម្មករ ${r.manpower || 0} នាក់ · រូបថត ${reportPhotos(r).length} សន្លឹក` }));
       }
       case "documents": {
         const ref = r.doc_no + " rev " + r.revision, t = r.title || "", owner = (to) => to === r.owner_id;
@@ -973,13 +973,13 @@
             ? M({ ref, kind: "action", due: r.due_date ? "due " + dLong(r.due_date) : "", title: `${ref} · Drawing waiting for your review`, title_km: `${ref} · ប្លង់រង់ចាំការពិនិត្យរបស់អ្នក`, body: t })
             : M({ ref, title: `${ref} · Sent for review`, title_km: `${ref} · បានបញ្ជូនទៅពិនិត្យ`, body: t }));
         }
-        if (r.status === "Draft" && b.status === "In review") return pick((to) => M({ ref, kind: owner(to) ? "rejected" : "info", title: `${ref} · Returned with comments by ${actor}`, title_km: `${ref} · បញ្ជូនត្រឡប់ជាមួយមតិយោបល់ដោយ ${actor}`,
+        if (r.status === "Draft" && b.status === "In review") return pick((to) => M({ ref, kind: owner(to) ? "rejected" : "info", title: `${ref} · Returned with comments by ${actor}`, title_km: `${ref} · ${actor} បានបញ្ជូនមកវិញ ជាមួយមតិយោបល់`,
           body: [r.notes ? "Comments: " + cut(r.notes, 400) : "", t].filter(Boolean).join(" · ") }));
         if (r.status === "Approved") { const doc = ids_("DOC"); return pick((to) => doc.includes(to)
-          ? M({ ref, kind: "action", title: `${ref} · Approved: please issue`, title_km: `${ref} · បានអនុម័ត៖ សូមចេញផ្សាយ`, body: t })
+          ? M({ ref, kind: "action", title: `${ref} · Approved: please issue`, title_km: `${ref} · បានអនុម័ត៖ សូមចេញឯកសារ`, body: t })
           : M({ ref, kind: owner(to) ? "approved" : "info", title: `${ref} · Approved by ${actor}`, title_km: `${ref} · បានអនុម័តដោយ ${actor}`, body: t })); }
-        if (r.status === "Issued") return pick((to) => M({ ref, kind: owner(to) ? "approved" : "info", title: `${ref} · Issued for construction: ${t}`, title_km: `${ref} · បានចេញផ្សាយសម្រាប់សាងសង់៖ ${t}`,
-          body: Number(r.revision) > 0 ? "Replaces rev " + (Number(r.revision) - 1) : "", body_km: Number(r.revision) > 0 ? "ជំនួស rev " + (Number(r.revision) - 1) : "" }));
+        if (r.status === "Issued") return pick((to) => M({ ref, kind: owner(to) ? "approved" : "info", title: `${ref} · Issued for construction: ${t}`, title_km: `${ref} · បានចេញសម្រាប់សាងសង់៖ ${t}`,
+          body: Number(r.revision) > 0 ? "Replaces rev " + (Number(r.revision) - 1) : "", body_km: Number(r.revision) > 0 ? "ជំនួសកំណែ " + (Number(r.revision) - 1) : "" }));
         return pick(() => M({ ref, title: `${ref} · ${r.status}`, title_km: `${ref} · ${KMW(r.status)}`, body: t }));
       }
       case "tasks": {
@@ -993,11 +993,11 @@
       case "projects": {
         const P = projFull(r.id);
         if (isNew) return pick(() => M({ title: `New project ${P}`, title_km: `គម្រោងថ្មី ${P}`, body: [r.client, r.pm_id ? "PM: " + staffName(r.pm_id) : ""].filter(Boolean).join(" · ") }));
-        if (changed(b, r, "pm_id")) return pick(() => M({ title: `${P}: ${staffName(r.pm_id)} is now Project Manager`, title_km: `${P}៖ ${staffName(r.pm_id)} ជាប្រធានគម្រោងថ្មី` }));
+        if (changed(b, r, "pm_id")) return pick(() => M({ title: `${P}: ${staffName(r.pm_id)} is now Project Manager`, title_km: `${P}៖ ${staffName(r.pm_id)} ជាអ្នកគ្រប់គ្រងគម្រោងថ្មី` }));
         if (changed(b, r, "progress")) return pick(() => M({ silent: true, title: `${P} progress now ${r.progress}%`, title_km: `${P} វឌ្ឍនភាពឥឡូវ ${r.progress}%` }));
-        if (changed(b, r, "handover_date")) return pick(() => M({ due: dLong(r.handover_date), title: `${P}: handover date ${dLong(r.handover_date)}`, title_km: `${P}៖ ថ្ងៃប្រគល់ ${dLong(r.handover_date)}`, body: r.dlp_months ? "Defects period: " + r.dlp_months + " months" : "" }));
+        if (changed(b, r, "handover_date")) return pick(() => M({ due: dLong(r.handover_date), title: `${P}: handover date ${dLong(r.handover_date)}`, title_km: `${P}៖ ថ្ងៃប្រគល់ការងារ ${dLong(r.handover_date)}`, body: r.dlp_months ? "Defects period: " + r.dlp_months + " months" : "" }));
         if (changed(b, r, "lat") || changed(b, r, "lng")) return pick(() => M({ title: `${P}: site location saved`, title_km: `${P}៖ បានរក្សាទុកទីតាំងការដ្ឋាន` }));
-        return pick(() => M({ title: `${P} updated`, title_km: `${P} បានកែប្រែ`, body: e.summary || "" }));
+        return pick(() => M({ title: `${P} updated`, title_km: `បានកែប្រែគម្រោង ${P}`, body: e.summary || "" }));
       }
       case "project_members": {
         const P = projFull(r.project_id);
@@ -1006,9 +1006,9 @@
       }
       case "claims": {
         const P = projFull(r.project_id), ref = "IPC " + r.ipc_no, amount = money(r.certified || r.claimed);
-        if (isNew) return pick(() => M({ ref, amount: money(r.claimed), title: `${P} IPC ${r.ipc_no} started`, title_km: `${P} IPC ${r.ipc_no} បានចាប់ផ្តើម`, body: r.period || "" }));
+        if (isNew) return pick(() => M({ ref, amount: money(r.claimed), title: `${P} IPC ${r.ipc_no} started`, title_km: `${P} · បានបង្កើត IPC ${r.ipc_no}`, body: r.period || "" }));
         if (!changed(b, r, "status")) return null;
-        if (r.status === "Paid") return pick(() => M({ ref, amount, kind: "approved", title: `${P} IPC ${r.ipc_no} paid by the client`, title_km: `${P} IPC ${r.ipc_no} ម្ចាស់គម្រោងបានបង់ប្រាក់` }));
+        if (r.status === "Paid") return pick(() => M({ ref, amount, kind: "approved", title: `${P} IPC ${r.ipc_no} paid by the client`, title_km: `${P} · ម្ចាស់គម្រោងបានបង់ប្រាក់ IPC ${r.ipc_no}` }));
         const nx = { "QS checked": [[(byId("projects", r.project_id) || {}).pm_id], "verification", "ការផ្ទៀងផ្ទាត់"], "PM verified": [ids_("MD"), "approval", "ការអនុម័ត"], "MD approved": [grp_("FIN"), "invoice", "ការចេញវិក្កយបត្រ"], Invoiced: [grp_("FIN"), "payment collection", "ការប្រមូលប្រាក់"] }[r.status];
         const by = `${r.status} by ${actor}`, byKm = `${KMW(r.status)} ដោយ ${actor}`;
         return pick((to) => nx && nx[0].includes(to)
@@ -1018,7 +1018,7 @@
       case "invoices": {
         const ref = r.inv_no, amount = money(r.amount), due = r.due_date && r.status !== "Paid" ? "due " + dLong(r.due_date) : "";
         if (r.direction === "Receivable") {
-          if (isNew) { const c = r.source_type === "claim" ? byId("claims", r.source_id) : null; return pick(() => M({ ref, amount, due, title: `${ref} · Client invoice${c ? " for IPC " + c.ipc_no : ""}`, title_km: `${ref} · វិក្កយបត្រអតិថិជន${c ? "សម្រាប់ IPC " + c.ipc_no : ""}`, body: r.party || "" })); }
+          if (isNew) { const c = r.source_type === "claim" ? byId("claims", r.source_id) : null; return pick(() => M({ ref, amount, due, title: `${ref} · Client invoice${c ? " for IPC " + c.ipc_no : ""}`, title_km: `${ref} · វិក្កយបត្រម្ចាស់គម្រោង${c ? " សម្រាប់ IPC " + c.ipc_no : ""}`, body: r.party || "" })); }
           if (changed(b, r, "status") && r.status === "Paid") return pick(() => M({ ref, amount, kind: "approved", title: `${ref} · Received from ${r.party}`, title_km: `${ref} · បានទទួលពី ${r.party}` }));
           return null;
         }
@@ -1026,7 +1026,7 @@
         if (!isNew) return null;
         const src = r.source_type === "po" ? (byId("purchase_orders", r.source_id) || {}).po_no : r.source_type === "sub_payment" ? (byId("sub_payments", r.source_id) || {}).pc_no : r.source_type === "retention" ? "retention" : r.source_type === "request" ? (byId("requests", r.source_id) || {}).ref_no : "";
         const fin = grp_("FIN");
-        return pick((to) => M({ ref, amount, due, kind: fin.includes(to) ? "action" : "info", title: `${ref} · New bill to pay: ${r.party}`, title_km: `${ref} · វិក្កយបត្រថ្មីត្រូវបង់៖ ${r.party}`, body: src ? "For " + src : "", body_km: src ? "សម្រាប់ " + (src === "retention" ? "ប្រាក់ធានា" : src) : "" }));
+        return pick((to) => M({ ref, amount, due, kind: fin.includes(to) ? "action" : "info", title: `${ref} · New bill to pay: ${r.party}`, title_km: `${ref} · វិក្កយបត្រថ្មីត្រូវបង់៖ ${r.party}`, body: src ? "For " + src : "", body_km: src ? "សម្រាប់ " + (src === "retention" ? "ប្រាក់កាត់ទុក" : src) : "" }));
       }
       case "inspections": {
         const t = r.title, due = r.insp_date ? dLong(r.insp_date) : "";
@@ -1034,8 +1034,8 @@
           ? M({ kind: "action", due, title: `Inspection request: ${t}`, title_km: `សំណើត្រួតពិនិត្យ៖ ${t}`, body: r.area || "" })
           : M({ due, title: `Inspection request: ${t}`, title_km: `សំណើត្រួតពិនិត្យ៖ ${t}`, body: r.area || "" }));
         if (!changed(b, r, "result")) return null;
-        if (r.result === "Passed") return pick(() => M({ kind: "approved", title: `Inspection passed: ${t}`, title_km: `ការត្រួតពិនិត្យបានឆ្លង៖ ${t}`, body: cut(r.result_note, 200) }));
-        if (r.result === "Failed") return pick(() => M({ kind: "rejected", title: `Inspection failed: ${t}`, title_km: `ការត្រួតពិនិត្យមិនឆ្លង៖ ${t}`, body: r.result_note ? "Reason: " + cut(r.result_note, 300) : "" }));
+        if (r.result === "Passed") return pick(() => M({ kind: "approved", title: `Inspection passed: ${t}`, title_km: `ការត្រួតពិនិត្យជាប់៖ ${t}`, body: cut(r.result_note, 200) }));
+        if (r.result === "Failed") return pick(() => M({ kind: "rejected", title: `Inspection failed: ${t}`, title_km: `ការត្រួតពិនិត្យមិនជាប់៖ ${t}`, body: r.result_note ? "Reason: " + cut(r.result_note, 300) : "" }));
         return null;
       }
       case "defects": {
@@ -1062,14 +1062,14 @@
         const ref = r.svr_no;
         const newActs = (to) => (r.actions || []).filter((a) => a.who === to && !a.done && !((b && b.actions) || []).some((x) => x.who === to && x.action === a.action));
         const forOwner = (to) => { const a = newActs(to)[0]; return a ? M({ ref, kind: "action", due: a.by ? "by " + dLong(a.by) : "", title: `${ref} · Action for you: ${cut(a.action, 120)}`, title_km: `${ref} · សកម្មភាពសម្រាប់អ្នក៖ ${cut(a.action, 120)}`, body: r.client || "" }) : null; };
-        if (isNew) return pick((to) => forOwner(to) || M({ ref, due: dLong(r.visit_date), title: `${ref} · Site visit: ${r.client}`, title_km: `${ref} · ការចុះពិនិត្យទីតាំង៖ ${r.client}`, body: [r.address, r.city].filter(Boolean).join(", ") }));
-        if (changed(b, r, "approved_by") && r.approved_by) return pick((to) => M({ ref, kind: to === r.author_id ? "approved" : "info", title: `${ref} · Report approved by ${actor}`, title_km: `${ref} · របាយការណ៍បានអនុម័តដោយ ${actor}`, body: r.client || "" }));
+        if (isNew) return pick((to) => forOwner(to) || M({ ref, due: dLong(r.visit_date), title: `${ref} · Site visit: ${r.client}`, title_km: `${ref} · ចុះពិនិត្យទីតាំង៖ ${r.client}`, body: [r.address, r.city].filter(Boolean).join(", ") }));
+        if (changed(b, r, "approved_by") && r.approved_by) return pick((to) => M({ ref, kind: to === r.author_id ? "approved" : "info", title: `${ref} · Report approved by ${actor}`, title_km: `${ref} · របាយការណ៍ត្រូវបានអនុម័តដោយ ${actor}`, body: r.client || "" }));
         if (changed(b, r, "status")) {
-          const s = { Quoted: ["Quotation sent", "បានផ្ញើសម្រង់តម្លៃ"], Won: ["Won: project " + projFull(r.project_id), "ឈ្នះ៖ គម្រោង " + projFull(r.project_id)], Lost: ["Lost", "មិនបានឈ្នះ"], Lead: ["Back to lead", "ត្រឡប់ជាអតិថិជនសក្តានុពល"] }[r.status] || [r.status, KMW(r.status)];
+          const s = { Quoted: ["Quotation sent", "បានផ្ញើសម្រង់តម្លៃ"], Won: ["Won: project " + projFull(r.project_id), "ទទួលបានការងារ៖ គម្រោង " + projFull(r.project_id)], Lost: ["Lost", "មិនបានការងារ"], Lead: ["Back to lead", "ត្រឡប់ជាអតិថិជនសក្តានុពលវិញ"] }[r.status] || [r.status, KMW(r.status)];
           return pick((to) => M({ ref, kind: r.status === "Won" && to === r.author_id ? "approved" : "info", amount: r.quote_value ? money(r.quote_value) : "", title: `${ref} · ${s[0]}`, title_km: `${ref} · ${s[1]}`,
             body: [r.client, r.status === "Lost" && r.lost_reason ? "Reason: " + cut(r.lost_reason, 200) : ""].filter(Boolean).join(" · ") }));
         }
-        return pick((to) => forOwner(to) || M({ ref, title: `${ref} · Site visit updated: ${r.client}`, title_km: `${ref} · បានកែប្រែការចុះពិនិត្យទីតាំង៖ ${r.client}` }));
+        return pick((to) => forOwner(to) || M({ ref, title: `${ref} · Site visit updated: ${r.client}`, title_km: `${ref} · បានកែប្រែរបាយការណ៍ចុះពិនិត្យទីតាំង៖ ${r.client}` }));
       }
       case "variations": {
         const ref = r.vo_no, t = r.title, amount = r.amount ? money(r.amount) : "", qs = grp_("QS"), pm = (byId("projects", r.project_id) || {}).pm_id, raiser = (to) => to === r.raised_by;
@@ -1081,12 +1081,12 @@
           : M({ ref, amount, title: `${ref} · Priced by ${actor}`, title_km: `${ref} · បានដាក់តម្លៃដោយ ${actor}`, body: t }));
         if (st === "PM checked") return pick((to) => ids_("MD").includes(to) ? M({ ref, amount, kind: "action", title: `${ref} · Price waiting for your approval`, title_km: `${ref} · តម្លៃរង់ចាំការអនុម័តរបស់អ្នក`, body: t })
           : M({ ref, amount, title: `${ref} · Checked by ${actor}`, title_km: `${ref} · បានពិនិត្យដោយ ${actor}`, body: t }));
-        if (st === "MD approved") return pick((to) => to === pm || qs.includes(to) ? M({ ref, amount, kind: "action", title: `${ref} · Price approved: send to the client`, title_km: `${ref} · តម្លៃបានអនុម័ត៖ សូមផ្ញើទៅម្ចាស់គម្រោង`, body: t })
-          : M({ ref, amount, kind: raiser(to) ? "approved" : "info", title: `${ref} · Price approved by ${actor}`, title_km: `${ref} · តម្លៃបានអនុម័តដោយ ${actor}`, body: t }));
+        if (st === "MD approved") return pick((to) => to === pm || qs.includes(to) ? M({ ref, amount, kind: "action", title: `${ref} · Price approved: send to the client`, title_km: `${ref} · តម្លៃត្រូវបានអនុម័ត៖ សូមផ្ញើទៅម្ចាស់គម្រោង`, body: t })
+          : M({ ref, amount, kind: raiser(to) ? "approved" : "info", title: `${ref} · Price approved by ${actor}`, title_km: `${ref} · តម្លៃត្រូវបានអនុម័តដោយ ${actor}`, body: t }));
         if (st === "Sent to client") return pick(() => M({ ref, amount, title: `${ref} · Sent to the client`, title_km: `${ref} · បានផ្ញើទៅម្ចាស់គម្រោង`, body: [t, r.client_ref ? "How: " + r.client_ref : ""].filter(Boolean).join(" · ") }));
         if (st === "Client approved") return pick((to) => M({ ref, amount, kind: raiser(to) ? "approved" : "info", title: `${ref} · Client approved: add to the next IPC`, title_km: `${ref} · ម្ចាស់គម្រោងបានយល់ព្រម៖ បញ្ចូលក្នុង IPC បន្ទាប់`, body: t }));
         if (st === "Client rejected") return pick((to) => M({ ref, amount, kind: raiser(to) ? "rejected" : "info", title: `${ref} · Client rejected`, title_km: `${ref} · ម្ចាស់គម្រោងមិនយល់ព្រម`, body: [note ? "Reason: " + cut(note, 300) : "", t].filter(Boolean).join(" · ") }));
-        if (st === "Raised" && was !== "Raised") return pick((to) => M({ ref, kind: qs.includes(to) || raiser(to) ? "rejected" : "info", title: `${ref} · Returned to QS by ${actor}`, title_km: `${ref} · បញ្ជូនត្រឡប់ទៅ QS ដោយ ${actor}`, body: [note ? "Reason: " + cut(note, 300) : "", t].filter(Boolean).join(" · ") }));
+        if (st === "Raised" && was !== "Raised") return pick((to) => M({ ref, kind: qs.includes(to) || raiser(to) ? "rejected" : "info", title: `${ref} · Returned to QS by ${actor}`, title_km: `${ref} · ${actor} បានបញ្ជូនត្រឡប់ទៅ QS វិញ`, body: [note ? "Reason: " + cut(note, 300) : "", t].filter(Boolean).join(" · ") }));
         if (st === "Cancelled") return pick((to) => M({ ref, kind: raiser(to) ? "rejected" : "info", title: `${ref} · Cancelled by ${actor}`, title_km: `${ref} · បានលុបចោលដោយ ${actor}`, body: [note ? "Reason: " + cut(note, 300) : "", t].filter(Boolean).join(" · ") }));
         if (st === "In claim") { const c = byId("claims", r.claim_id); return pick(() => M({ ref, amount, title: `${ref} · Added to IPC ${c ? c.ipc_no : ""}`, title_km: `${ref} · បានបញ្ចូលក្នុង IPC ${c ? c.ipc_no : ""}`, body: t })); }
         return pick(() => M({ ref, amount, title: `${ref} · ${st}`, title_km: `${ref} · ${KMW(st)}`, body: t }));
@@ -1094,38 +1094,38 @@
       case "sub_payments": {
         const k = byId("sub_contracts", r.contract_id) || {}, sub = (byId("subcontractors", k.sub_id) || {}).name || "", ref = r.pc_no, pm = (byId("projects", k.project_id) || {}).pm_id;
         const M2 = (o) => Object.assign(M(o), { project: projFull(k.project_id) });
-        if (isNew) return pick((to) => M2({ ref, amount: money(r.claimed), kind: grp_("QS").includes(to) ? "action" : "info", title: `${ref} · ${sub} payment claim to check`, title_km: `${ref} · ការស្នើទូទាត់របស់ ${sub} ត្រូវពិនិត្យ` }));
+        if (isNew) return pick((to) => M2({ ref, amount: money(r.claimed), kind: grp_("QS").includes(to) ? "action" : "info", title: `${ref} · ${sub} payment claim to check`, title_km: `${ref} · ការស្នើសុំទូទាត់ពី ${sub} ត្រូវពិនិត្យ` }));
         if (!changed(b, r, "status")) return null;
-        if (r.status === "QS checked") return pick((to) => M2({ ref, amount: money(r.certified), kind: to === pm ? "action" : "info", title: to === pm ? `${ref} · ${sub} claim checked: waiting for your approval` : `${ref} · ${sub} claim checked by ${actor}`, title_km: to === pm ? `${ref} · ${sub} បានពិនិត្យ រង់ចាំការអនុម័តរបស់អ្នក` : `${ref} · ${sub} បានពិនិត្យដោយ ${actor}`,
-          body: `Certified ${money(r.certified)} of ${money(r.claimed)} claimed` + (Number(r.retention_amt) ? " · retention " + money(r.retention_amt) : "") }));
+        if (r.status === "QS checked") return pick((to) => M2({ ref, amount: money(r.certified), kind: to === pm ? "action" : "info", title: to === pm ? `${ref} · ${sub} claim checked: waiting for your approval` : `${ref} · ${sub} claim checked by ${actor}`, title_km: to === pm ? `${ref} · ការស្នើសុំទូទាត់ពី ${sub} បានពិនិត្យរួច រង់ចាំការអនុម័តរបស់អ្នក` : `${ref} · ការស្នើសុំទូទាត់ពី ${sub} ត្រូវបានពិនិត្យដោយ ${actor}`,
+          body: `Certified ${money(r.certified)} of ${money(r.claimed)} claimed` + (Number(r.retention_amt) ? " · retention " + money(r.retention_amt) : ""), body_km: `បញ្ជាក់ ${money(r.certified)} ក្នុងចំណោម ${money(r.claimed)} ដែលបានស្នើ` + (Number(r.retention_amt) ? " · ប្រាក់កាត់ទុក " + money(r.retention_amt) : "") }));
         if (r.status === "PM approved") { const inv = db.invoices.find((i) => i.source_type === "sub_payment" && i.source_id === r.id), fin = grp_("FIN");
           return pick((to) => M2({ ref, amount: money(Number(r.certified || 0) - Number(r.retention_amt || 0)), due: inv && inv.due_date ? "due " + dLong(inv.due_date) : "", kind: fin.includes(to) ? "action" : "info",
-            title: `${ref} · ${sub} approved: bill ${inv ? inv.inv_no : ""} to pay`, title_km: `${ref} · ${sub} បានអនុម័ត៖ វិក្កយបត្រ ${inv ? inv.inv_no : ""} ត្រូវបង់` })); }
+            title: `${ref} · ${sub} approved: bill ${inv ? inv.inv_no : ""} to pay`, title_km: `${ref} · ${sub} PM បានអនុម័ត៖ ត្រូវបង់វិក្កយបត្រ ${inv ? inv.inv_no : ""}` })); }
         if (r.status === "Paid") return pick(() => M2({ ref, amount: money(Number(r.certified || 0) - Number(r.retention_amt || 0)), kind: "approved", title: `${ref} · ${sub} paid`, title_km: `${ref} · បានបង់ប្រាក់ ${sub}` }));
         return pick(() => M2({ ref, title: `${ref} · ${sub}: ${r.status}`, title_km: `${ref} · ${sub}៖ ${KMW(r.status)}`, body: (lastHist(r) || {}).note || "" }));
       }
       case "sub_contracts": {
         const sub = (byId("subcontractors", r.sub_id) || {}).name || "", P = projFull(r.project_id);
         if (isNew) return pick(() => M({ amount: money(r.contract_value), title: `${sub}: new contract on ${P}`, title_km: `${sub}៖ កិច្ចសន្យាថ្មីនៅ ${P}`, body: cut(r.scope, 160) }));
-        if (changed(b, r, "retention_released") && r.retention_released) return pick((to) => M({ kind: grp_("FIN").includes(to) ? "action" : "info", title: `Retention to pay: ${sub}`, title_km: `ប្រាក់ធានាត្រូវបង់៖ ${sub}` }));
-        if (changed(b, r, "ratings")) return pick(() => M({ title: `${sub} rated on ${P}`, title_km: `${sub} បានវាយតម្លៃនៅ ${P}` }));
-        return pick(() => M({ title: `${sub}: contract changed on ${P}`, title_km: `${sub}៖ កិច្ចសន្យាបានកែប្រែនៅ ${P}` }));
+        if (changed(b, r, "retention_released") && r.retention_released) return pick((to) => M({ kind: grp_("FIN").includes(to) ? "action" : "info", title: `Retention to pay: ${sub}`, title_km: `ត្រូវបង់ប្រាក់កាត់ទុកឱ្យ ${sub}` }));
+        if (changed(b, r, "ratings")) return pick(() => M({ title: `${sub} rated on ${P}`, title_km: `បានវាយតម្លៃ ${sub} នៅ ${P}` }));
+        return pick(() => M({ title: `${sub}: contract changed on ${P}`, title_km: `${sub}៖ បានកែប្រែកិច្ចសន្យានៅ ${P}` }));
       }
       case "subcontractors": return pick(() => M({ title: (isNew ? "New subcontractor: " : "Subcontractor changed: ") + r.name, title_km: (isNew ? "អ្នកម៉ៅការបន្តថ្មី៖ " : "បានកែប្រែអ្នកម៉ៅការបន្ត៖ ") + r.name, body: r.trade || "", body_km: KMW(r.trade) }));
       case "tests": {
         const ref = r.test_no, n = r.test_type || r.system || "";
         if (isNew) return pick(() => M({ ref, title: `${ref} · Test sheet: ${n}`, title_km: `${ref} · សន្លឹកតេស្ត៖ ${n}`, body: r.location || "" }));
         if (!changed(b, r, "result")) return null;
-        if (r.result === "Pass") return pick((to) => M({ ref, kind: to === r.tested_by ? "approved" : "info", title: `${ref} · ${n} PASSED`, title_km: `${ref} · ${n} ឆ្លង`, body: r.location || "" }));
-        if (r.result === "Fail") { const nd = (r.defect_ids || []).length; return pick((to) => M({ ref, kind: to === r.tested_by ? "rejected" : "info", title: `${ref} · ${n} FAILED: ${nd} defects raised`, title_km: `${ref} · ${n} មិនឆ្លង៖ ចំណុចខ្វះខាត ${nd}`, body: r.location || "" })); }
+        if (r.result === "Pass") return pick((to) => M({ ref, kind: to === r.tested_by ? "approved" : "info", title: `${ref} · ${n} PASSED`, title_km: `${ref} · ${n} ជាប់`, body: r.location || "" }));
+        if (r.result === "Fail") { const nd = (r.defect_ids || []).length; return pick((to) => M({ ref, kind: to === r.tested_by ? "rejected" : "info", title: `${ref} · ${n} FAILED: ${nd} defects raised`, title_km: `${ref} · ${n} មិនជាប់៖ បានបង្កើតចំណុចខ្វះខាត ${nd}`, body: r.location || "" })); }
         return null;
       }
-      case "handover_items": return pick(() => M({ title: `Handover item ${String(r.status || "").toLowerCase()}: ${r.title}`, title_km: `ធាតុប្រគល់ការងារ ${KMW(r.status)}៖ ${r.title}`, due: r.due_date ? "due " + dLong(r.due_date) : "" }));
+      case "handover_items": return pick(() => M({ title: `Handover item ${String(r.status || "").toLowerCase()}: ${r.title}`, title_km: `មុខប្រគល់ការងារ ${KMW(r.status)}៖ ${r.title}`, due: r.due_date ? "due " + dLong(r.due_date) : "" }));
       case "warranties": return pick(() => M({ due: dLong(r.end_date), title: `Warranty ${r.item} until ${dLong(r.end_date)}`, title_km: `ការធានា ${r.item} រហូតដល់ ${dLong(r.end_date)}`, body: r.supplier || "" }));
       case "staff": {
-        if (changed(b, r, "left_on")) return pick(() => r.left_on ? M({ title: `${r.name} left the company (last day ${dLong(r.left_on)})`, title_km: `${r.name} បានចាកចេញ (ថ្ងៃចុងក្រោយ ${dLong(r.left_on)})` }) : M({ title: `${r.name} is back`, title_km: `${r.name} បានត្រឡប់មកវិញ` }));
+        if (changed(b, r, "left_on")) return pick(() => r.left_on ? M({ title: `${r.name} left the company (last day ${dLong(r.left_on)})`, title_km: `${r.name} បានចាកចេញពីក្រុមហ៊ុន (ថ្ងៃចុងក្រោយ ${dLong(r.left_on)})` }) : M({ title: `${r.name} is back`, title_km: `${r.name} បានត្រឡប់មកធ្វើការវិញ` }));
         return pick((to) => to === r.id ? M({ title: `Your details were updated by ${actor}`, title_km: `ព័ត៌មានរបស់អ្នកត្រូវបានកែប្រែដោយ ${actor}`, body: r.title || "" })
-          : M({ title: `${r.name}'s details updated`, title_km: `ព័ត៌មានរបស់ ${r.name} បានកែប្រែ`, body: r.title || "" }));
+          : M({ title: `${r.name}'s details updated`, title_km: `បានកែប្រែព័ត៌មានរបស់ ${r.name}`, body: r.title || "" }));
       }
       case "app_settings": return pick(() => M({ title: "Permission changed: " + (e.summary || ""), title_km: "បានប្តូរសិទ្ធិ៖ " + (e.summary || "") }));
       case "events": {
@@ -1137,7 +1137,7 @@
         return pick(() => M({ kind: "reminder", ref: r.no || "", due, title: `Changed: ${t}`, title_km: `បានកែប្រែ៖ ${t}`, body: what || loc }));
       }
       case "suppliers": return pick(() => M({ title: (isNew ? "New supplier: " : "Supplier changed: ") + r.name, title_km: (isNew ? "អ្នកផ្គត់ផ្គង់ថ្មី៖ " : "បានកែប្រែអ្នកផ្គត់ផ្គង់៖ ") + r.name, body: [r.trade, r.phone].filter(Boolean).join(" · ") }));
-      case "stock_items": return pick(() => M({ title: (isNew ? "New stock item: " : "Stock item changed: ") + r.name, title_km: (isNew ? "ទំនិញស្តុកថ្មី៖ " : "បានកែប្រែទំនិញស្តុក៖ ") + r.name, body: [r.unit, r.min_qty ? "minimum " + r.min_qty : ""].filter(Boolean).join(" · ") }));
+      case "stock_items": return pick(() => M({ title: (isNew ? "New stock item: " : "Stock item changed: ") + r.name, title_km: (isNew ? "មុខទំនិញស្តុកថ្មី៖ " : "បានកែប្រែមុខទំនិញស្តុក៖ ") + r.name, body: [r.unit, r.min_qty ? "minimum " + r.min_qty : ""].filter(Boolean).join(" · ") }));
       case "stores": return pick(() => M({ title: (isNew ? "New store: " : "Store changed: ") + r.name, title_km: (isNew ? "ឃ្លាំងថ្មី៖ " : "បានកែប្រែឃ្លាំង៖ ") + r.name }));
       case "cost_lines": return pick(() => M({ amount: money(r.actual), title: `${projFull(r.project_id)} ${r.category}: actual cost now ${money(r.actual)}`, title_km: `${projFull(r.project_id)} ${KMW(r.category)}៖ ចំណាយជាក់ស្តែងឥឡូវ ${money(r.actual)}`, body: "Budget " + money(r.budget), body_km: "ថវិកា " + money(r.budget) }));
       default: {
@@ -1321,7 +1321,7 @@
         })}">Save</button></div>
       ${linked ? `<button class="btn" data-act="${act(async (e, el) => {
           el.disabled = true; el.textContent = "Sending…";
-          await insertNotes([Object.assign(noteRow(u.id, u.id, "staff", u.id, { kind: "info", title: "Telegram test from GID: it works", title_km: "សាកល្បង Telegram ពី GID៖ ដំណើរការ", body: "Alerts for " + u.name + " now arrive here.", body_km: "ដំណឹងសម្រាប់ " + u.name + " នឹងមកដល់ទីនេះ។" }, nowIso()), { read: true })]);
+          await insertNotes([Object.assign(noteRow(u.id, u.id, "staff", u.id, { kind: "info", title: "Telegram test from GID: it works", title_km: "សាកល្បង Telegram ពី GID៖ ដំណើរការបាន", body: "Alerts for " + u.name + " now arrive here.", body_km: "ដំណឹងសម្រាប់ " + u.name + " នឹងមកដល់ទីនេះ។" }, nowIso()), { read: true })]);
           tgLast = { state: "sending" }; openDrawer("set");
           await checkTelegramResult(chat, 6);
         })}">Send test message</button>` : ""}` : ""}
@@ -5362,7 +5362,7 @@
       if (await accDecide(a, "approve", v.staff_id)) {
         // (v23) tell the new user on Telegram (if their Telegram is saved on the staff profile) that the account is ready
         const login = a.login_email || (a.login_phone ? "0" + String(a.login_phone).replace(/^855/, "") : "");
-        if (v.staff_id) await insertNotes([noteRow(v.staff_id, state.user, "staff", v.staff_id, { kind: "welcome", title: "Your GID account is ready", title_km: "គណនី GID របស់អ្នករួចរាល់",
+        if (v.staff_id) await insertNotes([noteRow(v.staff_id, state.user, "staff", v.staff_id, { kind: "welcome", title: "Your GID account is ready", title_km: "គណនី GID របស់អ្នករួចរាល់ហើយ",
           body: (login ? "Sign in with " + login + ". " : "") + "Sign in again every day after 3:00 am.", body_km: (login ? "ចូលប្រើដោយ " + login + "។ " : "") + "សូមចូលប្រើម្តងទៀតជារៀងរាល់ថ្ងៃ បន្ទាប់ពីម៉ោង 3:00 ព្រឹក។" }, nowIso())]);
         toast("Account approved. " + a.full_name + " can sign in now."); accReload();
       }
