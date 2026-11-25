@@ -72,4 +72,10 @@ Staff ids: s01 MD · s02–s05 PM · s06 Site Manager · s07–s17 site engineer
 - Subcontractors: Claimed → QS checked (certified ≤ claimed; retention by contract %, 0% allowed) → PM approved (creates bill) → Paid by Finance. Retention released by bill.
 - IPC: Draft → QS checked → PM verified → MD approved → Invoiced → Paid.
 - Devices: only the System Admin and backup admin can sign devices out.
-- Open questions waiting for Jack's decision (do not change until he answers): MD doing the "PM checked" step on VOs; who may mark payments paid (Finance only?); whether any PM may act on any project; whether drawings need a second approver; QA/QC closing rights for all engineering staff.
+- Decided by Jack (v23):
+  - VO "PM checked": only the PM of that VO's project does it (not the MD; the MD still approves the price at the next step). Nobody does two checks in a row on the same VO.
+  - Marking bills, payments, invoices and subcontractor payments as Paid: Finance staff only (Finance group). Not Procurement, Admin or the System Admin.
+  - A PM acts only on their own projects (the project's PM, or listed as PM in its team): approve the PM step of requests, verify IPCs, approve subcontractor payments, confirm deliveries, PM-check VOs, manage the team. The MD can act on all projects.
+  - Nobody approves their own drawing: the person who created the revision cannot approve it; another approver (Head of Design / Engineering, or the MD) must. The Document Engineer can still issue.
+  - QA/QC: anyone with QA/QC access may raise defects and inspections, but only the QA/QC inspector (QAQC tag), the PM of that project or the MD may pass, fail or close them.
+- Staff ID number (`staff_no`, e.g. GID-001): shown on the badge; HR, the MD and the System Admin change it (Edit form or the pencil on the badge); two active staff never share a number.

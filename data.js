@@ -7,7 +7,7 @@
   // ---------- Tables (column: type). Every table also has id (text) and created_at. ----------
   const TABLES = {
     staff: { name: "text", title: "text", groups: "text", tags: "text", phone: "text", email: "text", telegram_chat_id: "text",
-      short_name: "text", telegram_user: "text", start_date: "date", desk: "text", photo: "text", left_on: "date" },
+      short_name: "text", telegram_user: "text", start_date: "date", desk: "text", photo: "text", left_on: "date", staff_no: "text" },
     projects: { code: "text", name: "text", client: "text", location: "text", pm_id: "text", status: "text",
       start_date: "date", end_date: "date", contract_value: "numeric", budget: "numeric", progress: "numeric", lat: "numeric", lng: "numeric", scopes: "jsonb",
       handover_date: "date", dlp_months: "int" },
@@ -153,7 +153,7 @@
     // demo phone numbers only (012 555 xxx); HR replaces them with the real numbers
     const DESK = { EXEC: "the Managing Director's office", PM: "the Project Management area at the head office", SITE: "the site office", DESIGN: "the Design studio at the head office", ENG: "the Engineering area at the head office", QS: "the QS area at the head office", FIN: "the Finance room at the head office", ADMIN: "the Admin desk at the head office" };
     const S = (id, name, title, groups, tags) => ({ id, name, title, groups, tags: tags || "", phone: "012 555 " + String(100 + Number(id.slice(1))).padStart(3, "0"), email: "",
-      desk: DESK[String(groups).split(",")[0]] || "", start_date: "2024-0" + (1 + Number(id.slice(1)) % 9) + "-01" });
+      desk: DESK[String(groups).split(",")[0]] || "", start_date: "2024-0" + (1 + Number(id.slice(1)) % 9) + "-01", staff_no: "GID-" + id.slice(1).padStart(3, "0") });
     const staff = [
       S("s01", "Phan Vibol", "Managing Director", "EXEC", "MD"),
       S("s02", "Suos Piseth", "Project Manager", "PM"),

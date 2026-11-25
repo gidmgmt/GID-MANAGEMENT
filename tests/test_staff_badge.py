@@ -116,7 +116,7 @@ async def main():
                         check(not over, f"{tt} no text runs out of its box {over}")
                         text = await pg.evaluate("document.querySelector('#badges').innerText")
                         st = await pg.evaluate(f"JSON.parse(localStorage.getItem('gid-demo-v6')).staff.find((x) => x.id === '{target}')")
-                        need = [st["phone"], target.upper()]
+                        need = [st["phone"], (st.get("staff_no") or target).upper()]  # v23: the Staff ID number (GID-007), or the record id when empty
                         need.append(name.upper())
                         if not km: need += [st["title"].upper(), "POSITION", "STAFF ID", "DEPARTMENT", "Phone", "Projects", "GREEN IN DESIGN", "STRUCTURE · ARCHITECTURE · MEP · ELV"]
                         else: need += ["មុខតំណែង", "លេខសម្គាល់បុគ្គលិក", "ទូរស័ព្ទ", "គម្រោង"]
