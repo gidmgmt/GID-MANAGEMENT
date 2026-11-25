@@ -69,15 +69,41 @@
     function drop(k) { try { localStorage.removeItem(k); sessionStorage.removeItem(k); } catch (e) { /* ignore */ } }
     function keep(k, v, remember) { try { drop(k); (remember ? localStorage : sessionStorage).setItem(k, v); } catch (e) { /* ignore */ } }
     function savedPass() { return store(PASS_KEY); }
+    // ---- v23: sign in every day. A sign-in lasts until 03:00 the next morning (Phnom Penh time), so overtime after midnight is not cut.
+    // The "work day" is the Phnom Penh date of (now - 3 hours). tests/harness.py computes it the same way.
+    var PASS_DAY = "gid-pass-day", SESSION_DAY = "gid-session-day", SESSION_EXP = "gid-session-exp";
+    var DAILY_MSG = "Everyone signs in again each day after 3:00 am. Please sign in.";
+    function workDay(t) {
+      var d = new Date((t || Date.now()) - 3 * 3600000);
+      try { return d.toLocaleDateString("en-CA", { timeZone: "Asia/Phnom_Penh" }); }
+      catch (e) { var x = new Date(d.getTime() + 7 * 3600000); return x.getUTCFullYear() + "-" + String(x.getUTCMonth() + 1).padStart(2, "0") + "-" + String(x.getUTCDate()).padStart(2, "0"); }
+    }
+    // 03:00 Phnom Penh on the morning after a work day (Phnom Penh is always UTC+7)
+    function dayEnd(day) { var t = Date.parse(day + "T03:00:00+07:00"); return isNaN(t) ? 0 : t + 86400000; }
+    window.GID_WORKDAY = workDay;
+    // When this device's sign-in ends (milliseconds), or 0 when nobody is signed in
+    window.GID_SESSION_END = function () {
+      var A = window.GID_AUTH; if (!A) return 0;
+      var day = store(A.mode === "account" ? SESSION_DAY : PASS_DAY), end = day ? dayEnd(day) : 0;
+      if (A.mode === "account") { var exp = Date.parse(A.expires_at || store(SESSION_EXP) || ""); if (!isNaN(exp) && exp > 0 && (!end || exp < end)) end = exp; }
+      return end;
+    };
+    function stillToday(dayKey, expKey) {
+      var day = store(dayKey); if (!day || day !== workDay()) return false;
+      if (expKey) { var exp = Date.parse(store(expKey) || ""); if (!isNaN(exp) && Date.now() >= exp) return false; }
+      return Date.now() < dayEnd(day);
+    }
     // The app waits for GID_GATE. GID_AUTH says how the person came in: { mode: "account", token, staff_id, ... } or { mode: "passkey" }.
     var openGate;
     function newGate() { window.GID_GATE = new Promise(function (res) { openGate = res; }); return window.GID_GATE; }
     newGate();
     window.GID_AUTH = null;
-    window.GID_LOCK = function () { drop(PASS_KEY); drop(SESSION_KEY); location.reload(); };
-    window.GID_DROP_SESSION = function () { drop(SESSION_KEY); };
+    function dropDay() { drop(PASS_DAY); drop(SESSION_DAY); drop(SESSION_EXP); }
+    // (the offline site-report queue "gid-outbox" is never touched here: it is sent after the person signs in again)
+    window.GID_LOCK = function () { drop(PASS_KEY); drop(SESSION_KEY); dropDay(); location.reload(); };
+    window.GID_DROP_SESSION = function () { drop(SESSION_KEY); drop(SESSION_DAY); drop(SESSION_EXP); };
     // app.js calls this when a saved sign-in is no longer valid: show the sign-in screen again and wait
-    window.GID_SHOW_GATE = function (msg) { drop(SESSION_KEY); window.GID_AUTH = null; var g = newGate(); showGate(msg); return g; };
+    window.GID_SHOW_GATE = function (msg) { drop(SESSION_KEY); drop(SESSION_DAY); drop(SESSION_EXP); window.GID_AUTH = null; var g = newGate(); showGate(msg); return g; };
 
     // Load the Supabase library only when config.js has a Supabase address; otherwise run the browser demo.
     function bootApp() {
@@ -186,7 +212,8 @@
           callRpc("gid_sign_in", { p_login: login, p_password: pw, p_device: store("gid-device-id") || "" }).then(function (r) {
             busy(fin, false);
             if (r && r.ok && r.token) {
-              keep(SESSION_KEY, r.token, rem); drop(PASS_KEY); keep("gid-gate-tab", "in", true);
+              keep(SESSION_KEY, r.token, rem); drop(PASS_KEY); drop(PASS_DAY); keep("gid-gate-tab", "in", true);
+              keep(SESSION_DAY, workDay(), rem); if (r.expires_at) keep(SESSION_EXP, String(r.expires_at), rem); else drop(SESSION_EXP);
               window.GID_AUTH = { mode: "account", token: r.token, staff_id: r.staff_id, name: r.name, must_change_password: !!r.must_change_password, expires_at: r.expires_at, verified: true, remember: rem };
               app.innerHTML = '<div class="setup card"><p>Loading…</p></div>'; openGate(); return;
             }
@@ -242,7 +269,8 @@
         if (Date.now() < waitUntil) { err.textContent = "Too many tries. Wait " + Math.ceil((waitUntil - Date.now()) / 1000) + " seconds."; return; }
         sha256hex(pk.value).then(function (h) {
           if (h === PASS_HASH) {
-            keep(PASS_KEY, h, document.getElementById("rem").checked); drop(SESSION_KEY); keep("gid-gate-tab", "pk", true);
+            keep(PASS_KEY, h, document.getElementById("rem").checked); drop(SESSION_KEY); drop(SESSION_DAY); drop(SESSION_EXP); keep("gid-gate-tab", "pk", true);
+            keep(PASS_DAY, workDay(), document.getElementById("rem").checked);
             window.GID_AUTH = { mode: "passkey" };
             app.innerHTML = '<div class="setup card"><p>Loading…</p></div>'; openGate();
           } else {
@@ -256,8 +284,15 @@
     // When the intro finishes, put the cursor in the first box of the open tab
     window.addEventListener("gid:splash-done", function () { var fine = false; try { fine = matchMedia("(pointer: fine)").matches && !matchMedia("(pointer: coarse)").matches; } catch (e) { /* ignore */ } var p = document.querySelector(".gate-pane:not([hidden]) input:not([type=checkbox])"); if (p && fine) p.focus(); });
     // A saved account sign-in is checked by app.js (gid_session) before the app opens; a saved passkey opens straight away.
-    if (SHARED && store(SESSION_KEY)) { window.GID_AUTH = { mode: "account", token: store(SESSION_KEY), verified: false, remember: (function () { try { return !!localStorage.getItem(SESSION_KEY); } catch (e) { return false; } })() }; openGate(); }
-    else if (savedPass() === PASS_HASH) { window.GID_AUTH = { mode: "passkey" }; openGate(); }
+    // v23: a sign-in from an earlier work day (before 03:00 today) is not used: the person signs in again.
+    if (SHARED && store(SESSION_KEY) && !stillToday(SESSION_DAY, SESSION_EXP)) {
+      var oldTok = store(SESSION_KEY); drop(SESSION_KEY); drop(SESSION_DAY); drop(SESSION_EXP);
+      callRpc("gid_sign_out", { p_token: oldTok }).catch(function () { /* the server ends it at 03:00 anyway */ });
+      showGate(DAILY_MSG);
+    }
+    else if (SHARED && store(SESSION_KEY)) { window.GID_AUTH = { mode: "account", token: store(SESSION_KEY), verified: false, remember: (function () { try { return !!localStorage.getItem(SESSION_KEY); } catch (e) { return false; } })() }; openGate(); }
+    else if (savedPass() === PASS_HASH && stillToday(PASS_DAY)) { window.GID_AUTH = { mode: "passkey" }; openGate(); }
+    else if (savedPass() === PASS_HASH) { drop(PASS_KEY); drop(PASS_DAY); showGate(DAILY_MSG); }
     else showGate();
     // Start loading the app straight away, even while the sign-in screen is showing
     bootApp();

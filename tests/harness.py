@@ -59,6 +59,17 @@ async def route(r):
     await r.abort()  # nothing leaves the machine
 
 
+# v23: a remembered device must also carry today's "work day" stamp (the day changes at 03:00 Phnom Penh time).
+# Same formula as workDay() in index.html: the Phnom Penh date of (now - 3 hours).
+WORKDAY_JS = "new Date(Date.now()-3*3600000).toLocaleDateString('en-CA',{timeZone:'Asia/Phnom_Penh'})"
+
+
+def remember_script(day_js=WORKDAY_JS):
+    """Init script: open the app like a device that passed the passkey gate today (no passkey needed)."""
+    return ("try{if(!localStorage.getItem('gid-pass'))localStorage.setItem('gid-pass','%s');"
+            "if(!localStorage.getItem('gid-pass-day'))localStorage.setItem('gid-pass-day',%s)}catch(e){}") % (_pass_hash(), day_js)
+
+
 async def new_context(browser, phone=False, remembered_device=True, **kw):
     """remembered_device=True opens the app like a device that already passed the passkey gate (no passkey needed)."""
     vp = {"width": 390, "height": 844} if phone else {"width": 1280, "height": 800}
@@ -68,7 +79,7 @@ async def new_context(browser, phone=False, remembered_device=True, **kw):
     ctx = await browser.new_context(**opts)
     await ctx.route("**/*", route)
     if remembered_device and _pass_hash():
-        await ctx.add_init_script("try{if(!localStorage.getItem('gid-pass'))localStorage.setItem('gid-pass','%s')}catch(e){}" % _pass_hash())
+        await ctx.add_init_script(remember_script())
     return ctx
 
 

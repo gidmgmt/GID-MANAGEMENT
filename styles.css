@@ -1668,9 +1668,9 @@ html[data-theme="dark"] .t-other { --c: #b2c3b7; } html[data-theme="dark"] .m-do
   .cal-n { font-size: 13px; padding: 3px 5px; align-self: center; }
   .cal-h { display: none; }
   .cal-chips { flex-direction: row; flex-wrap: wrap; justify-content: center; gap: 2px; }
-  .chip { font-size: 0; width: 7px; height: 7px; padding: 0; border-radius: 50%; border: 0; background: var(--c); }
-  .chip.lnk { border: 1.5px solid var(--c); background: transparent; width: 7px; height: 7px; }
-  .chip.more { width: auto; height: auto; font-size: 9px; background: none; }
+  .cal-chips .chip { font-size: 0; width: 7px; height: 7px; padding: 0; border-radius: 50%; border: 0; background: var(--c); }
+  .cal-chips .chip.lnk { border: 1.5px solid var(--c); background: transparent; width: 7px; height: 7px; }
+  .cal-chips .chip.more { width: auto; height: auto; font-size: 9px; background: none; }
   .cal-key { font-size: 11px; gap: 4px 10px; }
   .sch-it { grid-template-columns: minmax(0, 1fr); gap: 2px; }
   .sch-tools .seg { width: 100%; } .sch-tools .seg button { flex: 1; }
@@ -1678,3 +1678,44 @@ html[data-theme="dark"] .t-other { --c: #b2c3b7; } html[data-theme="dark"] .m-do
   .pp-list { max-height: 55vh; }
   .sch-att { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* ---------- v23: announcements (banner on Dashboard and My work, preview, Settings card) ---------- */
+.annc-list { display: grid; gap: 10px; margin: 0 0 16px; }
+.annc { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 12px; align-items: start; padding: 14px 16px; border-radius: 16px;
+  background: var(--info-l); border: 1px solid var(--line); border-left: 4px solid var(--info); color: var(--ink); }
+.annc.imp { background: var(--bad-l); border-left-color: var(--bad); }
+.annc-ic { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; background: var(--card-solid); color: var(--info); }
+.annc.imp .annc-ic { color: var(--bad); }
+.annc-ic svg { width: 22px; height: 22px; }
+.annc-h { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.annc-h b { font-size: 15.5px; overflow-wrap: anywhere; }
+.annc-m { white-space: pre-line; overflow-wrap: anywhere; margin: 4px 0 6px; }
+.dl .annc-m { margin: 0; }
+.annc-f { color: var(--ink-2); display: block; }
+.annc-a { display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
+.ann-prev { margin: 14px 0 4px; }
+.ann-prev-h { display: block; font-size: 12px; font-weight: 700; color: var(--muted); margin-bottom: 6px; }
+.ann-prev .annc { pointer-events: none; }
+.ann-pick { margin-top: 4px; }
+.card.ann td .chip { margin-left: 4px; }
+@media (max-width: 640px) {
+  .annc { grid-template-columns: 32px minmax(0, 1fr); padding: 12px; gap: 10px; }
+  .annc-ic { width: 32px; height: 32px; border-radius: 10px; }
+  .annc-ic svg { width: 18px; height: 18px; }
+  .annc-a { grid-column: 1 / -1; flex-direction: row; justify-content: flex-end; }
+  .annc-a .btn { flex: 1 1 0; }
+}
+
+/* ---------- v23: sign in every day ---------- */
+.rail-until, .acct-until { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 12px; color: var(--muted); }
+.rail-until { padding: 0 10px; }
+.acct-until { margin: 10px 0 0; color: var(--ink-2); }
+.rail-until svg, .acct-until svg { width: 15px; height: 15px; flex: none; }
+.dayend { position: fixed; left: 50%; top: 10px; transform: translateX(-50%); z-index: 9999; width: min(560px, calc(100vw - 20px)); display: flex; gap: 10px; align-items: flex-start;
+  padding: 12px 14px; border-radius: 14px; background: var(--warn-l); color: var(--ink); border: 1px solid var(--warn); box-shadow: 0 10px 30px rgba(0, 0, 0, .18); font-size: 14px; }
+.dayend svg { width: 20px; height: 20px; flex: none; color: var(--warn); margin-top: 2px; }
+html[data-theme="dark"] .dayend { background: #2b2414; }
+/* v23: alert list: "Action needed" tag and the project / amount / date line */
+.nk { display: inline-block; font-style: normal; font-size: 11px; font-weight: 800; letter-spacing: .02em; text-transform: uppercase; color: var(--bad); background: var(--bad-l); border-radius: 6px; padding: 1px 6px; margin-bottom: 2px; }
+small.nx { color: var(--ink-2); }
+.annc-h .chip, .card.ann td .chip, .dl .chip { flex: none; overflow: visible; max-width: none; }

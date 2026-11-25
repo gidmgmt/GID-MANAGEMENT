@@ -93,7 +93,7 @@
       const res = await Promise.all(names.map((t) => this.client.from(t).select("*").limit(5000)));
       res.forEach(({ data, error }, i) => {
         // a table added in a newer version (for example site_visits) may not exist yet: start it empty instead of stopping the app
-        if (error && ["site_visits", "variations", "subcontractors", "sub_contracts", "sub_payments", "tests", "handover_items", "warranties", "events", "holidays"].includes(names[i])) { console.warn(names[i] + " table missing: run the newest supabase/update SQL"); db[names[i]] = names[i] === "holidays" ? HOLIDAYS_STD.map((h) => Object.assign({}, h)) : []; this.missing = (this.missing || []).concat(names[i]); return; }
+        if (error && ["site_visits", "variations", "subcontractors", "sub_contracts", "sub_payments", "tests", "handover_items", "warranties", "events", "holidays", "announcements"].includes(names[i])) { console.warn(names[i] + " table missing: run the newest supabase/update SQL"); db[names[i]] = names[i] === "holidays" ? HOLIDAYS_STD.map((h) => Object.assign({}, h)) : []; this.missing = (this.missing || []).concat(names[i]); return; }
         if (error) throw new Error("Could not read table '" + names[i] + "': " + error.message + ". Did you run schema.sql in Supabase?");
         db[names[i]] = data || [];
       });
@@ -112,6 +112,18 @@
       }
       db[t].push(r); if (this.mode === "local") this.writeLocal();
       return r;
+    },
+    // Many rows of one table in one request (for example one alert per person for an announcement)
+    async insertMany(t, rows) {
+      const list = rows.map((row) => { row.id = row.id || uid(); row.created_at = row.created_at || nowIso(); return this.clean(t, row); });
+      if (!list.length) return [];
+      if (this.mode === "supabase") {
+        const { data, error } = await this.client.from(t).insert(list).select();
+        if (error) throw new Error(error.message);
+        (data || []).forEach((d) => { const r = list.find((x) => x.id === d.id); if (r) Object.assign(r, d); });
+      }
+      db[t].push(...list); if (this.mode === "local") this.writeLocal();
+      return list;
     },
     async update(t, id, patch) {
       const cleanPatch = {}; for (const c of Object.keys(patch)) if (c in TABLES[t]) cleanPatch[c] = patch[c] === "" && TABLES[t][c] !== "text" ? null : patch[c];
@@ -152,11 +164,12 @@
   };
 
   async function save(t, row, summary) { const r = await Store.insert(t, row); await log("Created", t, r.id, typeof summary === "function" ? summary(r) : summary); return r; }
-  async function patch(t, id, p, summary) { const r = await Store.update(t, id, p); await log("Updated", t, id, summary); return r; }
-  async function log(action, tbl, record_id, summary) {
+  // (v23) the record as it was before the change goes with the alert, so the alert can say what happened (returned, reviewed, reopened…)
+  async function patch(t, id, p, summary) { const old = byId(t, id), before = old ? JSON.parse(JSON.stringify(old)) : null; const r = await Store.update(t, id, p); await log("Updated", t, id, summary, before); return r; }
+  async function log(action, tbl, record_id, summary, before) {
     if (tbl === "audit_log") return;
     try { await Store.insert("audit_log", { at: nowIso(), actor_id: state.user, action, tbl, record_id, summary: summary || "" }); } catch (e) { /* logging never blocks work */ }
-    queueNotify(action, tbl, record_id, summary);
+    queueNotify(action, tbl, record_id, summary, before);
   }
 
   // ================= lookups =================
@@ -192,6 +205,7 @@
     vo: "Variations", subs: "Subcontractors", handover: "Testing & Handover", svr: "Site visits (SVR)", schedule: "Schedule & Meetings" };
   const LEVEL_HELP = { none: "Hidden: the module is not in the menu", view: "See all records (in their projects), change nothing", own: "Create and see only their own records",
     edit: "Create and update records", approve: "Edit, plus approve or reject", admin: "Full control, including settings and deleting" };
+  const LEVEL_PLAIN = { none: "hidden", view: "see all", own: "own records only", edit: "edit", approve: "approve", admin: "full control" };
   function permSetting() { return (db.app_settings || []).find((x) => x.key === "permissions"); }
   function PERMS_NOW() {
     const saved = (permSetting() || {}).value || {}, out = {};
@@ -330,7 +344,13 @@
     const flag = Number(o.amount) < APPROVAL_LIMIT && recent.length > 0 && total >= APPROVAL_LIMIT;
     const po = await save("purchase_orders", Object.assign({ po_no: nextNo("purchase_orders", "po_no", "PO-"), status: "Ordered", split_flag: flag,
       delivered_note: "", delivered_photo: "", delivered_by: "", delivered_at: null }, o), "PO for " + supplierName(o.supplier_id));
-    if (flag) toast("Possible split order: this supplier has " + money(total) + " on this project in 7 days. Flagged for the MD.", true);
+    if (flag) {
+      toast("Possible split order: this supplier has " + money(total) + " on this project in 7 days. Flagged for the MD.", true);
+      const md = MD(); // (v23) the MD really gets the alert now
+      if (md && md !== state.user) await insertNotes([noteRow(md, state.user, "purchase_orders", po.id, { kind: "action", ref: po.po_no, project: projFull(po.project_id), amount: money(po.amount),
+        title: po.po_no + " · Possible split order: please check", title_km: po.po_no + " · អាចជាការបំបែកការបញ្ជាទិញ៖ សូមពិនិត្យ",
+        body: supplierName(po.supplier_id) + " has " + money(total) + " on this project in 7 days", body_km: supplierName(po.supplier_id) + " មាន " + money(total) + " លើគម្រោងនេះក្នុង 7 ថ្ងៃ" }, nowIso())]);
+    }
     return po;
   }
 
@@ -377,7 +397,7 @@
   }
   let flushing = false;
   async function flushOutbox(quiet) {
-    if (flushing || Store.mode !== "supabase" || !navigator.onLine) return 0;
+    if (flushing || Store.mode !== "supabase" || !navigator.onLine || !state.user) return 0; // (v23) only once someone is signed in
     const l = outbox(); if (!l.length) return 0;
     flushing = true; let sent = 0;
     try {
@@ -739,9 +759,9 @@
   // Every save is logged. The people concerned by it get one notification per action (several saves from one tap are merged).
   const NOTE_MODULE = { requests: "requests", purchase_orders: "procurement", suppliers: "procurement", stock_moves: "stock", stock_items: "stock", stores: "stock", daily_reports: "daily",
     documents: "docs", tasks: "projects", projects: "projects", project_members: "projects", claims: "cost", cost_lines: "cost", monthly_costs: "cost", invoices: "finance",
-    defects: "qaqc", inspections: "qaqc", safety: "safety", site_visits: "svr", variations: "vo", subcontractors: "subs", sub_contracts: "subs", sub_payments: "subs", tests: "handover", handover_items: "handover", warranties: "handover", staff: "people", accounts: "people", app_settings: "admin", events: "schedule", holidays: "schedule" };
+    defects: "qaqc", inspections: "qaqc", safety: "safety", site_visits: "svr", variations: "vo", subcontractors: "subs", sub_contracts: "subs", sub_payments: "subs", tests: "handover", handover_items: "handover", warranties: "handover", staff: "people", accounts: "people", app_settings: "admin", events: "schedule", holidays: "schedule", announcements: "admin" };
   const NOTE_ICON = { requests: "requests", purchase_orders: "procurement", suppliers: "procurement", stock_moves: "stock", stock_items: "stock", stores: "stock", daily_reports: "daily", documents: "docs",
-    tasks: "projects", projects: "projects", project_members: "people", claims: "cost", cost_lines: "cost", monthly_costs: "cost", invoices: "finance", defects: "qaqc", inspections: "qaqc", safety: "safety", site_visits: "svr", variations: "vo", subcontractors: "subs", sub_contracts: "subs", sub_payments: "subs", tests: "handover", handover_items: "handover", warranties: "handover", staff: "people", accounts: "people", app_settings: "admin", events: "schedule", holidays: "schedule" };
+    tasks: "projects", projects: "projects", project_members: "people", claims: "cost", cost_lines: "cost", monthly_costs: "cost", invoices: "finance", defects: "qaqc", inspections: "qaqc", safety: "safety", site_visits: "svr", variations: "vo", subcontractors: "subs", sub_contracts: "subs", sub_payments: "subs", tests: "handover", handover_items: "handover", warranties: "handover", staff: "people", accounts: "people", app_settings: "admin", events: "schedule", holidays: "schedule", announcements: "megaphone" };
   const PREF_LABEL = { mine: "Only things for me", projects: "Everything on my projects", all: "Everything in the company" };
   function notifyPref(u) {
     const s = (db.app_settings || []).find((x) => x.key === "notify:" + u.id);
@@ -765,13 +785,13 @@
     const team = (pid, g) => db.project_members.filter((m) => m.project_id === pid && (!g || groupsOf(byId("staff", m.staff_id) || { groups: "" }).includes(g))).map((m) => m.staff_id);
     const pid = recordProject(tbl, r);
     switch (tbl) {
-      case "requests": return [r.requester_id, pm(r.project_id)].concat(r.status === "Pending" ? approversFor(r) : [], r.status === "Approved" && r.type === "Leave" ? ids("HR") : [],
+      case "requests": return [r.requester_id, pm(r.project_id)].concat(r.status === "Pending" ? approversFor(r) : [], r.status === "Cancelled" ? approversFor(r) : [], r.status === "Approved" && r.type === "Leave" ? ids("HR") : [],
         r.type === "Overtime" && r.status !== "Pending" ? ids("HR").concat(ids("MD")) : []);
       case "purchase_orders": { const rq = byId("requests", r.request_id); return ids("PROC").concat([pm(pid), rq && rq.requester_id], team(pid, "SITE"), r.status !== "Ordered" ? grp("FIN") : []); }
       case "stock_moves": { const it = byId("stock_items", r.item_id), low = it && stockQty(it.id) < Number(it.min_qty); return ids("PROC").concat([pm(pid), r.by_id], team(pid, "SITE"), low ? grp("QS") : []); }
       case "stock_items": case "stores": case "suppliers": return ids("PROC").concat(grp("ADMIN"));
       case "daily_reports": return r.kind === "Design" ? inGroup("DESIGN").filter((s) => hasTag(s, "HEAD")).map((s) => s.id).concat((r.entries || []).map((e) => pm(e.project_id)))
-        : [pm(pid)].concat(ids("SITEMGR"), r.late || r.loc_status === "Away from site" || r.loc_status === "No location" ? ids("MD") : [], r.issues ? team(pid, "SITE") : []);
+        : [pm(pid), r.author_id].concat(ids("SITEMGR"), r.late || r.loc_status === "Away from site" || r.loc_status === "No location" ? ids("MD") : [], r.issues ? team(pid, "SITE") : []);
       case "documents": return [r.owner_id, pm(pid)].concat(team(pid, "DESIGN"), r.status === "In review" ? inGroup("DESIGN").filter((s) => hasTag(s, "HEAD")).map((s) => s.id).concat(grp("ENG")) : [],
         r.status === "Approved" ? ids("DOC") : [], r.status === "Issued" ? team(pid, "SITE").concat(ids("SITEMGR")) : []);
       case "tasks": return [r.assignee_id, r.created_by, pm(pid)];
@@ -785,7 +805,7 @@
       case "cost_lines": case "monthly_costs": return [pm(pid)].concat(grp("QS"));
       case "staff": return [r.id].concat(ids("MD"), ids("SYSADMIN"));
       case "variations": { const st = r.status; return [r.raised_by, pm(pid)].concat(st === "Raised" ? grp("QS") : [], st === "PM checked" ? ids("MD") : [], VO_OK.includes(st) ? grp("QS").concat(ids("MD")) : []); }
-      case "sub_payments": { const k = byId("sub_contracts", r.contract_id) || {}; return [pm(k.project_id)].concat(r.status === "Claimed" ? grp("QS") : [], r.status === "PM approved" ? grp("FIN") : [], ids("MD").filter(() => r.status === "PM approved")); }
+      case "sub_payments": { const k = byId("sub_contracts", r.contract_id) || {}; return [pm(k.project_id)].concat(r.status === "Claimed" || r.status === "Paid" ? grp("QS") : [], r.status === "PM approved" ? grp("FIN") : [], ids("MD").filter(() => r.status === "PM approved")); }
       case "tests": return [r.tested_by, pm(pid)].concat(r.result === "Fail" ? ids("MD") : []);
       case "warranties": case "handover_items": return [pm(pid)];
       case "site_visits": return ids("MD").concat(inGroup("PM").map((s) => s.id), split(r.visited_by), (r.actions || []).map((a) => a.who), [r.author_id]);
@@ -832,27 +852,344 @@
     if (tbl === "stock_moves") { const it = byId("stock_items", r.item_id) || {}; return (r.qty > 0 ? "+" : "") + r.qty + " " + it.unit + " · " + ((byId("stores", r.store_id) || {}).name || "") + (r.project_id ? " · " + projLabel(r.project_id) : "") + " · now " + stockQty(it.id) + " " + it.unit + " in total"; }
     return summary;
   }
+  // ================= v23 alert texts (docs/NOTIFICATIONS.md) =================
+  // Each alert has a kind for its reader (action = you must act now; approved / rejected = your own item; info = nothing to do;
+  // reminder = schedule), the module, the reference, the project as "CODE · Name", amount, date, and the same title and detail in Khmer.
+  const projFull = (id) => { const p = byId("projects", id); return p ? p.code + (p.name ? " · " + p.name : "") : ""; };
+  const KMW = (x) => { if (x == null || x === "") return ""; const k = window.I18N && I18N.km ? I18N.km(String(x)) : null; return k || String(x); };
+  const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  // "28 Nov 2026" (Phnom Penh date) for alerts
+  const dLong = (d) => { if (!d) return ""; const s = String(d).length === 10 ? String(d) : dateInPP(d); const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s); return m ? Number(m[3]) + " " + MON[Number(m[2]) - 1] + " " + m[1] : String(d); };
+  const lastHist = (r, action) => { const h = (r && r.history) || []; for (let i = h.length - 1; i >= 0; i--) if (!action || h[i].action === action) return h[i]; return null; };
+  const STEP_SHORT = { PM: "approval", QS: "budget check", MD: "approval", PROC: "order", STORE: "stock release", FIN: "payment", HEAD: "approval", LINE: "approval", HR: "approval" };
+  const STEP_SHORT_KM = { approval: "ការអនុម័ត", "budget check": "ការពិនិត្យថវិកា", order: "ការបញ្ជាទិញ", "stock release": "ការបញ្ចេញស្តុក", payment: "ការទូទាត់" };
+  const STEP_DONE = { PM: "PM approval", QS: "QS check", MD: "MD approval", PROC: "Procurement", STORE: "Store", FIN: "Finance", HEAD: "Head of department", LINE: "Line manager", HR: "HR" };
+  const STEP_DONE_KM = { PM: "PM អនុម័ត", QS: "QS ពិនិត្យ", MD: "នាយកអនុម័ត", PROC: "លទ្ធកម្ម", STORE: "ឃ្លាំង", FIN: "ហិរញ្ញវត្ថុ", HEAD: "ប្រធានផ្នែក", LINE: "អ្នកគ្រប់គ្រងផ្ទាល់", HR: "ធនធានមនុស្ស" };
+  const ids_ = (t) => withTag(t).map((s) => s.id), grp_ = (g) => inGroup(g).map((s) => s.id);
+  const cut = (s, n) => { s = String(s || "").replace(/\s+/g, " ").trim(); return s.length > n ? s.slice(0, n - 1) + "…" : s; };
+  const changed = (b, r, k) => !!b && JSON.stringify(b[k] == null ? null : b[k]) !== JSON.stringify(r[k] == null ? null : r[k]);
+
+  // describe(e) → function (to) → message for that reader, or null for "no alert"
+  function describe(e) {
+    const tbl = e.tbl, r = e.r, b = e.before, actor = staffName(e.actor);
+    if (!r) return null;
+    const pid = recordProject(tbl, r);
+    const M = (o) => Object.assign({ kind: "info", ref: "", project: projFull(pid), amount: "", due: "", body: "", body_km: "" }, o);
+    const pick = (fn) => fn; // readability: the describer returns a function of the reader
+    const isNew = !b;
+    switch (tbl) {
+      case "requests": {
+        const ref = r.ref_no, typ = r.type, tk = KMW(typ), amount = r.amount ? money(r.amount) : "";
+        const due = r.needed_by ? (typ === "Leave" ? "from " + dLong(r.needed_by) + (r.leave_days ? ", " + r.leave_days + " days" : "") : "needed by " + dLong(r.needed_by)) : "";
+        const base = { ref, amount, due, body: cut(r.title, 160), body_km: "" };
+        const mine = (to) => to === r.requester_id;
+        if (r.status === "Pending") {
+          const st = r.steps[r.step_index] || {}, appr = approversFor(r);
+          if (r.step_index === 0 && (isNew || b.status !== "Pending")) return pick((to) => appr.includes(to)
+            ? M(Object.assign({}, base, { kind: "action", title: `${ref} · ${typ} request waiting for your approval`, title_km: `${ref} · សំណើ${tk} រង់ចាំការអនុម័តរបស់អ្នក` }))
+            : M(Object.assign({}, base, { title: `${ref} · New ${typ.toLowerCase()} request from ${staffName(r.requester_id)}`, title_km: `${ref} · សំណើ${tk}ថ្មីពី ${staffName(r.requester_id)}` })));
+          if (isNew || b.step_index === r.step_index) return null; // nothing moved
+          const prev = r.steps[r.step_index - 1] || {}, short = STEP_SHORT[st.role] || "approval";
+          const by = `Approved by ${actor} (${STEP_DONE[prev.role] || prev.label || ""})`, byKm = `បានអនុម័តដោយ ${actor} (${STEP_DONE_KM[prev.role] || ""})`;
+          return pick((to) => appr.includes(to)
+            ? M(Object.assign({}, base, { kind: "action", title: `${ref} · ${typ} request waiting for your ${short}`, title_km: `${ref} · សំណើ${tk} រង់ចាំ${STEP_SHORT_KM[short]}របស់អ្នក`, body: base.body + " · " + by, body_km: byKm }))
+            : M(Object.assign({}, base, { title: `${ref} · ${typ} request approved by ${actor}, now with ${waitingOn(r)}`, title_km: `${ref} · សំណើ${tk} បានអនុម័តដោយ ${actor} ឥឡូវនៅ ${waitingOn(r)}` })));
+        }
+        if (b && b.status === r.status) return null;
+        if (r.status === "Approved") {
+          const po = db.purchase_orders.find((p) => p.request_id === r.id), last = (r.steps[r.steps.length - 1] || {}).role;
+          const next = po ? `${po.po_no} issued to ${supplierName(po.supplier_id)}` : last === "FIN" ? "Paid by Finance" : typ === "Leave" ? "Leave recorded" : last === "STORE" ? "Released from stock" : "";
+          const nextKm = po ? `${po.po_no} បានចេញទៅ ${supplierName(po.supplier_id)}` : last === "FIN" ? "ហិរញ្ញវត្ថុបានទូទាត់" : typ === "Leave" ? "បានកត់ត្រាច្បាប់ឈប់សម្រាក" : last === "STORE" ? "បានបញ្ចេញពីស្តុក" : "";
+          return pick((to) => M(Object.assign({}, base, { kind: mine(to) ? "approved" : "info", title: `${ref} · ${typ} request approved`, title_km: `${ref} · សំណើ${tk} ត្រូវបានអនុម័ត`,
+            body: [base.body, next].filter(Boolean).join(" · "), body_km: nextKm })));
+        }
+        if (r.status === "Rejected") {
+          const h = lastHist(r, "Rejected") || {};
+          return pick((to) => M(Object.assign({}, base, { kind: mine(to) ? "rejected" : "info", title: `${ref} · ${typ} request rejected by ${actor}`, title_km: `${ref} · សំណើ${tk} ត្រូវបានបដិសេធដោយ ${actor}`,
+            body: [h.note ? "Reason: " + cut(h.note, 300) : "", base.body].filter(Boolean).join(" · ") })));
+        }
+        if (r.status === "Cancelled") return pick(() => M(Object.assign({}, base, { title: `${ref} · ${typ} request cancelled by ${actor}`, title_km: `${ref} · សំណើ${tk} ត្រូវបានលុបចោលដោយ ${actor}` })));
+        return null;
+      }
+      case "purchase_orders": {
+        const ref = r.po_no, sup = supplierName(r.supplier_id), rq = byId("requests", r.request_id), amount = money(r.amount);
+        if (isNew) return pick(() => M({ ref, amount, title: `${ref} · Purchase order sent to ${sup}`, title_km: `${ref} · ការបញ្ជាទិញបានផ្ញើទៅ ${sup}`,
+          body: [cut(r.description, 160), rq ? "For request " + rq.ref_no : ""].filter(Boolean).join(" · "), body_km: rq ? "សម្រាប់សំណើ " + rq.ref_no : "" }));
+        if (!changed(b, r, "status")) return null;
+        if (r.status === "Delivered") {
+          const inv = db.invoices.find((i) => i.source_type === "po" && i.source_id === r.id), fin = grp_("FIN");
+          return pick((to) => fin.includes(to) && inv
+            ? M({ ref, amount, kind: "action", due: inv.due_date ? "due " + dLong(inv.due_date) : "", title: `${ref} · Delivered: supplier bill ${inv.inv_no} to pay`, title_km: `${ref} · បានដឹកមកដល់៖ វិក្កយបត្រ ${inv.inv_no} ត្រូវបង់`, body: `${sup} · Received by ${staffName(r.delivered_by)}`, body_km: `${sup} · ទទួលដោយ ${staffName(r.delivered_by)}` })
+            : M({ ref, amount, title: `${ref} · Delivered on site`, title_km: `${ref} · បានដឹកមកដល់ការដ្ឋាន`, body: `${sup} · Received by ${staffName(r.delivered_by)}`, body_km: `${sup} · ទទួលដោយ ${staffName(r.delivered_by)}` }));
+        }
+        if (r.status === "Paid") return pick((to) => M({ ref, amount, kind: rq && to === rq.requester_id ? "approved" : "info", title: `${ref} · Supplier paid`, title_km: `${ref} · បានបង់ប្រាក់អ្នកផ្គត់ផ្គង់`, body: sup }));
+        return null;
+      }
+      case "stock_moves": {
+        const it = byId("stock_items", r.item_id) || {}, q = stockQty(it.id), low = Number(it.min_qty) > 0 && q < Number(it.min_qty), st = (byId("stores", r.store_id) || {}).name || "";
+        const verb = { Receive: ["received", "បានទទួល"], Issue: ["issued", "បានបញ្ចេញ"], Transfer: ["moved", "បានផ្ទេរ"], Adjust: ["counted", "បានរាប់"] }[r.move_type] || ["changed", "បានកែ"];
+        const qty = Math.abs(Number(r.qty) || 0) + " " + (it.unit || "");
+        const proc = ids_("PROC");
+        return pick((to) => low && proc.includes(to)
+          ? M({ ref: r.ref || "", kind: "action", title: `Low stock: ${it.name} (${q} ${it.unit} left, minimum ${it.min_qty})`, title_km: `ស្តុកទាប៖ ${it.name} (នៅសល់ ${q} ${it.unit}, អប្បបរមា ${it.min_qty})`, body: st, body_km: "" })
+          : M({ ref: r.ref || "", title: low ? `Low stock: ${it.name} (${q} ${it.unit} left, minimum ${it.min_qty})` : `${it.name}: ${qty} ${verb[0]}`, title_km: low ? `ស្តុកទាប៖ ${it.name} (នៅសល់ ${q} ${it.unit}, អប្បបរមា ${it.min_qty})` : `${it.name}៖ ${verb[1]} ${qty}`,
+            body: [st, `Now ${q} ${it.unit} in total`].filter(Boolean).join(" · "), body_km: `សរុបឥឡូវ ${q} ${it.unit}` }));
+      }
+      case "daily_reports": {
+        const who = staffName(r.author_id), date = dLong(r.report_date);
+        if (r.kind === "Design") {
+          if (!isNew) return null;
+          const h = sum(r.entries || [], (x) => x.hours);
+          return pick(() => M({ due: date, title: `Daily work from ${who}: ${h} hours`, title_km: `ការងារប្រចាំថ្ងៃពី ${who}៖ ${h} ម៉ោង`, body: cut((r.entries || []).map((x) => x.label).join(", "), 200) }));
+        }
+        const S = r.session || "End of day", Skm = KMW(S);
+        if (!isNew) {
+          if (!(changed(b, r, "status") && r.status === "Reviewed")) return null;
+          return pick((to) => to === r.author_id
+            ? M({ kind: "approved", due: date, title: `Your ${S.toLowerCase()} report of ${date} was reviewed by ${actor}`, title_km: `របាយការណ៍${Skm} ថ្ងៃ ${date} របស់អ្នក ត្រូវបានពិនិត្យដោយ ${actor}` })
+            : M({ due: date, title: `${S} report from ${who} reviewed by ${actor}`, title_km: `របាយការណ៍${Skm} ពី ${who} ត្រូវបានពិនិត្យដោយ ${actor}` }));
+        }
+        const away = r.loc_status === "Away from site" || r.loc_status === "No location";
+        const title = r.late && S === "Morning" ? `LATE morning report (${r.late_minutes || 0} min) from ${who}` : `${S} report from ${who}`;
+        const title_km = r.late && S === "Morning" ? `របាយការណ៍ពេលព្រឹក យឺត (${r.late_minutes || 0} នាទី) ពី ${who}` : `របាយការណ៍${Skm} ពី ${who}`;
+        const awayEn = away ? (r.loc_status === "No location" ? " · sent WITHOUT LOCATION" : ` · sent AWAY FROM SITE${r.distance_m ? " (" + Math.round(r.distance_m) + " m)" : ""}`) : "";
+        const awayKm = away ? (r.loc_status === "No location" ? " · ផ្ញើគ្មានទីតាំង" : " · ផ្ញើក្រៅការដ្ឋាន") : "";
+        return pick(() => M({ due: date, title: title + awayEn, title_km: title_km + awayKm,
+          body: [`${r.manpower || 0} workers · ${reportPhotos(r).length} photos`, r.issues ? "Issue: " + cut(r.issues, 160) : "", r.loc_note ? cut(r.loc_note, 100) : ""].filter(Boolean).join(" · "),
+          body_km: `កម្មករ ${r.manpower || 0} នាក់ · រូបថត ${reportPhotos(r).length}` }));
+      }
+      case "documents": {
+        const ref = r.doc_no + " rev " + r.revision, t = r.title || "", owner = (to) => to === r.owner_id;
+        if (r.status === "Superseded") return null;
+        if (isNew) return pick(() => M({ ref, title: `${ref} · ${Number(r.revision) > 0 ? "New revision" : "New drawing"}: ${t}`, title_km: `${ref} · ${Number(r.revision) > 0 ? "កំណែថ្មី" : "ប្លង់ថ្មី"}៖ ${t}`, body: r.discipline || "", body_km: KMW(r.discipline) }));
+        if (!changed(b, r, "status")) {
+          if (changed(b, r, "file_url")) return pick(() => M({ ref, silent: true, title: `${ref} · PDF added`, title_km: `${ref} · បានបន្ថែម PDF`, body: t }));
+          if (changed(b, r, "progress")) return pick(() => M({ ref, silent: true, title: `${ref} · progress ${r.progress}%`, title_km: `${ref} · វឌ្ឍនភាព ${r.progress}%`, body: t }));
+          return null;
+        }
+        if (r.status === "In review") {
+          const chk = inGroup("DESIGN").filter((s) => hasTag(s, "HEAD")).map((s) => s.id).concat(grp_("ENG"));
+          return pick((to) => chk.includes(to)
+            ? M({ ref, kind: "action", due: r.due_date ? "due " + dLong(r.due_date) : "", title: `${ref} · Drawing waiting for your review`, title_km: `${ref} · ប្លង់រង់ចាំការពិនិត្យរបស់អ្នក`, body: t })
+            : M({ ref, title: `${ref} · Sent for review`, title_km: `${ref} · បានបញ្ជូនទៅពិនិត្យ`, body: t }));
+        }
+        if (r.status === "Draft" && b.status === "In review") return pick((to) => M({ ref, kind: owner(to) ? "rejected" : "info", title: `${ref} · Returned with comments by ${actor}`, title_km: `${ref} · បញ្ជូនត្រឡប់ជាមួយមតិយោបល់ដោយ ${actor}`,
+          body: [r.notes ? "Comments: " + cut(r.notes, 400) : "", t].filter(Boolean).join(" · ") }));
+        if (r.status === "Approved") { const doc = ids_("DOC"); return pick((to) => doc.includes(to)
+          ? M({ ref, kind: "action", title: `${ref} · Approved: please issue`, title_km: `${ref} · បានអនុម័ត៖ សូមចេញផ្សាយ`, body: t })
+          : M({ ref, kind: owner(to) ? "approved" : "info", title: `${ref} · Approved by ${actor}`, title_km: `${ref} · បានអនុម័តដោយ ${actor}`, body: t })); }
+        if (r.status === "Issued") return pick((to) => M({ ref, kind: owner(to) ? "approved" : "info", title: `${ref} · Issued for construction: ${t}`, title_km: `${ref} · បានចេញផ្សាយសម្រាប់សាងសង់៖ ${t}`,
+          body: Number(r.revision) > 0 ? "Replaces rev " + (Number(r.revision) - 1) : "", body_km: Number(r.revision) > 0 ? "ជំនួស rev " + (Number(r.revision) - 1) : "" }));
+        return pick(() => M({ ref, title: `${ref} · ${r.status}`, title_km: `${ref} · ${KMW(r.status)}`, body: t }));
+      }
+      case "tasks": {
+        const due = r.due_date ? "due " + dLong(r.due_date) : "";
+        if (isNew) return pick((to) => to === r.assignee_id
+          ? M({ kind: "action", due, title: `New task for you: ${r.title}`, title_km: `កិច្ចការថ្មីសម្រាប់អ្នក៖ ${r.title}`, body: r.priority ? "Priority: " + r.priority : "", body_km: r.priority ? "អាទិភាព៖ " + KMW(r.priority) : "" })
+          : M({ due, title: `New task for ${staffName(r.assignee_id)}: ${r.title}`, title_km: `កិច្ចការថ្មីសម្រាប់ ${staffName(r.assignee_id)}៖ ${r.title}` }));
+        const w = !changed(b, r, "status") ? ["changed", "បានកែប្រែ"] : r.status === "Done" ? ["done", "រួចរាល់"] : r.status === "In progress" ? ["started", "បានចាប់ផ្តើម"] : b.status === "Done" ? ["reopened", "បានបើកឡើងវិញ"] : ["changed", "បានកែប្រែ"];
+        return pick((to) => M({ kind: r.status === "Done" && to === r.created_by && changed(b, r, "status") ? "approved" : "info", due, title: `Task ${w[0]}: ${r.title}`, title_km: `កិច្ចការ${w[1]}៖ ${r.title}`, body: "By " + actor, body_km: "ដោយ " + actor }));
+      }
+      case "projects": {
+        const P = projFull(r.id);
+        if (isNew) return pick(() => M({ title: `New project ${P}`, title_km: `គម្រោងថ្មី ${P}`, body: [r.client, r.pm_id ? "PM: " + staffName(r.pm_id) : ""].filter(Boolean).join(" · ") }));
+        if (changed(b, r, "pm_id")) return pick(() => M({ title: `${P}: ${staffName(r.pm_id)} is now Project Manager`, title_km: `${P}៖ ${staffName(r.pm_id)} ជាប្រធានគម្រោងថ្មី` }));
+        if (changed(b, r, "progress")) return pick(() => M({ silent: true, title: `${P} progress now ${r.progress}%`, title_km: `${P} វឌ្ឍនភាពឥឡូវ ${r.progress}%` }));
+        if (changed(b, r, "handover_date")) return pick(() => M({ due: dLong(r.handover_date), title: `${P}: handover date ${dLong(r.handover_date)}`, title_km: `${P}៖ ថ្ងៃប្រគល់ ${dLong(r.handover_date)}`, body: r.dlp_months ? "Defects period: " + r.dlp_months + " months" : "" }));
+        if (changed(b, r, "lat") || changed(b, r, "lng")) return pick(() => M({ title: `${P}: site location saved`, title_km: `${P}៖ បានរក្សាទុកទីតាំងការដ្ឋាន` }));
+        return pick(() => M({ title: `${P} updated`, title_km: `${P} បានកែប្រែ`, body: e.summary || "" }));
+      }
+      case "project_members": {
+        const P = projFull(r.project_id);
+        return pick((to) => to === r.staff_id ? M({ title: `You were added to ${P}`, title_km: `អ្នកត្រូវបានបញ្ចូលក្នុងគម្រោង ${P}`, body: r.role || "" })
+          : M({ title: `${staffName(r.staff_id)} added to ${P}`, title_km: `${staffName(r.staff_id)} ត្រូវបានបញ្ចូលក្នុងគម្រោង ${P}`, body: r.role || "" }));
+      }
+      case "claims": {
+        const P = projFull(r.project_id), ref = "IPC " + r.ipc_no, amount = money(r.certified || r.claimed);
+        if (isNew) return pick(() => M({ ref, amount: money(r.claimed), title: `${P} IPC ${r.ipc_no} started`, title_km: `${P} IPC ${r.ipc_no} បានចាប់ផ្តើម`, body: r.period || "" }));
+        if (!changed(b, r, "status")) return null;
+        if (r.status === "Paid") return pick(() => M({ ref, amount, kind: "approved", title: `${P} IPC ${r.ipc_no} paid by the client`, title_km: `${P} IPC ${r.ipc_no} ម្ចាស់គម្រោងបានបង់ប្រាក់` }));
+        const nx = { "QS checked": [[(byId("projects", r.project_id) || {}).pm_id], "verification", "ការផ្ទៀងផ្ទាត់"], "PM verified": [ids_("MD"), "approval", "ការអនុម័ត"], "MD approved": [grp_("FIN"), "invoice", "ការចេញវិក្កយបត្រ"], Invoiced: [grp_("FIN"), "payment collection", "ការប្រមូលប្រាក់"] }[r.status];
+        const by = `${r.status} by ${actor}`, byKm = `${KMW(r.status)} ដោយ ${actor}`;
+        return pick((to) => nx && nx[0].includes(to)
+          ? M({ ref, amount, kind: "action", title: `${P} IPC ${r.ipc_no} waiting for your ${nx[1]}`, title_km: `${P} IPC ${r.ipc_no} រង់ចាំ${nx[2]}របស់អ្នក`, body: by, body_km: byKm })
+          : M({ ref, amount, title: `${P} IPC ${r.ipc_no}: ${by}`, title_km: `${P} IPC ${r.ipc_no}៖ ${byKm}`, body: (lastHist(r) || {}).note || "" }));
+      }
+      case "invoices": {
+        const ref = r.inv_no, amount = money(r.amount), due = r.due_date && r.status !== "Paid" ? "due " + dLong(r.due_date) : "";
+        if (r.direction === "Receivable") {
+          if (isNew) { const c = r.source_type === "claim" ? byId("claims", r.source_id) : null; return pick(() => M({ ref, amount, due, title: `${ref} · Client invoice${c ? " for IPC " + c.ipc_no : ""}`, title_km: `${ref} · វិក្កយបត្រអតិថិជន${c ? "សម្រាប់ IPC " + c.ipc_no : ""}`, body: r.party || "" })); }
+          if (changed(b, r, "status") && r.status === "Paid") return pick(() => M({ ref, amount, kind: "approved", title: `${ref} · Received from ${r.party}`, title_km: `${ref} · បានទទួលពី ${r.party}` }));
+          return null;
+        }
+        if ((isNew && r.status === "Paid") || (changed(b, r, "status") && r.status === "Paid")) return pick(() => M({ ref, amount, kind: "approved", title: `${ref} · Paid to ${r.party}`, title_km: `${ref} · បានបង់ឱ្យ ${r.party}` }));
+        if (!isNew) return null;
+        const src = r.source_type === "po" ? (byId("purchase_orders", r.source_id) || {}).po_no : r.source_type === "sub_payment" ? (byId("sub_payments", r.source_id) || {}).pc_no : r.source_type === "retention" ? "retention" : r.source_type === "request" ? (byId("requests", r.source_id) || {}).ref_no : "";
+        const fin = grp_("FIN");
+        return pick((to) => M({ ref, amount, due, kind: fin.includes(to) ? "action" : "info", title: `${ref} · New bill to pay: ${r.party}`, title_km: `${ref} · វិក្កយបត្រថ្មីត្រូវបង់៖ ${r.party}`, body: src ? "For " + src : "", body_km: src ? "សម្រាប់ " + (src === "retention" ? "ប្រាក់ធានា" : src) : "" }));
+      }
+      case "inspections": {
+        const t = r.title, due = r.insp_date ? dLong(r.insp_date) : "";
+        if (isNew) return pick((to) => to === r.inspector_id
+          ? M({ kind: "action", due, title: `Inspection request: ${t}`, title_km: `សំណើត្រួតពិនិត្យ៖ ${t}`, body: r.area || "" })
+          : M({ due, title: `Inspection request: ${t}`, title_km: `សំណើត្រួតពិនិត្យ៖ ${t}`, body: r.area || "" }));
+        if (!changed(b, r, "result")) return null;
+        if (r.result === "Passed") return pick(() => M({ kind: "approved", title: `Inspection passed: ${t}`, title_km: `ការត្រួតពិនិត្យបានឆ្លង៖ ${t}`, body: cut(r.result_note, 200) }));
+        if (r.result === "Failed") return pick(() => M({ kind: "rejected", title: `Inspection failed: ${t}`, title_km: `ការត្រួតពិនិត្យមិនឆ្លង៖ ${t}`, body: r.result_note ? "Reason: " + cut(r.result_note, 300) : "" }));
+        return null;
+      }
+      case "defects": {
+        const d = cut(r.description, 90), due = r.due_date && r.status === "Open" ? "due " + dLong(r.due_date) : "";
+        if (isNew) return pick((to) => to === r.assigned_to
+          ? M({ kind: "action", due, title: `Defect to fix: ${d}`, title_km: `ចំណុចខ្វះខាតត្រូវជួសជុល៖ ${d}`, body: [r.location, r.priority].filter(Boolean).join(" · ") })
+          : M({ due, title: `New defect: ${d}`, title_km: `ចំណុចខ្វះខាតថ្មី៖ ${d}`, body: [r.location, "Assigned to " + staffName(r.assigned_to)].filter(Boolean).join(" · ") }));
+        if (!changed(b, r, "status")) return null;
+        if (r.status === "Fixed") return pick((to) => M({ kind: to === r.raised_by ? "action" : "info", title: `Defect fixed, please check: ${d}`, title_km: `បានជួសជុលរួច សូមពិនិត្យ៖ ${d}`, body: "Fixed by " + staffName(r.fixed_by || e.actor), body_km: "ជួសជុលដោយ " + staffName(r.fixed_by || e.actor) }));
+        if (r.status === "Closed") return pick((to) => M({ kind: to === r.assigned_to ? "approved" : "info", title: `Defect closed: ${d}`, title_km: `បានបិទចំណុចខ្វះខាត៖ ${d}` }));
+        if (r.status === "Open") return pick((to) => M({ kind: to === r.assigned_to ? "rejected" : "info", due, title: `Defect reopened: ${d}`, title_km: `បានបើកចំណុចខ្វះខាតឡើងវិញ៖ ${d}`, body: r.verify_note ? "Reason: " + cut(r.verify_note, 300) : "" }));
+        return null;
+      }
+      case "safety": {
+        const P = projFull(r.project_id), T = r.rec_type || "Safety record", Tk = KMW(T);
+        if (isNew) {
+          const hi = r.severity === "High", act_ = [ (byId("projects", r.project_id) || {}).pm_id ].concat(ids_("SITEMGR"), ids_("MD"));
+          return pick((to) => M({ kind: hi && act_.includes(to) ? "action" : "info", due: dLong(r.rec_date), title: hi ? `HIGH severity ${T.toLowerCase()} on ${P}` : `${T} on ${P}`, title_km: hi ? `${Tk} កម្រិតធ្ងន់ធ្ងរខ្ពស់ នៅ ${P}` : `${Tk} នៅ ${P}`, body: cut(r.description, 200) }));
+        }
+        if (changed(b, r, "status") && r.status === "Closed") return pick((to) => M({ kind: to === r.reported_by ? "approved" : "info", title: `Safety ${T.toLowerCase()} closed on ${P}`, title_km: `បានបិទ${Tk} នៅ ${P}`, body: cut(r.correction, 200) }));
+        return null;
+      }
+      case "site_visits": {
+        const ref = r.svr_no;
+        const newActs = (to) => (r.actions || []).filter((a) => a.who === to && !a.done && !((b && b.actions) || []).some((x) => x.who === to && x.action === a.action));
+        const forOwner = (to) => { const a = newActs(to)[0]; return a ? M({ ref, kind: "action", due: a.by ? "by " + dLong(a.by) : "", title: `${ref} · Action for you: ${cut(a.action, 120)}`, title_km: `${ref} · សកម្មភាពសម្រាប់អ្នក៖ ${cut(a.action, 120)}`, body: r.client || "" }) : null; };
+        if (isNew) return pick((to) => forOwner(to) || M({ ref, due: dLong(r.visit_date), title: `${ref} · Site visit: ${r.client}`, title_km: `${ref} · ការចុះពិនិត្យទីតាំង៖ ${r.client}`, body: [r.address, r.city].filter(Boolean).join(", ") }));
+        if (changed(b, r, "approved_by") && r.approved_by) return pick((to) => M({ ref, kind: to === r.author_id ? "approved" : "info", title: `${ref} · Report approved by ${actor}`, title_km: `${ref} · របាយការណ៍បានអនុម័តដោយ ${actor}`, body: r.client || "" }));
+        if (changed(b, r, "status")) {
+          const s = { Quoted: ["Quotation sent", "បានផ្ញើសម្រង់តម្លៃ"], Won: ["Won: project " + projFull(r.project_id), "ឈ្នះ៖ គម្រោង " + projFull(r.project_id)], Lost: ["Lost", "មិនបានឈ្នះ"], Lead: ["Back to lead", "ត្រឡប់ជាអតិថិជនសក្តានុពល"] }[r.status] || [r.status, KMW(r.status)];
+          return pick((to) => M({ ref, kind: r.status === "Won" && to === r.author_id ? "approved" : "info", amount: r.quote_value ? money(r.quote_value) : "", title: `${ref} · ${s[0]}`, title_km: `${ref} · ${s[1]}`,
+            body: [r.client, r.status === "Lost" && r.lost_reason ? "Reason: " + cut(r.lost_reason, 200) : ""].filter(Boolean).join(" · ") }));
+        }
+        return pick((to) => forOwner(to) || M({ ref, title: `${ref} · Site visit updated: ${r.client}`, title_km: `${ref} · បានកែប្រែការចុះពិនិត្យទីតាំង៖ ${r.client}` }));
+      }
+      case "variations": {
+        const ref = r.vo_no, t = r.title, amount = r.amount ? money(r.amount) : "", qs = grp_("QS"), pm = (byId("projects", r.project_id) || {}).pm_id, raiser = (to) => to === r.raised_by;
+        const note = (lastHist(r) || {}).note || "";
+        if (isNew) return pick((to) => M({ ref, kind: qs.includes(to) ? "action" : "info", title: `${ref} · New variation to price: ${t}`, title_km: `${ref} · ការងារកែប្រែថ្មីត្រូវដាក់តម្លៃ៖ ${t}`, body: cut(r.reason, 200) }));
+        if (!changed(b, r, "status")) return null;
+        const st = r.status, was = b.status;
+        if (st === "Priced") return pick((to) => to === pm ? M({ ref, amount, kind: "action", title: `${ref} · Priced, waiting for your check`, title_km: `${ref} · បានដាក់តម្លៃ រង់ចាំការពិនិត្យរបស់អ្នក`, body: t + (r.time_days ? " · +" + r.time_days + " days" : "") })
+          : M({ ref, amount, title: `${ref} · Priced by ${actor}`, title_km: `${ref} · បានដាក់តម្លៃដោយ ${actor}`, body: t }));
+        if (st === "PM checked") return pick((to) => ids_("MD").includes(to) ? M({ ref, amount, kind: "action", title: `${ref} · Price waiting for your approval`, title_km: `${ref} · តម្លៃរង់ចាំការអនុម័តរបស់អ្នក`, body: t })
+          : M({ ref, amount, title: `${ref} · Checked by ${actor}`, title_km: `${ref} · បានពិនិត្យដោយ ${actor}`, body: t }));
+        if (st === "MD approved") return pick((to) => to === pm || qs.includes(to) ? M({ ref, amount, kind: "action", title: `${ref} · Price approved: send to the client`, title_km: `${ref} · តម្លៃបានអនុម័ត៖ សូមផ្ញើទៅម្ចាស់គម្រោង`, body: t })
+          : M({ ref, amount, kind: raiser(to) ? "approved" : "info", title: `${ref} · Price approved by ${actor}`, title_km: `${ref} · តម្លៃបានអនុម័តដោយ ${actor}`, body: t }));
+        if (st === "Sent to client") return pick(() => M({ ref, amount, title: `${ref} · Sent to the client`, title_km: `${ref} · បានផ្ញើទៅម្ចាស់គម្រោង`, body: [t, r.client_ref ? "How: " + r.client_ref : ""].filter(Boolean).join(" · ") }));
+        if (st === "Client approved") return pick((to) => M({ ref, amount, kind: raiser(to) ? "approved" : "info", title: `${ref} · Client approved: add to the next IPC`, title_km: `${ref} · ម្ចាស់គម្រោងបានយល់ព្រម៖ បញ្ចូលក្នុង IPC បន្ទាប់`, body: t }));
+        if (st === "Client rejected") return pick((to) => M({ ref, amount, kind: raiser(to) ? "rejected" : "info", title: `${ref} · Client rejected`, title_km: `${ref} · ម្ចាស់គម្រោងមិនយល់ព្រម`, body: [note ? "Reason: " + cut(note, 300) : "", t].filter(Boolean).join(" · ") }));
+        if (st === "Raised" && was !== "Raised") return pick((to) => M({ ref, kind: qs.includes(to) || raiser(to) ? "rejected" : "info", title: `${ref} · Returned to QS by ${actor}`, title_km: `${ref} · បញ្ជូនត្រឡប់ទៅ QS ដោយ ${actor}`, body: [note ? "Reason: " + cut(note, 300) : "", t].filter(Boolean).join(" · ") }));
+        if (st === "Cancelled") return pick((to) => M({ ref, kind: raiser(to) ? "rejected" : "info", title: `${ref} · Cancelled by ${actor}`, title_km: `${ref} · បានលុបចោលដោយ ${actor}`, body: [note ? "Reason: " + cut(note, 300) : "", t].filter(Boolean).join(" · ") }));
+        if (st === "In claim") { const c = byId("claims", r.claim_id); return pick(() => M({ ref, amount, title: `${ref} · Added to IPC ${c ? c.ipc_no : ""}`, title_km: `${ref} · បានបញ្ចូលក្នុង IPC ${c ? c.ipc_no : ""}`, body: t })); }
+        return pick(() => M({ ref, amount, title: `${ref} · ${st}`, title_km: `${ref} · ${KMW(st)}`, body: t }));
+      }
+      case "sub_payments": {
+        const k = byId("sub_contracts", r.contract_id) || {}, sub = (byId("subcontractors", k.sub_id) || {}).name || "", ref = r.pc_no, pm = (byId("projects", k.project_id) || {}).pm_id;
+        const M2 = (o) => Object.assign(M(o), { project: projFull(k.project_id) });
+        if (isNew) return pick((to) => M2({ ref, amount: money(r.claimed), kind: grp_("QS").includes(to) ? "action" : "info", title: `${ref} · ${sub} payment claim to check`, title_km: `${ref} · ការស្នើទូទាត់របស់ ${sub} ត្រូវពិនិត្យ` }));
+        if (!changed(b, r, "status")) return null;
+        if (r.status === "QS checked") return pick((to) => M2({ ref, amount: money(r.certified), kind: to === pm ? "action" : "info", title: to === pm ? `${ref} · ${sub} claim checked: waiting for your approval` : `${ref} · ${sub} claim checked by ${actor}`, title_km: to === pm ? `${ref} · ${sub} បានពិនិត្យ រង់ចាំការអនុម័តរបស់អ្នក` : `${ref} · ${sub} បានពិនិត្យដោយ ${actor}`,
+          body: `Certified ${money(r.certified)} of ${money(r.claimed)} claimed` + (Number(r.retention_amt) ? " · retention " + money(r.retention_amt) : "") }));
+        if (r.status === "PM approved") { const inv = db.invoices.find((i) => i.source_type === "sub_payment" && i.source_id === r.id), fin = grp_("FIN");
+          return pick((to) => M2({ ref, amount: money(Number(r.certified || 0) - Number(r.retention_amt || 0)), due: inv && inv.due_date ? "due " + dLong(inv.due_date) : "", kind: fin.includes(to) ? "action" : "info",
+            title: `${ref} · ${sub} approved: bill ${inv ? inv.inv_no : ""} to pay`, title_km: `${ref} · ${sub} បានអនុម័ត៖ វិក្កយបត្រ ${inv ? inv.inv_no : ""} ត្រូវបង់` })); }
+        if (r.status === "Paid") return pick(() => M2({ ref, amount: money(Number(r.certified || 0) - Number(r.retention_amt || 0)), kind: "approved", title: `${ref} · ${sub} paid`, title_km: `${ref} · បានបង់ប្រាក់ ${sub}` }));
+        return pick(() => M2({ ref, title: `${ref} · ${sub}: ${r.status}`, title_km: `${ref} · ${sub}៖ ${KMW(r.status)}`, body: (lastHist(r) || {}).note || "" }));
+      }
+      case "sub_contracts": {
+        const sub = (byId("subcontractors", r.sub_id) || {}).name || "", P = projFull(r.project_id);
+        if (isNew) return pick(() => M({ amount: money(r.contract_value), title: `${sub}: new contract on ${P}`, title_km: `${sub}៖ កិច្ចសន្យាថ្មីនៅ ${P}`, body: cut(r.scope, 160) }));
+        if (changed(b, r, "retention_released") && r.retention_released) return pick((to) => M({ kind: grp_("FIN").includes(to) ? "action" : "info", title: `Retention to pay: ${sub}`, title_km: `ប្រាក់ធានាត្រូវបង់៖ ${sub}` }));
+        if (changed(b, r, "ratings")) return pick(() => M({ title: `${sub} rated on ${P}`, title_km: `${sub} បានវាយតម្លៃនៅ ${P}` }));
+        return pick(() => M({ title: `${sub}: contract changed on ${P}`, title_km: `${sub}៖ កិច្ចសន្យាបានកែប្រែនៅ ${P}` }));
+      }
+      case "subcontractors": return pick(() => M({ title: (isNew ? "New subcontractor: " : "Subcontractor changed: ") + r.name, title_km: (isNew ? "អ្នកម៉ៅការបន្តថ្មី៖ " : "បានកែប្រែអ្នកម៉ៅការបន្ត៖ ") + r.name, body: r.trade || "", body_km: KMW(r.trade) }));
+      case "tests": {
+        const ref = r.test_no, n = r.test_type || r.system || "";
+        if (isNew) return pick(() => M({ ref, title: `${ref} · Test sheet: ${n}`, title_km: `${ref} · សន្លឹកតេស្ត៖ ${n}`, body: r.location || "" }));
+        if (!changed(b, r, "result")) return null;
+        if (r.result === "Pass") return pick((to) => M({ ref, kind: to === r.tested_by ? "approved" : "info", title: `${ref} · ${n} PASSED`, title_km: `${ref} · ${n} ឆ្លង`, body: r.location || "" }));
+        if (r.result === "Fail") { const nd = (r.defect_ids || []).length; return pick((to) => M({ ref, kind: to === r.tested_by ? "rejected" : "info", title: `${ref} · ${n} FAILED: ${nd} defects raised`, title_km: `${ref} · ${n} មិនឆ្លង៖ ចំណុចខ្វះខាត ${nd}`, body: r.location || "" })); }
+        return null;
+      }
+      case "handover_items": return pick(() => M({ title: `Handover item ${String(r.status || "").toLowerCase()}: ${r.title}`, title_km: `ធាតុប្រគល់ការងារ ${KMW(r.status)}៖ ${r.title}`, due: r.due_date ? "due " + dLong(r.due_date) : "" }));
+      case "warranties": return pick(() => M({ due: dLong(r.end_date), title: `Warranty ${r.item} until ${dLong(r.end_date)}`, title_km: `ការធានា ${r.item} រហូតដល់ ${dLong(r.end_date)}`, body: r.supplier || "" }));
+      case "staff": {
+        if (changed(b, r, "left_on")) return pick(() => r.left_on ? M({ title: `${r.name} left the company (last day ${dLong(r.left_on)})`, title_km: `${r.name} បានចាកចេញ (ថ្ងៃចុងក្រោយ ${dLong(r.left_on)})` }) : M({ title: `${r.name} is back`, title_km: `${r.name} បានត្រឡប់មកវិញ` }));
+        return pick((to) => to === r.id ? M({ title: `Your details were updated by ${actor}`, title_km: `ព័ត៌មានរបស់អ្នកត្រូវបានកែប្រែដោយ ${actor}`, body: r.title || "" })
+          : M({ title: `${r.name}'s details updated`, title_km: `ព័ត៌មានរបស់ ${r.name} បានកែប្រែ`, body: r.title || "" }));
+      }
+      case "app_settings": return pick(() => M({ title: "Permission changed: " + (e.summary || ""), title_km: "បានប្តូរសិទ្ធិ៖ " + (e.summary || "") }));
+      case "events": {
+        const t = r.title, due = dLong(r.date) + (r.all_day || !r.start_time ? "" : " " + r.start_time + (r.end_time ? "–" + r.end_time : "")), loc = r.location || "";
+        if (isNew) return pick(() => M({ kind: "reminder", ref: r.no || "", due, title: `Invitation: ${t}`, title_km: `ការអញ្ជើញ៖ ${t}`, body: [loc, "By " + actor].filter(Boolean).join(" · "), body_km: "ដោយ " + actor }));
+        if (changed(b, r, "status") && r.status === "Cancelled") { const why = String(r.notes || "").split("\n").reverse().find((x) => /^Cancelled: /.test(x)); return pick(() => M({ kind: "reminder", ref: r.no || "", due, title: `CANCELLED: ${t}`, title_km: `បានលុបចោល៖ ${t}`, body: why ? "Reason: " + why.replace(/^Cancelled: /, "") : "" })); }
+        if ((changed(b, r, "status") && r.status === "Done") || changed(b, r, "minutes")) return pick(() => M({ ref: r.no || "", due, title: r.minutes ? `Minutes ready: ${t}` : `Meeting done: ${t}`, title_km: r.minutes ? `កំណត់ហេតុប្រជុំរួចរាល់៖ ${t}` : `កិច្ចប្រជុំបានបញ្ចប់៖ ${t}` }));
+        const what = [changed(b, r, "date") || changed(b, r, "start_time") || changed(b, r, "end_time") ? "New date / time: " + due : "", changed(b, r, "location") ? "New place: " + loc : ""].filter(Boolean).join(" · ");
+        return pick(() => M({ kind: "reminder", ref: r.no || "", due, title: `Changed: ${t}`, title_km: `បានកែប្រែ៖ ${t}`, body: what || loc }));
+      }
+      case "suppliers": return pick(() => M({ title: (isNew ? "New supplier: " : "Supplier changed: ") + r.name, title_km: (isNew ? "អ្នកផ្គត់ផ្គង់ថ្មី៖ " : "បានកែប្រែអ្នកផ្គត់ផ្គង់៖ ") + r.name, body: [r.trade, r.phone].filter(Boolean).join(" · ") }));
+      case "stock_items": return pick(() => M({ title: (isNew ? "New stock item: " : "Stock item changed: ") + r.name, title_km: (isNew ? "ទំនិញស្តុកថ្មី៖ " : "បានកែប្រែទំនិញស្តុក៖ ") + r.name, body: [r.unit, r.min_qty ? "minimum " + r.min_qty : ""].filter(Boolean).join(" · ") }));
+      case "stores": return pick(() => M({ title: (isNew ? "New store: " : "Store changed: ") + r.name, title_km: (isNew ? "ឃ្លាំងថ្មី៖ " : "បានកែប្រែឃ្លាំង៖ ") + r.name }));
+      case "cost_lines": return pick(() => M({ amount: money(r.actual), title: `${projFull(r.project_id)} ${r.category}: actual cost now ${money(r.actual)}`, title_km: `${projFull(r.project_id)} ${KMW(r.category)}៖ ចំណាយជាក់ស្តែងឥឡូវ ${money(r.actual)}`, body: "Budget " + money(r.budget), body_km: "ថវិកា " + money(r.budget) }));
+      default: {
+        const t = noteTitle(tbl, r, e.summary) || e.summary || "";
+        return pick(() => M({ title: t, title_km: KMW(t), body: cut(noteBody(tbl, r, e.summary), 300) }));
+      }
+    }
+  }
+  // Save alert rows in one request. If the database is not upgraded yet (no v23 columns), save them the old way (title and body only).
+  const V23_NOTE_COLS = ["kind", "module", "ref", "project", "amount", "due", "title_km", "body_km", "silent"];
+  async function insertNotes(rows) {
+    if (!rows.length) return [];
+    try { return await Store.insertMany("notifications", rows); }
+    catch (err) {
+      if (Store.mode !== "supabase") return [];
+      const old = rows.map((x) => { const y = Object.assign({}, x); V23_NOTE_COLS.forEach((c) => delete y[c]); delete y.id; delete y.created_at; return y; });
+      try { const saved = await Store.insertMany("notifications", old); console.warn("alerts saved without the v23 columns: run supabase/update-v23.sql", err); return saved; } catch (x) { return []; /* never block the work */ }
+    }
+  }
+  // One alert row (columns of the notifications table) for one reader
+  function noteRow(to, actorId, tbl, recordId, m, at) {
+    return { to_id: to, actor_id: actorId, title: cut(m.title, 250), body: cut(m.body, 300), tbl, record_id: recordId, read: false, at,
+      kind: m.kind || "info", module: NOTE_MODULE[tbl] || "", ref: m.ref || "", project: m.project || "", amount: m.amount || "", due: m.due || "",
+      title_km: cut(m.title_km || "", 250), body_km: cut(m.body_km || "", 300), silent: !!m.silent };
+  }
   let noteQueue = [], noteTimer = null;
-  function queueNotify(action, tbl, record_id, summary) {
-    if (["audit_log", "notifications"].includes(tbl) || (tbl === "app_settings" && String(record_id).startsWith("notify-"))) return;
-    noteQueue.push({ tbl, record_id, summary, actor: state.user });
+  function queueNotify(action, tbl, record_id, summary, before) {
+    if (["audit_log", "notifications", "announcements"].includes(tbl) || (tbl === "app_settings" && String(record_id).startsWith("notify-"))) return;
+    // several saves of one record in one go: keep the first "before" (Created = no before) and the latest summary
+    const prev = noteQueue.find((x) => x.tbl === tbl && x.record_id === record_id);
+    if (prev) { prev.summary = summary; prev.actor = state.user; if (action === "Created") prev.before = null; return; }
+    noteQueue.push({ tbl, record_id, summary, actor: state.user, action, before: action === "Created" ? null : before || null });
     clearTimeout(noteTimer); noteTimer = setTimeout(flushNotify, 400);
   }
   async function flushNotify() {
     const q = noteQueue; noteQueue = []; if (!q.length) return;
-    const byRec = new Map(); q.forEach((e) => byRec.set(e.tbl + ":" + e.record_id, e));
+    // One alert per person: when one tap saved several records, the person gets the one that matters most to them
+    // (something they must do first, then a request, then the first record), with its own clear text (no "+N more").
     const per = new Map();
-    for (const e of byRec.values()) {
-      const r = e.tbl === "app_settings" ? { id: e.record_id } : byId(e.tbl, e.record_id);
-      for (const to of recipientsFor(e.tbl, r, e.actor)) { if (!per.has(to)) per.set(to, []); per.get(to).push({ e, r }); }
+    for (const e of q) {
+      const r = e.tbl === "app_settings" ? { id: e.record_id } : byId(e.tbl, e.record_id); e.r = r;
+      let msgFor = null; try { msgFor = describe(e); } catch (err) { console.warn("alert text", err); }
+      if (!msgFor) continue;
+      for (const to of recipientsFor(e.tbl, r, e.actor)) {
+        let m = null; try { m = msgFor(to); } catch (err) { console.warn("alert text", err); }
+        if (!m || !m.title) continue;
+        const rank = (m.kind === "action" ? 0 : m.kind === "rejected" || m.kind === "approved" ? 1 : 2) * 2 + (e.tbl === "requests" ? 0 : 1);
+        const cur = per.get(to); if (!cur || rank < cur.rank) per.set(to, { e, m, rank });
+      }
     }
-    const at = nowIso(); let n = 0;
-    for (const [to, list] of per) {
-      const main = list.find((x) => x.e.tbl === "requests") || list[0];
-      const title = noteTitle(main.e.tbl, main.r, main.e.summary) + (list.length > 1 ? " (+" + (list.length - 1) + " more)" : "");
-      const body = [noteBody(main.e.tbl, main.r, main.e.summary)].concat(list.filter((x) => x !== main).slice(0, 3).map((x) => noteTitle(x.e.tbl, x.r, x.e.summary))).filter(Boolean).join(" · ");
-      try { await Store.insert("notifications", { to_id: to, actor_id: main.e.actor, title, body: body.slice(0, 300), tbl: main.e.tbl, record_id: main.e.record_id, read: false, at }); n++; } catch (err) { /* never block the work */ }
-    }
+    const at = nowIso(), rows = [...per].map(([to, x]) => noteRow(to, x.e.actor, x.e.tbl, x.e.record_id, x.m, at));
+    await insertNotes(rows);
     if (Store.mode === "local" && db.notifications.length > 600) { db.notifications = db.notifications.sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 500); Store.writeLocal(); }
     updateBell();
   }
@@ -896,7 +1233,7 @@
     const r = byId(tbl, id);
     const map = { requests: openRequest, purchase_orders: openPO, daily_reports: openDaily, documents: openDoc, tasks: openTask, claims: openClaim, invoices: openInvoice, defects: openDefect, safety: openSafety,
       inspections: openInspection, projects: openProject, staff: openPerson, stock_items: openItem, site_visits: openSvr,
-      variations: openVO, subcontractors: openSub, sub_payments: openPayment, tests: openTest, sub_contracts: (k) => openSub(byId("subcontractors", k.sub_id)), events: openEvent };
+      variations: openVO, subcontractors: openSub, sub_payments: openPayment, tests: openTest, sub_contracts: (k) => openSub(byId("subcontractors", k.sub_id)), events: openEvent, announcements: openAnnouncement };
     if (tbl === "welcome") { const st = byId("staff", id); if (st) return openPerson(st); }
     if (tbl === "accounts") { state.tab.people = "accounts"; ACC.loaded = false; if (state.route === "people" && (location.hash || "").replace(/^#\/?/, "") === "people") render(); else go("people"); return; }
     if (tbl === "stock_moves" && r) return openItem(byId("stock_items", r.item_id));
@@ -906,8 +1243,12 @@
     const route = NOTE_MODULE[tbl]; if (route) go(route === "admin" ? "admin" : route);
   }
   function noteItem(n, unreadable) {
-    return `<li class="${n.read || unreadable ? "" : "unread"}" data-act="${act(async () => { closeDrawer(); if (!n.read && !unreadable) { await Store.update("notifications", n.id, { read: true }); updateBell(); } openRecord(n.tbl, n.record_id); })}">
-      <span class="nic">${svgI(NOTE_ICON[n.tbl] || "bell")}</span><span><b>${esc(n.title)}</b><small>${esc(n.body || "")}</small><em>${esc(staffName(n.actor_id))} · ${ago_(n.at)}</em></span></li>`;
+    // (v23) in Khmer, the alert's own Khmer title and detail when it has them; project, amount and date on their own line
+    const km = window.I18N && I18N.lang === "km" && n.title_km, ann = n.tbl === "announcements";
+    const title = km ? n.title_km : n.title, body = km && !ann ? [n.body_km].filter(Boolean).join(" · ") : String(n.body || "");
+    const extra = [n.project, n.amount, n.due].filter(Boolean).join(" · ");
+    return `<li class="${n.read || unreadable ? "" : "unread"} k-${esc(n.kind || "info")}" data-act="${act(async () => { closeDrawer(); if (!n.read && !unreadable) { await Store.update("notifications", n.id, { read: true }); updateBell(); } openRecord(n.tbl, n.record_id); })}">
+      <span class="nic">${svgI(NOTE_ICON[n.tbl] || "bell")}</span><span${km || ann ? ' class="notr"' : ""}>${n.kind === "action" ? `<i class="nk">${km ? "រង់ចាំអ្នកចាត់ការ" : "Action needed"}</i>` : ""}<b>${esc(title)}</b><small>${esc(body.length > 160 ? body.slice(0, 157) + "…" : body)}</small>${extra ? `<small class="nx">${esc(extra)}</small>` : ""}<em>${esc(staffName(n.actor_id))} · ${ago_(n.at)}</em></span></li>`;
   }
   // ---------- Telegram alerts ----------
   // The database sends each new notification to the person's Telegram (see supabase/schema.sql and telegram-setup.sql).
@@ -980,7 +1321,7 @@
         })}">Save</button></div>
       ${linked ? `<button class="btn" data-act="${act(async (e, el) => {
           el.disabled = true; el.textContent = "Sending…";
-          await Store.insert("notifications", { to_id: u.id, actor_id: u.id, title: "Telegram test from GID", body: "Alerts for " + u.name + " now arrive here.", tbl: "staff", record_id: u.id, read: true, at: nowIso() });
+          await insertNotes([Object.assign(noteRow(u.id, u.id, "staff", u.id, { kind: "info", title: "Telegram test from GID: it works", title_km: "សាកល្បង Telegram ពី GID៖ ដំណើរការ", body: "Alerts for " + u.name + " now arrive here.", body_km: "ដំណឹងសម្រាប់ " + u.name + " នឹងមកដល់ទីនេះ។" }, nowIso()), { read: true })]);
           tgLast = { state: "sending" }; openDrawer("set");
           await checkTelegramResult(chat, 6);
         })}">Send test message</button>` : ""}` : ""}
@@ -1320,6 +1661,7 @@
 
     return `<h1>Welcome in, ${esc(u.name.split(" ").slice(-1)[0])}</h1>
       <p class="muted">${esc(u.title)} · ${groupsOf(u).map((g) => GROUPS[g]).join(" + ")}${isSysAdmin(u) ? " · System administrator" : hasTag(u, "BACKUPADMIN") ? " · Backup administrator" : ""}</p>
+      ${annBanners(u)}
       <div class="quick">${quick.join("")}</div>
       ${missing.length ? `<div class="alert">You haven't sent today's ${dueSess.toLowerCase()} report for ${missing.map((p) => esc(p.code)).join(", ")}. ${btn("Send now", () => newSiteDaily(u), "small")}</div>` : ""}
       ${designMissing ? `<div class="alert">You haven't sent today's daily work report. ${btn("Send now", () => newDesignDaily(u), "small")}</div>` : ""}
@@ -3365,7 +3707,9 @@
       try { await Store.insert("audit_log", { at: nowIso(), actor_id: u.id, action: "Created", tbl: "staff", record_id: r.id, summary: "New staff: " + row.name + " · " + row.title }); } catch (e) { /* ignore */ }
       if (document.getElementById("wl-send") ? document.getElementById("wl-send").checked : true) {
         const w = welcomeText(Object.assign({}, row, { dept: v.dept }), u); let n = 0; const at = nowIso();
-        for (const t of staffNow()) { try { await Store.insert("notifications", { to_id: t.id, actor_id: u.id, title: w.title, body: w.body, tbl: "welcome", record_id: r.id, read: t.id === u.id, at }); n++; } catch (e) { /* never block */ } }
+        const wkm = { title: "សូមស្វាគមន៍ " + row.name + " មកកាន់ GID", body: row.title + " · " + (DEPT_NAME[v.dept] ? KMW(DEPT_NAME[v.dept]) : "") };
+        const saved = await insertNotes(staffNow().map((t) => Object.assign(noteRow(t.id, u.id, "welcome", r.id, { kind: "welcome", title: w.title, title_km: wkm.title, body_km: wkm.body }, at), { body: w.body, module: "people", read: t.id === u.id })));
+        n = saved.length;
         toast("Added " + row.name + ". Welcome message sent to " + n + " people.");
       } else toast("Added " + row.name + ".");
     }, isNew ? "Add staff" : "Save", { extraHtml: alsoHtml + welcomeHtml, onReady: (m) => {
@@ -3594,6 +3938,7 @@
     people: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5M16 4.5a3.5 3.5 0 0 1 0 7M18.5 14.8c1.6.8 2.7 2.5 3 5.2"/>',
     admin: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1 7 17M17 7l2.1-2.1"/>',
     money: '<circle cx="12" cy="12" r="9"/><path d="M15 9.5c-.5-1-1.6-1.5-3-1.5-1.7 0-3 .9-3 2.2 0 3 6 1.6 6 4.6 0 1.3-1.3 2.2-3 2.2-1.4 0-2.6-.6-3-1.6M12 6v2M12 16v2"/>',
+    megaphone: '<path d="M3 10v4a1 1 0 0 0 1 1h3l6 4V5L7 9H4a1 1 0 0 0-1 1z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/>',
     bell: '<path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/>',
     search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
     menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
@@ -3955,6 +4300,7 @@
         <ul class="rc-l">${dExp.map((x) => `<li class="${x.done ? "ok" : "no"}" ${x.done ? `data-act="${act(() => openDaily(x.done))}"` : ""}>${x.done ? "✓" : "–"} ${esc(x.s.name)} <small>${x.done ? sum(x.done.entries || [], (e) => e.hours) + " h · " + esc((x.done.entries || [])[0] ? x.done.entries[0].label.split(" ").slice(0, 3).join(" ") : "") : "not sent"}</small></li>`).join("")}</ul></div>`;
     const head = (title, route, extra) => `<div class="card-head"><h2>${esc(title)}</h2>${extra || ""}${route ? `<a class="link" href="#${route}">View all</a>` : ""}</div>`;
     return `<h1>Dashboard</h1><p class="muted">Welcome back, ${esc(u.name.split(" ").slice(-1)[0])}. Here's what is happening on ${hasTag(u, "MD") || !projectScope(u) ? "GID projects" : "your projects"} today.</p>
+      ${annBanners(u)}
       ${kpis}
       <div class="dash">
         <section class="card c8">${head("Site progress and latest reports", "daily")}${siteProgress}</section>
@@ -4027,14 +4373,14 @@
     for (const p of db.projects) {
       if (!navVisible(u, "projects") || !inScope(u, p.id)) continue;
       const w = [p.pm_id], g = () => openProject(p), x = { tbl: "projects", rid: p.id };
-      L("projects", "m-proj", "Deadline", "Project start", p.code + " " + p.name, p.id, w, g, p.start_date, x);
-      L("projects", "m-proj", "Deadline", "Planned finish", p.code + " " + p.name, p.id, w, g, p.end_date, x);
-      if (p.handover_date) { L("projects", "m-proj", "Deadline", "Handover to client", p.code + " " + p.name, p.id, w, g, p.handover_date, x);
-        if (Number(p.dlp_months) > 0) L("projects", "m-proj", "Deadline", "Defects liability ends", p.code + " " + p.name, p.id, w, g, isoAddMonths(p.handover_date, p.dlp_months), x); }
+      L("projects", "m-proj", "Deadline", "Project start", projFull(p.id), p.id, w, g, p.start_date, x);
+      L("projects", "m-proj", "Deadline", "Planned finish", projFull(p.id), p.id, w, g, p.end_date, x);
+      if (p.handover_date) { L("projects", "m-proj", "Deadline", "Handover to client", projFull(p.id), p.id, w, g, p.handover_date, x);
+        if (Number(p.dlp_months) > 0) L("projects", "m-proj", "Deadline", "Defects liability ends", projFull(p.id), p.id, w, g, isoAddMonths(p.handover_date, p.dlp_months), x); }
     }
     db.tasks.filter((t) => t.status !== "Done").forEach((t) => { const w = [t.assignee_id, t.created_by]; if (ok("projects", t.project_id, w) || isPMof(u, t.project_id) && navVisible(u, "projects") && inScope(u, t.project_id)) L("projects", "m-task", "Deadline", "Task due", t.title, t.project_id, [t.assignee_id], () => openTask(t), t.due_date, { tbl: "tasks", rid: t.id }); });
     db.documents.filter((x) => ["Draft", "In review"].includes(x.status)).forEach((x) => { if (ok("docs", x.project_id, [x.owner_id])) L("docs", "m-docs", "Deadline", "Drawing due", x.doc_no + " " + x.title, x.project_id, [x.owner_id], () => openDoc(x), x.due_date, { tbl: "documents", rid: x.id }); });
-    db.claims.forEach((c) => { if (!ok("cost", c.project_id, [])) return; (c.history || []).forEach((h) => L("cost", "m-cost", "Progress claim", "IPC " + c.ipc_no + " · " + h.action, projLabel(c.project_id) + " · " + (c.period || ""), c.project_id, [h.by], () => openClaim(c), dateInPP(h.at), { tbl: "claims", rid: c.id })); });
+    db.claims.forEach((c) => { if (!ok("cost", c.project_id, [])) return; (c.history || []).forEach((h) => L("cost", "m-cost", "Progress claim", "IPC " + c.ipc_no + " · " + h.action, projFull(c.project_id) + " · " + (c.period || ""), c.project_id, [h.by], () => openClaim(c), dateInPP(h.at), { tbl: "claims", rid: c.id })); });
     db.invoices.filter((i) => i.status !== "Paid").forEach((i) => { if (ok("finance", i.project_id, [])) L("finance", "m-fin", "Deadline", i.direction === "Receivable" ? "Client payment due" : "Bill due", i.inv_no + " " + i.party, i.project_id, [], () => openInvoice(i), i.due_date); });
     db.inspections.forEach((i) => { if (ok("qaqc", i.project_id, [i.inspector_id])) L("qaqc", "m-qa", "Inspection", "QA/QC inspection", i.title, i.project_id, [i.inspector_id], () => openInspection(i), i.insp_date, { done: i.result !== "Open", tbl: "inspections", rid: i.id }); });
     db.defects.filter((f) => f.status === "Open").forEach((f) => { if (ok("qaqc", f.project_id, [f.assigned_to, f.raised_by])) L("qaqc", "m-qa", "Deadline", "Defect fix by", f.description, f.project_id, [f.assigned_to], () => openDefect(f), f.due_date, { tbl: "defects", rid: f.id }); });
@@ -4063,7 +4409,7 @@
         const n = Math.max(1, Math.ceil(Number(r.leave_days) || 1));
         for (let i = 0, d = r.needed_by; i < n && d; i++, d = isoAdd(d, 1)) L("requests", "m-leave", "Other", r.status === "Approved" ? "On leave" : "Leave asked", staffName(r.requester_id), "", [r.requester_id], mayOpen ? () => openRequest(r) : null, d, { company: true });
       } else if (r.type === "Overtime" && r.status !== "Rejected") {
-        if (mayOpen || isPMof(u, r.project_id) && navVisible(u, "requests")) L("requests", "m-req", "Other", r.status === "Approved" ? "Overtime" : "Overtime asked", staffName(r.requester_id) + (r.project_id ? " · " + projLabel(r.project_id) : ""), r.project_id, [r.requester_id], () => openRequest(r), r.needed_by);
+        if (mayOpen || isPMof(u, r.project_id) && navVisible(u, "requests")) L("requests", "m-req", "Other", r.status === "Approved" ? "Overtime" : "Overtime asked", staffName(r.requester_id) + (r.project_id ? " · " + projFull(r.project_id) : ""), r.project_id, [r.requester_id], () => openRequest(r), r.needed_by);
       } else if (r.status === "Pending" && r.needed_by && (who.includes(u.id) || seesAll(u, "requests") && inScope(u, r.project_id))) L("requests", "m-req", "Deadline", "Needed by", r.ref_no + " " + r.title, r.project_id, who, () => openRequest(r), r.needed_by);
     });
     return out;
@@ -4088,7 +4434,7 @@
   const schedItemHtml = (x) => `<li class="sch-it ${x.kind === "link" ? "lnk " + x.cls : x.cls}${x.cancelled ? " cxl" : ""}${x.done && !x.cancelled ? " done" : ""}" ${x.go ? `data-act="${act(x.go)}"` : ""}>
       <span class="sch-tm">${x.kind === "event" ? esc(evTime(x.ev)) : x.time ? esc(x.time) : ""}</span>
       <span class="sch-body"><span class="sch-k">${esc(x.label)}</span>${x.kind === "link" ? `<span class="sch-mod">${esc(MODULE_NAMES[x.mod] || "")}</span>` : ""}${x.cancelled ? `<span class="tag bad">Cancelled</span>` : x.kind === "event" && x.ev.status === "Done" ? `<span class="tag ok">Done</span>` : ""}
-        <b>${esc(x.title)}</b><small>${esc([x.pid ? projLabel(x.pid) : "", x.kind === "event" ? x.ev.location : "", x.kind === "event" && evAttendees(x.ev).length ? evAttendees(x.ev).length + " people" : ""].filter(Boolean).join(" · "))}</small></span></li>`;
+        <b>${esc(x.title)}</b><small>${esc([x.pid ? projFull(x.pid) : "", x.kind === "event" ? x.ev.location : "", x.kind === "event" && evAttendees(x.ev).length ? evAttendees(x.ev).length + " people" : ""].filter(Boolean).join(" · "))}</small></span></li>`;
   const holRow = (h) => `<li class="sch-it hol"><span class="sch-tm">All day</span><span class="sch-body"><span class="sch-k">Public holiday</span><b>${esc(holName(h))}</b></span></li>`;
   function dayList(u, iso, items, opts) {
     opts = opts || {};
@@ -4156,11 +4502,11 @@
   }
 
   // ----- attendee picker: search, grouped by department, select a whole department -----
-  function peoplePicker(sel) {
+  function peoplePicker(sel, label) {
     const people = staffNow(), deptOf = (s) => { const g = groupsOf(s)[0]; return DEPT_ORDER.includes(g) ? g : "ADMIN"; };
     const groups = DEPT_ORDER.map((g) => [g, people.filter((s) => deptOf(s) === g).sort((a, b) => a.name.localeCompare(b.name))]).filter((x) => x[1].length);
     const kmD = (g) => (window.I18N && I18N.km ? I18N.km(DEPT_NAME[g]) || "" : "");
-    return `<div class="field pp" data-pp><span>Attendees</span>
+    return `<div class="field pp" data-pp><span>${esc(label || "Attendees")}</span>
       <div class="pp-top"><b class="pp-count" aria-live="polite"></b><button type="button" class="link pp-clear">Clear all</button></div>
       <div class="pp-chips"></div>
       <input type="search" class="pp-q" placeholder="Type to search: name, job or department" aria-label="Search people" autocomplete="off">
@@ -4219,7 +4565,7 @@
       } else {
         const before = evAttendees(e), removed = before.filter((id) => !row.attendees.includes(id) && id !== u.id);
         if (!canEditEvent(me(), e)) throw new Error("You cannot change this event."); await patch("events", e.id, row, "Event changed: " + row.title + " · " + fmtDate(row.date));
-        for (const id of removed) { try { await Store.insert("notifications", { to_id: id, actor_id: u.id, title: "Removed from: " + row.title, body: fmtDate(row.date) + " · " + staffName(u.id), tbl: "events", record_id: e.id, read: false, at: nowIso() }); } catch (x) { /* never block */ } }
+        if (removed.length) await insertNotes(removed.map((id) => noteRow(id, u.id, "events", e.id, { kind: "reminder", ref: e.no || "", project: projFull(row.project_id), due: dLong(row.date), title: "You no longer need to attend: " + row.title, title_km: "អ្នកមិនចាំបាច់ចូលរួមទៀតទេ៖ " + row.title, body: "By " + staffName(u.id), body_km: "ដោយ " + staffName(u.id) }, nowIso())));
         toast("Saved");
       }
       state.tab.schedDay = row.date; state.tab.schedMonth = row.date.slice(0, 7);
@@ -4240,7 +4586,7 @@
   }
   function linkLabel(tbl, r) {
     if (!r) return "";
-    const m = { claims: () => projLabel(r.project_id) + " IPC " + r.ipc_no, variations: () => r.vo_no + " " + r.title, inspections: () => r.title, projects: () => r.code + " " + r.name, tasks: () => r.title, documents: () => r.doc_no + " " + r.title,
+    const m = { claims: () => projFull(r.project_id) + " IPC " + r.ipc_no, variations: () => r.vo_no + " " + r.title, inspections: () => r.title, projects: () => projFull(r.id), tasks: () => r.title, documents: () => r.doc_no + " " + r.title,
       tests: () => r.test_no, sub_payments: () => r.pc_no, site_visits: () => r.svr_no, defects: () => r.description, requests: () => r.ref_no + " " + r.title };
     return (m[tbl] || (() => r.title || r.name || r.id))();
   }
@@ -4267,7 +4613,7 @@
     }
     detail((e.no ? e.no + " · " : "") + e.title, [["Type", `<span class="tag sch-tag t-${EV_CLS[e.type] || "other"}">${esc(e.type)}</span>`], ["Status", badge(e.status)],
       ["Date", `${esc(wdShort(String(e.date).slice(0, 10)))} · ${fmtDate(e.date)}${hol.length ? ` <span class="tag bad">Public holiday</span> <small>${esc(hol.map(holName).join(" · "))}</small>` : isSunday(String(e.date).slice(0, 10)) ? ` <span class="tag order">Sunday</span>` : ""}`], ["Time", esc(evTime(e))],
-      ["Project", e.project_id ? esc(projLabel(e.project_id) + " " + ((byId("projects", e.project_id) || {}).name || "")) : "No project (office)"], ["Location", esc(e.location)], ["Organiser", esc(staffName(e.organiser_id))],
+      ["Project", e.project_id ? esc(projFull(e.project_id)) : "No project (office)"], ["Location", esc(e.location)], ["Organiser", esc(staffName(e.organiser_id))],
       lk && !canOpenLink(me(), e.link_module, lk) ? ["Linked record", esc("Linked to a record in " + (MODULE_NAMES[NOTE_MODULE[e.link_module]] || "another module"))] : lk ? ["Linked record", `<a href="#" data-act="${act(() => openRecord(e.link_module, e.link_id))}">${esc(MODULE_NAMES[NOTE_MODULE[e.link_module]] || "")} · ${esc(linkLabel(e.link_module, lk))}</a>`] : null,
       ["Notes", e.notes ? `<span class="sch-pre">${esc(e.notes)}</span>` : ""], e.minutes ? ["Minutes", `<span class="sch-pre">${esc(e.minutes)}</span>`] : null].filter(Boolean), acts.join(""),
       `<h4>Attendees · ${att.length}</h4>${att.length ? `<ul class="sch-att">${att.map((s) => `<li>${avatar(s, "av sm")}<span><b>${esc(s.name)}</b><small>${esc(s.title)} · ${esc(DEPT_NAME[groupsOf(s)[0]] || "")}</small></span></li>`).join("")}</ul>` : `<p class="muted small">No one invited.</p>`}`);
@@ -4446,7 +4792,7 @@
     const value = JSON.parse(JSON.stringify(permDraft)), ps = permSetting();
     const row = { key: "permissions", value, updated_by: u.id, updated_at: nowIso() };
     if (ps) await Store.update("app_settings", ps.id, row); else await Store.insert("app_settings", Object.assign({ id: "permissions" }, row));
-    for (const [m, g, a, b] of changed) await log("Permission change", "app_settings", "permissions", (reset ? "Reset to standard · " : "") + (MODULE_NAMES[m] || m) + " · " + GROUPS[g] + ": " + a + " → " + b);
+    for (const [m, g, a, b] of changed) await log("Permission change", "app_settings", "permissions", (reset ? "Reset to standard · " : "") + (MODULE_NAMES[m] || m) + " · " + GROUPS[g] + ": " + (LEVEL_PLAIN[a] || a) + " → " + (LEVEL_PLAIN[b] || b));
     permDraft = null; render(); toast(changed.length + " permission change" + (changed.length > 1 ? "s" : "") + " saved");
   }
   // Reset the demo: one clear dialog, then the starting data comes back for everyone using this link
@@ -4658,10 +5004,142 @@
     if (typeof translateNow === "function") translateNow(fresh);
   }
 
+  // ================= v23 Announcements: a message from the System Admin to everyone or to chosen departments / people =================
+  // Only the System Admin and the backup admin write them. Each person gets one alert (and Telegram message through the
+  // notifications trigger); unread ones show as a banner on Dashboard and My work until the person taps "Got it".
+  const canAnnounce = (u) => !!u && (isSysAdmin(u) || hasTag(u, "BACKUPADMIN"));
+  const trTxt = (x) => (window.I18N && I18N.t && I18N.t(x)) || x; // Khmer for a browser confirm() question
+  const ANN_MAX = 2000;
+  const annDept = (s) => { const g = groupsOf(s)[0]; return DEPT_ORDER.includes(g) ? g : "ADMIN"; };
+  const annRecipients = (a) => (Array.isArray(a && a.recipients) ? a.recipients : []);
+  const annNotes = (a, to) => db.notifications.filter((n) => n.tbl === "announcements" && n.record_id === a.id && (!to || n.to_id === to));
+  const annReadCount = (a) => new Set(annNotes(a).filter((n) => n.read).map((n) => n.to_id)).size;
+  const annImportant = (a) => a.importance === "Important";
+  function annAudienceHtml(a) {
+    const au = (a && a.audience) || {};
+    if (au.all) return "<span>Everyone</span>";
+    const parts = (au.groups || []).map((g) => DEPT_NAME[g] || g), n = (au.staff || []).length;
+    if (n) parts.push(n === 1 ? "1 person" : n + " people");
+    return parts.length ? parts.map((p) => `<span>${esc(p)}</span>`).join(" · ") : "—";
+  }
+  // Announcements this person has not read yet and that still belong on the home screens
+  function annForMe(u) {
+    const t = today();
+    return (db.announcements || []).filter((a) => a.status === "Sent" && annRecipients(a).includes(u.id) && annNotes(a, u.id).some((n) => !n.read)
+      && (annImportant(a) || (a.pin_until && String(a.pin_until).slice(0, 10) >= t)))
+      .sort((a, b) => String(b.sent_at).localeCompare(String(a.sent_at)));
+  }
+  // The banner (also used for the preview while writing; preview = no working buttons)
+  function annBannerHtml(a, preview) {
+    const msg = String(a.message || ""), long = !preview && msg.length > 280;
+    const gotIt = preview ? `<button type="button" class="btn small primary" tabindex="-1">Got it</button>` : `<button class="btn small primary" data-act="${act(() => annGotIt(a))}">Got it</button>`;
+    return `<section class="annc${annImportant(a) ? " imp" : ""}" role="status" aria-label="Announcement"><span class="annc-ic">${svgI("megaphone")}</span>
+      <div class="annc-b"><div class="annc-h">${annImportant(a) ? chip("Important", "r") : ""}<b class="notr">${esc(a.title || "")}</b></div>
+        <p class="annc-m notr">${esc(long ? msg.slice(0, 270).replace(/\s+\S*$/, "") + "…" : msg)}</p>
+        <small class="annc-f"><span>Sent by</span> ${esc(staffName(a.sent_by))} · ${a.sent_at ? fmtDate(a.sent_at) + " " + timeOf(a.sent_at) : ""}</small></div>
+      <div class="annc-a">${long ? `<button class="btn small" data-act="${act(() => openAnnouncement(a))}">Read all</button>` : ""}${gotIt}</div></section>`;
+  }
+  function annBanners(u) {
+    const list = annForMe(u); if (!list.length) return "";
+    return `<div class="annc-list">${list.slice(0, 3).map((a) => annBannerHtml(a)).join("")}${list.length > 3 ? `<p class="muted small">${list.length - 3} more announcements in Alerts.</p>` : ""}</div>`;
+  }
+  async function annGotIt(a) { await markSeen("announcements", a.id); renderKeep(); }
+  function openAnnouncement(a) {
+    if (!a) return;
+    const u = me(), admin = canAnnounce(u), gone = a.status === "Withdrawn";
+    if (!admin && !isAdminPage(u) && a.sent_by !== u.id && !annRecipients(a).includes(u.id)) { toast("This announcement was not sent to you.", true); return; }
+    if (annNotes(a, u.id).some((n) => !n.read)) markSeen("announcements", a.id);
+    annNotes(a, u.id).forEach((n) => { n.read = true; }); // (saved by markSeen) so the banner behind the window goes away now
+    if (["home", "dashboard"].includes(state.route)) renderKeep();
+    const n = annRecipients(a).length;
+    detail("Announcement", [
+      ["Title", `<b class="notr">${esc(a.title)}</b>`],
+      gone && !admin ? ["Message", "This announcement was withdrawn."] : ["Message", `<div class="annc-m notr">${esc(a.message)}</div>`],
+      ["Importance", annImportant(a) ? chip("Important", "r") : chip("Normal", "n")],
+      ["Sent by", esc(staffName(a.sent_by))], ["Sent", a.sent_at ? fmtDate(a.sent_at) + " " + timeOf(a.sent_at) : ""],
+      admin ? ["Sent to", annAudienceHtml(a) + ` <small class="muted">(${n})</small>`] : null,
+      admin ? ["Read by", `${annReadCount(a)} / ${n}`] : null,
+      ["Status", gone ? chip("Withdrawn", "n") : chip("Sent", "g")]],
+      admin && !gone ? btn("Withdraw", () => annWithdraw(a), "danger") : "");
+  }
+  async function annWithdraw(a) {
+    if (!canAnnounce(me())) { toast("Only the System Admin can do this.", true); return; }
+    if (!confirm(trTxt("Withdraw this announcement? It disappears from everyone's Dashboard and My work. It stays in the history."))) return;
+    try {
+      await patch("announcements", a.id, { status: "Withdrawn" }, "Announcement withdrawn: " + a.title);
+      // the alerts of a withdrawn message no longer count as unread (one request for everyone)
+      if (Store.mode === "supabase") { const { error } = await Store.client.from("notifications").update({ read: true }).eq("tbl", "announcements").eq("record_id", a.id).eq("read", false); if (error) throw new Error(error.message); }
+      annNotes(a).forEach((x) => { x.read = true; }); if (Store.mode === "local") Store.writeLocal();
+    } catch (e) { toast(e.message || String(e), true); return; }
+    closeAllModals(); render(); updateBell(); toast("Announcement withdrawn");
+  }
+  function annCompose(u) {
+    if (!canAnnounce(u)) return;
+    formModal("New announcement", [
+      { name: "title", label: "Title", required: true, help: "Short, for example: Office closed on Friday" },
+      { name: "message", label: "Message", type: "textarea", required: true, help: "Line breaks are kept. Up to 2000 characters." },
+      { name: "importance", label: "Importance", type: "select", options: ["Normal", "Important"], help: "Important stays at the top of Dashboard and My work until each person taps Got it. Normal shows there until it is read or until the date below." },
+      { name: "pin_until", label: "Show on Dashboard and My work until", type: "date", value: isoAdd(today(), 3) },
+      { name: "audience", label: "Send to", type: "select", options: [["all", "Everyone"], ["some", "Chosen departments or people"]] }
+    ], async (v) => {
+      const title = String(v.title || "").trim(), msg = String(v.message || "").replace(/\r\n?/g, "\n").trim();
+      if (!title || !msg) throw new Error("Write a title and a message.");
+      if (msg.length > ANN_MAX) throw new Error("The message is too long: up to 2000 characters.");
+      const now_ = staffNow(); let ids, audience;
+      if (v.audience === "some") {
+        let sel = []; try { sel = JSON.parse(v.attendees || "[]"); } catch (x) { sel = []; }
+        const live = new Set(now_.map((s) => s.id)); sel = sel.filter((id) => live.has(id));
+        // a whole department ticked is saved as that department (the people list is fixed when the message is sent)
+        const groups = DEPT_ORDER.filter((g) => { const mem = now_.filter((s) => annDept(s) === g); return mem.length && mem.every((s) => sel.includes(s.id)); });
+        const inGroups = new Set(now_.filter((s) => groups.includes(annDept(s))).map((s) => s.id));
+        audience = { groups, staff: sel.filter((id) => !inGroups.has(id)) }; ids = sel;
+      } else { audience = { all: true }; ids = now_.map((s) => s.id); }
+      ids = [...new Set(ids)].filter((id) => id !== u.id);
+      if (!ids.length) throw new Error("Choose at least one person (other than you).");
+      if (!confirm(trTxt(ids.length === 1 ? "Send to 1 person?" : "Send to " + ids.length + " people?"))) return false;
+      const row = await save("announcements", { title: title.slice(0, 150), message: msg, importance: v.importance === "Important" ? "Important" : "Normal", audience, recipients: ids,
+        sent_by: u.id, sent_at: nowIso(), pin_until: v.pin_until || "", status: "Sent" }, "Announcement sent: " + title.slice(0, 150));
+      const at = nowIso();
+      const sent = await insertNotes(ids.map((to) => Object.assign(noteRow(to, u.id, "announcements", row.id, { kind: "announcement", title: row.title, title_km: row.title }, at), { body: msg, module: "announcements" })));
+      if (sent.length < ids.length) { toast("The announcement was saved, but the alerts could not be sent: " + (sent.length + " / " + ids.length), true); return; }
+      updateBell(); toast(ids.length === 1 ? "Sent to 1 person" : "Sent to " + ids.length + " people");
+    }, "Send", {
+      extraHtml: `<div class="ann-pick" hidden>${peoplePicker([], "Departments and people")}</div>
+        <div class="ann-prev"><span class="ann-prev-h">Preview: how people will see it</span><div class="ann-prev-b"></div></div>`,
+      onReady: (m) => {
+        wirePeoplePicker(m);
+        const f = m.querySelector("#mform"), ta = f.querySelector('textarea[name="message"]'); ta.rows = 6; ta.maxLength = ANN_MAX; const ti = f.querySelector('input[name="title"]'), imp = f.querySelector('select[name="importance"]'); ti.maxLength = 150;
+        const pick = m.querySelector(".ann-pick"), aud = f.querySelector('select[name="audience"]'), prev = m.querySelector(".ann-prev-b");
+        const paint = () => {
+          pick.hidden = aud.value !== "some";
+          prev.innerHTML = annBannerHtml({ title: ti.value.trim() || "Title", message: ta.value.replace(/\r\n?/g, "\n").trim() || "Message", importance: imp.value, sent_by: u.id, sent_at: nowIso() }, true);
+          if (typeof translateNow === "function") translateNow(prev);
+        };
+        f.addEventListener("input", paint); f.addEventListener("change", paint); paint();
+      }
+    });
+  }
+  function annCard(u) {
+    const list = (db.announcements || []).slice().sort((a, b) => String(b.sent_at).localeCompare(String(a.sent_at))).slice(0, 40);
+    const missing = (Store.missing || []).includes("announcements");
+    return `<section class="card ann"><div class="card-head"><h2>Announcements</h2><div class="quick">${missing ? "" : btn("New announcement", () => annCompose(me()), "primary")}</div></div>
+      <p class="muted small">Write a message to everyone, or to chosen departments or people. It shows at the top of their Dashboard and My work, in Alerts, and on Telegram.</p>
+      ${missing ? '<p class="warnline">The announcements table is not in the database yet. Paste supabase/update-v23.sql into Supabase → SQL Editor and press Run.</p>' : ""}
+      <div class="tscroll">${table([
+        { label: "Sent", get: (a) => a.sent_at ? fmtDate(a.sent_at) + ` <small>${timeOf(a.sent_at)}</small>` : "" },
+        { label: "Title", get: (a) => `<b class="notr">${esc(a.title)}</b>${annImportant(a) ? " " + chip("Important", "r") : ""}` },
+        { label: "Sent by", get: (a) => esc(staffName(a.sent_by)) },
+        { label: "Sent to", get: (a) => annAudienceHtml(a) },
+        { label: "Read by", get: (a) => `${annReadCount(a)} / ${annRecipients(a).length}` },
+        { label: "Status", get: (a) => a.status === "Withdrawn" ? chip("Withdrawn", "n") : chip("Sent", "g") },
+        { label: "", get: (a) => a.status === "Sent" ? `<button class="btn danger small" data-act="${act(() => annWithdraw(a))}">Withdraw</button>` : "" }], list, openAnnouncement)}</div></section>`;
+  }
+
   SCREENS.admin = (u) => {
     const audit = db.audit_log.slice().sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 60);
     const sys = isAdminPage(u);
     return `<h1>Settings</h1><p class="muted">${canManagePerms(u) ? "Control who can see and do what, and check the activity log." : "System settings and activity log."}</p>
+      ${canAnnounce(u) ? annCard(u) : ""}
       ${isAdminPage(u) ? healthCard() : ""}
       ${isAdminPage(u) ? devicesCard(u) : ""}
       ${permEditor(u)}
@@ -4778,6 +5256,7 @@
   function openAccountMenu() {
     const u = me(), A = AUTH();
     openModal("My account", `<div class="acct-me">${avatar(u, "av lg")}<span><b>${esc(u.name)}</b><small>${esc(u.title)}</small>${A.login ? `<small class="notr">${esc(A.login)}</small>` : ""}</span></div>
+      ${untilTxt() ? `<p class="acct-until">${svgI("clock")}<span>${esc(untilTxt())}</span></p>` : ""}
       <div class="acct-menu">${btn("My profile", () => { closeAllModals(); openPerson(u); })}${btn("Change password", openChangePassword)}${btn("Sign out", () => signOut(), "danger")}</div>`);
   }
   // Before the app opens: check a saved sign-in, and ask for a new password when needed.
@@ -4792,23 +5271,63 @@
         catch (e) { await netScreen(e.message); continue; }
         if (!r.ok) { if (window.GID_SHOW_GATE) { window.GID_SHOW_GATE(r.error === "no_session" ? SIGNED_OUT_MSG : r.error === "disabled" || r.error === "rejected" ? "This account cannot sign in. Ask HR." : SIGNED_OUT_MSG); continue; } dropSession(); location.reload(); return new Promise(() => {}); }
         Object.assign(A, { staff_id: r.staff_id, name: r.name, account_id: r.account_id, login: r.login, must_change_password: !!r.must_change_password, verified: true });
+        if (r.expires_at) A.expires_at = r.expires_at;
       }
       if (A.must_change_password) await mustChangeScreen();
       return;
     }
   }
-  // While the app is open: check the sign-in every 5 minutes and when the app comes back to the screen
+  // ---------- v23: sign in every day ----------
+  // A sign-in (account or demo passkey) lasts until 03:00 the next morning, Phnom Penh time. index.html keeps the day stamp
+  // (window.GID_SESSION_END); the server also refuses account sessions after that time. The offline report queue is kept.
+  const DAILY_MSG = "Everyone signs in again each day after 3:00 am. Please sign in.";
+  const signInEnds = () => { try { return window.GID_SESSION_END ? Number(window.GID_SESSION_END()) || 0 : 0; } catch (e) { return 0; } };
+  const dayOver = () => { const e = signInEnds(); return !!e && Date.now() >= e; };
+  function untilTxt() { const e = signInEnds(); if (!e) return ""; return "Signed in until " + timeOf(e) + (dateInPP(e) === dateInPP(Date.now()) ? " today" : " tomorrow"); }
+  // A window with a form is open: warn first and give the person time to save (up to 30 minutes), then sign out
+  const formOpen = () => { const m = $("#modal"); return !!(m && m.querySelector("form, textarea")); };
+  let dayEndWarned = 0;
+  function endForToday() {
+    if (signOut.busy) return;
+    clearTimeout(endForToday.t);
+    if (formOpen() && (!dayEndWarned || Date.now() - dayEndWarned < 30 * 60000)) {
+      if (!dayEndWarned) { dayEndWarned = Date.now(); dayEndBar(); }
+      endForToday.t = setTimeout(endForToday, 20000);
+      return;
+    }
+    signOut(DAILY_MSG);
+  }
+  function dayEndBar() {
+    if ($("#dayend")) return;
+    const d = document.createElement("div"); d.id = "dayend"; d.className = "dayend"; d.setAttribute("role", "alert");
+    d.innerHTML = `${svgI("clock")}<span><b>Your sign-in for today has ended.</b> <span>Save your work now. You will be asked to sign in again when you close this window.</span></span>`;
+    document.body.appendChild(d); if (typeof translateNow === "function") translateNow(d);
+  }
+  // true when the day is over (the person is being signed out, or will be once the internet is back)
+  function dayCheck() {
+    if (!dayOver()) return false;
+    // account mode with no internet: signing in again is impossible, so wait until the signal is back (the report queue keeps working)
+    if (!(accountMode() && !navigator.onLine)) endForToday();
+    return true;
+  }
+  // While the app is open: check the day every minute, and the account sign-in every 5 minutes and when the app comes back to the screen
   function sessionWatch() {
-    if (!accountMode()) return;
     let last = Date.now();
     const check = async () => {
+      if (dayCheck()) return;
       if (!accountMode() || offlineNow()) return; last = Date.now();
       let r; try { r = await authRpc("gid_session", { p_token: AUTH().token }); } catch (e) { return; /* no internet: try again later */ }
-      if (!r.ok || (r.staff_id && r.staff_id !== state.user)) signOut(SIGNED_OUT_MSG);
+      if (r.ok && r.expires_at) AUTH().expires_at = r.expires_at;
+      // the server ended the day's session (its clock may be a little ahead of this phone)
+      if (!r.ok && (r.error === "expired" || (r.error === "no_session" && signInEnds() && Date.now() >= signInEnds() - 15 * 60000))) endForToday();
+      else if (!r.ok || (r.staff_id && r.staff_id !== state.user)) signOut(SIGNED_OUT_MSG);
       else if (r.must_change_password) { AUTH().must_change_password = true; closeAllModals(); await mustChangeScreen(); render(); }
     };
     setInterval(check, 5 * 60000);
-    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && Date.now() - last > 30000) check(); });
+    setInterval(dayCheck, 60000);
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState !== "visible") return; if (dayCheck()) return; if (Date.now() - last > 30000) check(); });
+    window.addEventListener("online", () => setTimeout(check, 2000));
+    window.addEventListener("pageshow", () => dayCheck());
   }
 
   // ---------- People → Accounts (HR, System Admin, backup admin, MD) ----------
@@ -4840,7 +5359,13 @@
     const sug = a.suggested_staff_id && !used.has(a.suggested_staff_id) && byId("staff", a.suggested_staff_id) ? a.suggested_staff_id : "";
     formModal("Approve account", [{ name: "staff_id", label: "Staff profile", type: "select", options: opts, blank: "Choose a person", value: sug, required: true, help: "The staff profile sets what this person can see and do." }], async (v) => {
       if (!v.staff_id) throw new Error("Choose the staff profile for this person.");
-      if (await accDecide(a, "approve", v.staff_id)) { toast("Account approved. " + a.full_name + " can sign in now."); accReload(); }
+      if (await accDecide(a, "approve", v.staff_id)) {
+        // (v23) tell the new user on Telegram (if their Telegram is saved on the staff profile) that the account is ready
+        const login = a.login_email || (a.login_phone ? "0" + String(a.login_phone).replace(/^855/, "") : "");
+        if (v.staff_id) await insertNotes([noteRow(v.staff_id, state.user, "staff", v.staff_id, { kind: "welcome", title: "Your GID account is ready", title_km: "គណនី GID របស់អ្នករួចរាល់",
+          body: (login ? "Sign in with " + login + ". " : "") + "Sign in again every day after 3:00 am.", body_km: (login ? "ចូលប្រើដោយ " + login + "។ " : "") + "សូមចូលប្រើម្តងទៀតជារៀងរាល់ថ្ងៃ បន្ទាប់ពីម៉ោង 3:00 ព្រឹក។" }, nowIso())]);
+        toast("Account approved. " + a.full_name + " can sign in now."); accReload();
+      }
     }, "Approve", { extraHtml: `<p class="muted small"><b class="notr">${esc(a.full_name)}</b> · <span class="notr">${esc(accLogin(a))}</span>${a.note ? `<br>${esc(a.note)}` : ""}</p>` });
   }
   function accSimple(a, action, title, label, text, done, danger) {
@@ -4972,6 +5497,7 @@
     if (focusSel) { const f = document.querySelector(focusSel); if (f) try { f.focus({ preventScroll: true }); } catch (e) { /* ignore */ } }
   }
   function render() {
+    if (!state.user) return; // (v23) nobody signed in yet (sign-in screen showing): never draw the app behind it
     // keep the buttons of an open window or the alerts panel working when the page behind is redrawn
     const keepActs = new Map(); document.querySelectorAll("#modal [data-act], #drawer [data-act], #badges [data-act]").forEach((el) => { const f = ACTS.get(el.dataset.act); if (f) keepActs.set(el.dataset.act, f); });
     MSTACK.forEach((x) => x.acts.forEach((f, k) => keepActs.set(k, f)));
@@ -5003,7 +5529,8 @@
         <div class="rail-sub"><span class="demo">DEMO</span>${isAdminPage(u) ? `<button class="resetbtn" title="Put the demo back to its starting data" data-act="${act(resetDemo)}">${svgI("reset")}<span>Reset demo</span></button>` : `<span class="rs-name">Management system</span>`}${accountMode() ? `<button class="lockbtn" title="Sign out" aria-label="Sign out" data-act="${act(() => signOut())}">${svgI("lock")}</button>` : `<button class="lockbtn" title="Lock the demo on this device" aria-label="Lock the demo on this device" data-act="${act(lockThisDevice)}">${svgI("lock")}</button>`}</div>
         <div class="rail-label">Menu</div>
         <nav class="nav">${nav}</nav>
-        <button class="me-card" data-act="${act(() => openPerson(u))}" aria-label="My profile">${avatar(u, "av lg")}<span><b>${esc(u.name)}</b><small>${esc(u.title)}</small></span></button></aside>
+        <button class="me-card" data-act="${act(() => openPerson(u))}" aria-label="My profile">${avatar(u, "av lg")}<span><b>${esc(u.name)}</b><small>${esc(u.title)}</small></span></button>
+        ${untilTxt() ? `<p class="rail-until">${svgI("clock")}<span>${esc(untilTxt())}</span></p>` : ""}</aside>
       <div class="scrim" data-act="${act(() => document.body.classList.remove("nav-open"))}"></div>
       <main class="main">
         <header class="head"><button class="icon menu-btn" aria-label="Open menu" data-act="${act(() => document.body.classList.toggle("nav-open"))}">${svgI("menu")}</button>
@@ -5072,9 +5599,10 @@
       }
       sessionWatch();
       const deep = /^#open=([a-z_]+):(.+)$/.exec(location.hash || "");
-      if (deep) { history.replaceState(null, "", location.pathname + location.search); render(); devStart(); openRecord(deep[1], decodeURIComponent(deep[2])); return; }
+      if (deep) { history.replaceState(null, "", location.pathname + location.search); render(); devStart(); setTimeout(() => flushOutbox(true), 1500); openRecord(deep[1], decodeURIComponent(deep[2])); return; }
       render();
       devStart();
+      setTimeout(() => flushOutbox(true), 1500); // reports saved on this phone without internet (or before signing in again) are sent now
     } catch (e) {
       await gateOpen();
       if (e.code === "network" || /fetch|network|load failed|timeout/i.test(e.message || "")) { await netScreen(NET_MSG); location.reload(); return; }

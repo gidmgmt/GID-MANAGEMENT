@@ -65,11 +65,16 @@
       rows: "jsonb", result: "text", tested_by: "text", witness: "text", test_date: "date", photos: "jsonb", defect_ids: "jsonb", note: "text" },
     handover_items: { project_id: "text", category: "text", title: "text", status: "text", due_date: "date", evidence: "jsonb", note: "text", updated_by: "text" },
     warranties: { project_id: "text", item: "text", supplier: "text", start_date: "date", end_date: "date", evidence: "jsonb", note: "text" },
-    notifications: { to_id: "text", actor_id: "text", title: "text", body: "text", tbl: "text", record_id: "text", read: "boolean", at: "timestamptz" },
+    // v23: kind (action|approved|rejected|reminder|announcement|info|welcome), module, ref, project ("CODE · Name"), amount, due, Khmer title and detail (docs/NOTIFICATIONS.md); silent = bell only, no Telegram
+    notifications: { to_id: "text", actor_id: "text", title: "text", body: "text", tbl: "text", record_id: "text", read: "boolean", at: "timestamptz",
+      kind: "text", module: "text", ref: "text", project: "text", amount: "text", due: "text", title_km: "text", body_km: "text", silent: "boolean" },
     // v22 Schedule & Meetings: staff events (meetings, inspections, site visits, claim dates…) and Cambodia's official public holidays
     events: { no: "text", title: "text", type: "text", date: "date", start_time: "text", end_time: "text", all_day: "boolean", project_id: "text", location: "text",
       organiser_id: "text", attendees: "jsonb", notes: "text", minutes: "text", status: "text", link_module: "text", link_id: "text", created_by: "text", updated_at: "timestamptz" },
-    holidays: { date: "date", name: "text", name_km: "text", year: "int" }
+    holidays: { date: "date", name: "text", name_km: "text", year: "int" },
+    // v23 Announcements: a message from the System Admin (or backup admin) to everyone or to chosen departments / people.
+    // audience = {"all":true} or {"groups":[...],"staff":[...]}; recipients = the staff ids it was sent to; never deleted (Withdrawn)
+    announcements: { title: "text", message: "text", importance: "text", audience: "jsonb", recipients: "jsonb", sent_by: "text", sent_at: "timestamptz", pin_until: "date", status: "text" }
   };
 
   // ---------- User groups (from the 2026 org chart) ----------
@@ -601,7 +606,7 @@
 
     const all = { staff, projects, project_members, tasks, daily_reports, requests, suppliers, purchase_orders, documents,
       cost_lines, claims, invoices, inspections, defects, safety, site_visits, variations, subcontractors, sub_contracts, sub_payments, tests, handover_items, warranties, audit_log, stores, stock_items, stock_moves, monthly_costs, app_settings: [], notifications: [],
-      events, holidays: HOLIDAYS.map((h) => Object.assign({}, h)) };
+      events, holidays: HOLIDAYS.map((h) => Object.assign({}, h)), announcements: [] };
     // A few starting notifications so the bell is not empty in the demo
     let nn = 0;
     const N = (to_id, actor_id, hrs, title, body, tbl, record_id, read) => all.notifications.push({ id: "n" + (++nn), to_id, actor_id, title, body, tbl, record_id, read: !!read, at: new Date(Date.now() - hrs * 3600000).toISOString() });

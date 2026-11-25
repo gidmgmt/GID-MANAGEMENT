@@ -3,7 +3,7 @@ Run from the repo root:  python3 tests/workflows.py   (about 5 minutes)"""
 import asyncio, os, sys
 sys.path.insert(0, os.path.dirname(__file__))
 from playwright.async_api import async_playwright
-from harness import route, login, img_bytes, _pass_hash
+from harness import route, login, img_bytes, _pass_hash, remember_script
 IMG=img_bytes('img/staff/s03.jpg')
 FILE=[{'name':'a.jpg','mimeType':'image/jpeg','buffer':IMG}]
 async def btnm(pg, text): await pg.locator('#modal .btn', has_text=text).first.click(); await pg.wait_for_timeout(350)
@@ -13,7 +13,7 @@ async def open_vo(pg, title):
     await pg.locator('table.list tbody tr', has_text=title).first.click(); await pg.wait_for_timeout(350)
 async def st(pg): return await pg.evaluate("JSON.parse(localStorage.getItem('gid-demo-v6')).variations.find(v=>v.title==='Test VO cable').status")
 async def run(b, vp, tag, out):
-    ctx=await b.new_context(viewport=vp, device_scale_factor=1 if tag=='d' else 2); await ctx.route('**/*', route); await ctx.add_init_script("try{if(!localStorage.getItem('gid-pass'))localStorage.setItem('gid-pass','%s')}catch(e){}" % _pass_hash()); pg=await ctx.new_page()
+    ctx=await b.new_context(viewport=vp, device_scale_factor=1 if tag=='d' else 2); await ctx.route('**/*', route); await ctx.add_init_script(remember_script()); pg=await ctx.new_page()
     errs=[]; pg.on('pageerror', lambda e: errs.append(str(e)))
     A=lambda k,v: out.append((tag+' '+k, v))
     # --- VO flow
