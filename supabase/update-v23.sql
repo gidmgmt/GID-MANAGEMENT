@@ -108,7 +108,8 @@ alter table public.notifications add column if not exists title_km text;  -- Khm
 alter table public.notifications add column if not exists body_km text;   -- Khmer detail line(s)
 alter table public.staff add column if not exists staff_no text;          -- staff ID number shown on the badge (HR edits it)
 -- give existing demo staff (ids s01…s40) their staff ID number, same as the app's demo data (GID-001…); never overwrites a number HR typed
-update public.staff set staff_no = 'GID-' || lpad(substring(id from 2), 3, '0') where coalesce(btrim(staff_no), '') = '' and id ~ '^s[0-9]+$';
+update public.staff t set staff_no = 'GID-' || lpad(substring(t.id from 2), 3, '0') where coalesce(btrim(t.staff_no), '') = '' and t.id ~ '^s[0-9]+$'
+  and not exists (select 1 from public.staff o where o.staff_no = 'GID-' || lpad(substring(t.id from 2), 3, '0'));  -- never create a duplicate number
 alter table public.notifications add column if not exists silent boolean;  -- true = in-app bell only, no Telegram (owner: drawing uploads, progress changes)
 
 -- Cut a text to n characters (… at the end) before it is escaped, so an HTML entity is never cut in half.

@@ -412,6 +412,7 @@
     flushing = true; let sent = 0;
     try {
       for (const it of l.slice()) {
+        if (it.by && it.by !== state.user) continue; // another person's queued report waits until they sign in on this phone
         try {
           const photos = await storeFiles(it.photos, it.t === "daily_reports" ? "site" : "file");
           const row = Object.assign({}, it.row, { photos }); delete row._pending;
@@ -1644,7 +1645,7 @@
       .forEach((p) => todo.push({ kind: "Confirm delivery", text: `${p.po_no} ${p.description}`, sub: supplierName(p.supplier_id), go: () => openPO(p) }));
     db.documents.filter((d) => d.status === "In review" && canReviewDoc(u)).forEach((d) => todo.push({ kind: "Review document", text: `${d.doc_no} rev ${d.revision} ${d.title}`, sub: projLabel(d.project_id), go: () => openDoc(d) }));
     db.claims.filter((c) => claimActionsFor(u, c).length).forEach((c) => todo.push({ kind: "IPC claim", text: `${projLabel(c.project_id)} IPC ${c.ipc_no}`, sub: c.status + " · " + money(c.claimed), go: () => openClaim(c) }));
-    if (can(u, "finance", "admin")) db.invoices.filter((i) => i.status === "Unpaid" && i.direction === "Payable").forEach((i) => todo.push({ kind: "Pay", text: `${i.inv_no} ${i.party}`, sub: money(i.amount) + " · due " + fmtDate(i.due_date), go: () => openInvoice(i) }));
+    if (isFinance(u)) db.invoices.filter((i) => i.status === "Unpaid" && i.direction === "Payable").forEach((i) => todo.push({ kind: "Pay", text: `${i.inv_no} ${i.party}`, sub: money(i.amount) + " · due " + fmtDate(i.due_date), go: () => openInvoice(i) }));
     db.tasks.filter((t) => t.assignee_id === u.id && t.status !== "Done").forEach((t) => todo.push({ kind: "Task", text: t.title, sub: projLabel(t.project_id) + " · due " + fmtDate(t.due_date), go: () => openTask(t) }));
     // variations, subcontractor payments, warranties and insurance waiting for this person
     const mineP = (pid) => hasTag(u, "MD") || isQS(u) || isSysAdmin(u) || can(u, "finance", "admin") || (byId("projects", pid) || {}).pm_id === u.id;
@@ -1860,6 +1861,7 @@
       <div class="form-actions"><button type="button" class="btn" data-act="${act(modalBack)}">Cancel</button><button type="submit" class="btn primary">Save team</button></div></form>`, (m) => {
       m.querySelector("#tform").addEventListener("submit", async (e) => {
         e.preventDefault();
+        if (!canManageProject(me(), p.id)) { toast(RULE_MSG.notPM, true); return; } // checked again at save
         const f = new FormData(e.target), want = new Set(f.getAll("mem")), pmId = f.get("pm_id");
         try {
           if (pmId && pmId !== p.pm_id) await patch("projects", p.id, { pm_id: pmId }, p.code + " Project Manager: " + staffName(pmId));
@@ -2015,7 +2017,8 @@
     openModal("Site location · " + p.code, `<form id="lform">${locationField(p)}<div class="form-actions"><button type="button" class="btn" data-act="${act(modalBack)}">Cancel</button><button class="btn primary" type="submit">Save location</button></div></form>`, (m) => {
       wireLocation(m);
       m.querySelector("#lform").addEventListener("submit", async (e) => {
-        e.preventDefault(); const ll = parseLatLng(m.querySelector("#site_loc").value);
+        e.preventDefault(); if (!canManageProject(me(), p.id)) { toast(RULE_MSG.notPM, true); return; }
+        const ll = parseLatLng(m.querySelector("#site_loc").value);
         if (!ll) return toast("Enter the location as 11.556400, 104.928200 or paste a Google Maps link.", true);
         await patch("projects", p.id, ll, p.code + " site location set"); closeModal(); render(); toast("Site location saved for " + p.code);
       });
@@ -2821,6 +2824,7 @@
       { name: "lessons", label: "Lesson learned", value: s.lessons || "" },
       { name: "close_evidence", label: "Photos or files of the correction", type: "evidence", required: true, requiredMsg: "Attach a photo, image or PDF that shows the correction.", help: "Required. Show the problem fixed, for example the guardrail now installed." }
     ], async (v) => {
+      if (!canCloseSafety(me(), byId("safety", s.id) || s)) throw new Error("You cannot close this record.");
       const ev = await storeEvidence(v.close_evidence, "safety-close");
       await patch("safety", s.id, { status: "Closed", correction: v.correction, preventive: v.preventive, lessons: v.lessons, close_evidence: ev, closed_by: me().id, closed_at: nowIso() }, "Safety record closed: " + s.rec_type);
     }, "Close record");
@@ -3595,7 +3599,7 @@
   const dlpEnd = (p) => { if (!p.handover_date) return null; const d = new Date(p.handover_date + "T00:00:00"), day = d.getDate(); d.setDate(1); d.setMonth(d.getMonth() + Number(p.dlp_months || 12)); d.setDate(Math.min(day, new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate())); return d.toLocaleDateString("en-CA"); };
   function setHandoverDate(p) {
     formModal("Handover date · " + p.code, [{ name: "handover_date", label: "Handover date", type: "date", required: true, value: p.handover_date || today() }, { name: "dlp_months", label: "Defect liability period", type: "select", options: [["6", "6 months"], ["12", "12 months"], ["24", "24 months"]], value: String(p.dlp_months || 12) }],
-      async (x) => { await patch("projects", p.id, { handover_date: x.handover_date, dlp_months: Number(x.dlp_months) }, p.code + " handover date " + x.handover_date); }, "Save");
+      async (x) => { if (!canManageProject(me(), p.id)) throw new Error(RULE_MSG.notPM); await patch("projects", p.id, { handover_date: x.handover_date, dlp_months: Number(x.dlp_months) }, p.code + " handover date " + x.handover_date); }, "Save");
   }
   function handoverBody(u, pids, pid) {
     const tests = db.tests.filter((t) => pids.has(t.project_id)).filter((t) => matchSearch(t, ["test_no", "location"])).sort((a, b) => String(b.test_date).localeCompare(String(a.test_date)));
@@ -3723,6 +3727,7 @@
     const alsoHtml = `<fieldset class="pickset"><legend>Also works in (optional)</legend><div class="pickgrid alsogrid">${Object.keys(DEPT_NAME).map((k) => `<label class="pick"><input type="checkbox" name="also" value="${k}" ${also.includes(k) ? "checked" : ""}><span><b>${DEPT_NAME[k]}</b></span></label>`).join("")}</div></fieldset>`;
     const welcomeHtml = isNew ? `<label class="check wl-on"><input type="checkbox" id="wl-send" checked> <span>Send the welcome message to the whole team (in the app and on Telegram)</span></label><div class="wl-prev" id="wl-prev" aria-live="polite"></div>` : "";
     formModal(isNew ? "Add staff" : "Edit · " + s.name, fields, async (v) => {
+      if (!canManageStaff(me())) throw new Error("Only HR, the MD or the System Admin can change staff details.");
       const f = document.getElementById("mform");
       const extra = [...f.querySelectorAll('input[name="also"]:checked')].map((x) => x.value).filter((k) => k !== v.dept);
       const ph = (v.photo || []).filter((x) => x.type !== "pdf");
@@ -5140,6 +5145,7 @@
         audience = { groups, staff: sel.filter((id) => !inGroups.has(id)) }; ids = sel;
       } else { audience = { all: true }; ids = now_.map((s) => s.id); }
       ids = [...new Set(ids)].filter((id) => id !== u.id);
+      if (!canAnnounce(me())) throw new Error("Only the System Admin, HR or the MD can send announcements.");
       if (!ids.length) throw new Error("Choose at least one person (other than you).");
       if (!confirm(trTxt(ids.length === 1 ? "Send to 1 person?" : "Send to " + ids.length + " people?"))) return false;
       const row = await save("announcements", { title: title.slice(0, 150), message: msg, importance: v.importance === "Important" ? "Important" : "Normal", audience, recipients: ids,
