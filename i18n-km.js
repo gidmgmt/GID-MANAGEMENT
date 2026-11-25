@@ -755,3 +755,7 @@ window.GID_KM_PATTERNS.unshift(
 // v23 lead: announcements by HR / MD
 Object.assign(window.GID_KM, { "Only the System Admin, HR or the MD can send announcements.": "មានតែអ្នកគ្រប់គ្រងប្រព័ន្ធ ផ្នែកធនធានមនុស្ស (HR) ឬនាយកគ្រប់គ្រង (MD) ប៉ុណ្ណោះ ដែលអាចផ្ញើសេចក្តីជូនដំណឹងបាន។", "Send announcements to staff.": "ផ្ញើសេចក្តីជូនដំណឹងទៅបុគ្គលិក។" });
 Object.assign(window.GID_KM, { "Only HR, the MD or the System Admin can change staff details.": "មានតែផ្នែកធនធានមនុស្ស (HR) នាយកគ្រប់គ្រង (MD) ឬអ្នកគ្រប់គ្រងប្រព័ន្ធប៉ុណ្ណោះ ដែលអាចកែព័ត៌មានបុគ្គលិកបាន។", "You cannot close this record.": "អ្នកមិនអាចបិទកំណត់ត្រានេះបានទេ។" });
+
+// v24: released logins
+Object.assign(window.GID_KM, { "This phone number or email now belongs to a newer sign-up, so this old account cannot be used again. Approve the newer one instead.": "លេខទូរស័ព្ទ ឬអ៊ីមែលនេះ ឥឡូវជារបស់ការចុះឈ្មោះថ្មី ដូច្នេះគណនីចាស់នេះមិនអាចប្រើវិញបានទេ។ សូមអនុម័តគណនីថ្មីជំនួសវិញ។" });
+window.GID_KM_PATTERNS.push([/^(.+) \(released\)$/, (m) => m[1] + " (បានដោះលែង)"]);

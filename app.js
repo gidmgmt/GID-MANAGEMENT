@@ -5401,13 +5401,13 @@
     if (state.route === "people" && state.tab.people === "accounts" && !$("#modal")) render();
   }
   function accReload() { ACC.loaded = false; accLoad(); }
-  const accLogin = (a) => [a.login_phone, a.login_email].filter(Boolean).join(" · ");
+  const accLogin = (a) => [a.login_phone, a.login_email].filter(Boolean).join(" · ") || ([a.old_login_phone, a.old_login_email].filter(Boolean).join(" · ") + " (released)");
   const accWhen = (iso) => iso ? fmtDate(iso) + " " + timeOf(iso) : "";
   async function accDecide(a, action, staffId) {
     const r = await authRpc("gid_decide_account", { p_token: AUTH().token, p_account_id: a.id, p_action: action, p_staff_id: staffId || null });
     if (r.ok) return true;
     if (r.error === "no_session") { signOut(SIGNED_OUT_MSG); return false; }
-    throw new Error(r.error === "exists" ? "This staff profile is already used by another active account." : r.error === "not_found" ? "This account or staff profile was not found. Press Refresh." : r.error === "not_allowed" ? "Only HR, the System Admin and the MD can manage accounts." : SERVER_MSG);
+    throw new Error(r.error === "released" ? "This phone number or email now belongs to a newer sign-up, so this old account cannot be used again. Approve the newer one instead." : r.error === "exists" ? "This staff profile is already used by another active account." : r.error === "not_found" ? "This account or staff profile was not found. Press Refresh." : r.error === "not_allowed" ? "Only HR, the System Admin and the MD can manage accounts." : SERVER_MSG);
   }
   function accApprove(a) {
     const used = new Set(ACC.list.filter((x) => x.status === "active" && x.id !== a.id && x.staff_id).map((x) => x.staff_id));

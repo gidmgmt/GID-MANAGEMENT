@@ -209,6 +209,13 @@ Database: `supabase/update-v20.sql` (already installed on the GID database and t
 - Passwords are stored only in scrambled form, in a part of the database the public website key cannot read.
 - Still a demo: the other tables are open to the public key until the next step (per-role database security). Use sample data only.
 
+## Version 24: a phone number can sign up again after the person left
+
+Database change: run `supabase/update-v24.sql` once (safe to run again).
+- When HR removes a staff member, their sign-in account is switched off at once and they are signed out.
+- If someone signs up again with the phone number or email of a removed person, or of a rejected or switched-off account, the sign-up now goes through to HR for approval. The old account keeps the old number as history (shown as "released" in People → Accounts).
+- A number that is in use by a current staff member, or waiting for approval, is still refused.
+
 ## Version 23: announcements, sign in every day, clear alerts, approved rules, staff ID number
 
 Database change: run `supabase/update-v23.sql` once (safe to run again).
