@@ -209,6 +209,10 @@ Database: `supabase/update-v20.sql` (already installed on the GID database and t
 - Passwords are stored only in scrambled form, in a part of the database the public website key cannot read.
 - Still a demo: the other tables are open to the public key until the next step (per-role database security). Use sample data only.
 
+## Version 25: simple account commands for the owner (Supabase only)
+
+Database change: run `supabase/update-v25.sql` once. Adds eight plain-English account commands for the SQL Editor (list, find staff, kick out, block, unblock, approve, add, reset password). The app is unchanged. Guide: docs/ACCOUNTS-ADMIN.md.
+
 ## Version 24: a phone number can sign up again after the person left
 
 Database change: run `supabase/update-v24.sql` once (safe to run again).
